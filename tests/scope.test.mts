@@ -48,6 +48,19 @@ check(
 );
 check('parseLinkedIssues returns nothing for a body with no linking keyword', parseLinkedIssues('## What changed\nstuff\n#6\n').length === 0);
 
+const linkedBodyWithCode = [
+  'fixes: #5',
+  'quoted example: `fixes: #6`',
+  '```',
+  'Closes #7',
+  '```',
+].join('\n');
+check(
+  'parseLinkedIssues ignores keywords inside inline code spans and fenced code blocks',
+  JSON.stringify(parseLinkedIssues(linkedBodyWithCode)) === JSON.stringify([5]),
+  JSON.stringify(parseLinkedIssues(linkedBodyWithCode)),
+);
+
 // AC2: several linked issues (Closes #1, Fixes #2) union their `## Files`
 // globs, and the job summary attributes each glob to its issue.
 const issueA = file('issue-a.md', '## Files\n- `src/**`\n');

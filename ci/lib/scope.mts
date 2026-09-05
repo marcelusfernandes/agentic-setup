@@ -78,14 +78,25 @@ export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files:
 const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
 
 /**
+ * Strips fenced code blocks and inline code spans so a keyword quoted as an
+ * example (in a fence or backticks) is never mistaken for a real link.
+ */
+function stripCode(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+}
+
+/**
  * The issue numbers a PR body links via a GitHub closing keyword, in order
  * of first appearance, deduplicated. A bare `#N` with no keyword before it
- * is not a linked issue and is ignored.
+ * is not a linked issue and is ignored, and so is a keyword that only
+ * appears inside a fenced code block or an inline code span (unlike
+ * `parseAuthorisedGlobs`, which reads backticks deliberately).
  */
 export function parseLinkedIssues(prBody: string | null | undefined): number[] {
+  const text = stripCode(String(prBody ?? ''));
   const seen = new Set<number>();
   const result: number[] = [];
-  for (const m of String(prBody ?? '').matchAll(LINKED_ISSUE_RE)) {
+  for (const m of text.matchAll(LINKED_ISSUE_RE)) {
     const n = Number(m[1]);
     if (!seen.has(n)) {
       seen.add(n);
