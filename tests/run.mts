@@ -36,7 +36,7 @@ let anyFailed = false;
 for (const file of files) {
   const r = spawnSync(runtime, [join(dir, file)], { encoding: 'utf8' });
   const out = `${r.stdout}${r.stderr}`;
-  const summary = lastSummary(out);
+  const summary = lastSummary(r.stdout ?? '');
 
   if (r.status !== 0) anyFailed = true;
 

@@ -1,4 +1,4 @@
-# test — this repository's own gate: types and the smoke suite.
+# test — this repository's own gate: types and the test suite.
 # Runs on every PR and on main after a merge. `negative-control` runs the
 # same `npm test` on the PR's base with the PR's test files applied.
 
