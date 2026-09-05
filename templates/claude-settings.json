@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push *--force*)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git stash *)",
+      "Bash(gh pr merge *--admin*)",
+      "Bash(gh repo delete *)",
+      "Bash(rm -rf / *)",
+      "Bash(rm -rf ~ *)"
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+# agentic-checks — the two PR checks the agent loop depends on.
+#
+#   scope             the diff sits inside the globs of the issue the PR closes
+#   negative-control  the tests the PR adds fail on the base without the change
+#
+# Both read the PR body and labels, so they re-run when the PR is edited or
+# relabelled. Your own test workflow stays as it is; make it, and these two,
+# required checks on main.
+#
+# negative-control runs the project's test command on a base checkout. Add
+# the same toolchain setup your test workflow uses where marked, and set
+# AGENTIC_TEST_CMD if detection (package.json / pyproject / go.mod /
+# Cargo.toml / Makefile) does not name the right command.
+
+name: agentic-checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+concurrency:
+  group: agentic-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22 # 22.18+ runs the .mts scripts directly
+      - name: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/agentic/scope-check.mts
+
+  negative-control:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22 # 22.18+ runs the .mts scripts directly
+      # --- toolchain setup: mirror your test workflow here -------------------
+      # - run: npm ci
+      # - uses: actions/setup-python@v5
+      #   with: { python-version: '3.12' }
+      # - run: pip install -e '.[test]'
+      # -----------------------------------------------------------------------
+      - name: negative-control
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # AGENTIC_TEST_CMD: npm test
+        run: node .github/scripts/agentic/negative-control.mts --base "$BASE_SHA" --head "$HEAD_SHA"

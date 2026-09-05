@@ -1,0 +1,26 @@
+# test — this repository's own gate: types and the smoke suite.
+# Runs on every PR and on main after a merge. `negative-control` runs the
+# same `npm test` on the PR's base with the PR's test files applied.
+
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -p tsconfig.json
+      - run: node tests/smoke.mts

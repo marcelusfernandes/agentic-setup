@@ -1,0 +1,44 @@
+# guard-main — the detection layer of main protection.
+#
+# A ruleset blocks direct pushes on the server when your plan allows one;
+# this action covers the case where it does not (private repository, free
+# plan). If a commit that lands on main belongs to no PR, it opens an issue
+# labelled `human` and fails, so the history turns red and someone looks.
+#
+# Declared exception: a commit whose message contains "[allow-push-main]"
+# (bootstrap only).
+
+name: guard-main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  direct-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Did this commit come from a PR?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          MSG: ${{ github.event.head_commit.message }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          case "$MSG" in *"[allow-push-main]"*) echo "bootstrap declared; ok"; exit 0;; esac
+          n="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length')"
+          if [ "$n" -gt 0 ]; then echo "commit $SHA belongs to $n PR(s); ok"; exit 0; fi
+          title="Direct push to main without a PR ($ACTOR, ${SHA:0:7})"
+          exists="$(gh issue list --repo "$REPO" --search "\"$title\" in:title" --state open --json number --jq 'length')"
+          if [ "$exists" = "0" ]; then
+            gh issue create --repo "$REPO" --title "$title" --label human \
+              --body "Commit \`$SHA\` reached \`main\` without a PR (actor: $ACTOR). Check what came in and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
+          fi
+          echo "::error::direct push to main without a PR ($SHA)"; exit 1

@@ -1,0 +1,20 @@
+{
+  "name": "agentic-setup",
+  "version": "0.1.0",
+  "description": "Run a repository with autonomous Claude Code agents: one GitHub issue per unit of work, one git worktree per agent, PRs merged by CI and a reviewing agent. Project-agnostic: detects your test command, never assumes a stack.",
+  "author": {
+    "name": "Marcelus Fernandes"
+  },
+  "repository": "https://github.com/marcelusfernandes/agentic-setup",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "workflow",
+    "git",
+    "worktree",
+    "orchestration",
+    "subagents",
+    "github-issues",
+    "hooks"
+  ]
+}

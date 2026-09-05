@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# git pre-push — installed into .git/hooks by `/agentic-setup:init`.
+#
+# The second layer of main protection: applies to every `git push` from this
+# machine, inside or outside Claude Code. Refuses:
+#   1. a push to refs/heads/main or master (merges happen on the server, via PR)
+#   2. a non-fast-forward push to any branch (what a --force produces)
+#
+# Bootstrap valve: AGENTIC_ALLOW_PUSH_MAIN=1 lifts item 1 only.
+#
+# git calls this with "<remote> <url>" as arguments and one line per ref on
+# stdin: "<local ref> <local sha> <remote ref> <remote sha>".
+
+zero="0000000000000000000000000000000000000000"
+failed=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "$remote_ref" ] && continue
+
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master)
+      if [ "${AGENTIC_ALLOW_PUSH_MAIN:-}" != "1" ]; then
+        echo "pre-push: direct push to $remote_ref is forbidden. Open a PR; the merge happens on the server." >&2
+        echo "          (AGENTIC_ALLOW_PUSH_MAIN=1 lifts this for bootstrap only.)" >&2
+        failed=1
+        continue
+      fi
+      ;;
+  esac
+
+  # Deleting a remote branch (local sha all zeros) is legitimate for a work
+  # branch; main/master were refused above.
+  [ "$local_sha" = "$zero" ] && continue
+  # New remote branch: nothing to compare against.
+  [ "$remote_sha" = "$zero" ] && continue
+
+  if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "pre-push: $remote_ref is not a fast-forward of the remote (this is a force-push). Forbidden." >&2
+    echo "          Merge the remote branch and push again." >&2
+    failed=1
+  fi
+done
+
+exit $failed
