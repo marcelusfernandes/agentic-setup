@@ -1,0 +1,3 @@
+# Untracked files every agent worktree needs. A worktree is born with tracked
+# files only; Claude Code copies what is listed here into each new one.
+.env.local

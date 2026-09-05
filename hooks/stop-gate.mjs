@@ -1,0 +1,75 @@
+#!/usr/bin/env node
+// stop-gate — Stop.
+//
+// Before an agent on a work branch is allowed to stop, run the project's
+// check and test commands (ci/lib/detect.mjs; AGENTIC_CHECK_CMD /
+// AGENTIC_TEST_CMD override). Red output goes to stderr and the stop is
+// blocked (exit 2), so the agent reads the failure and keeps working.
+//
+// Skips, with a note on stderr, when:
+//   - Claude Code says a stop hook is already active (no loops);
+//   - the current branch is main/master or not `<type>/<n>-<slug>` — the
+//     orchestrator, or a person, is not gated;
+//   - the last commit is `test(red): …` — that red is the negative control;
+//   - no test command can be detected — the real gate is CI.
+//
+// Crash policy: ALLOW. A hook that cannot run must not trap the agent.
+import { currentBranch, lastCommitSubject, note, parsePayload, readStdin, repoRoot, run } from './lib/common.mjs';
+import { detectCommands } from '../ci/lib/detect.mjs';
+
+const HOOK = 'stop-gate';
+const WORK_BRANCH = /^[a-z]+\/\d+-[a-z0-9-]+$/;
+const PROTECTED = /^(?:main|master)$/;
+const TAIL_LINES = 60;
+const REENTRY = 'AGENTIC_STOP_GATE_ACTIVE';
+
+/** @param {string} text */
+const tail = (text) => text.trim().split('\n').slice(-TAIL_LINES).join('\n');
+
+/** @param {string} command @param {string} cwd */
+function sh(command, cwd) {
+  const env = { ...process.env, [REENTRY]: '1' };
+  const r = run(command, [], { cwd, shell: true, env });
+  return { ok: r.ok, output: `${r.stdout}${r.stderr}` };
+}
+
+async function main() {
+  const payload = parsePayload(await readStdin()) ?? {};
+  if (payload.stop_hook_active) return;
+  if (process.env[REENTRY] === '1') {
+    note(HOOK, 'already running further up the process tree; not recursing.');
+    return;
+  }
+  const cwd = payload.cwd || process.cwd();
+  const root = repoRoot(cwd);
+  const branch = currentBranch(root);
+
+  if (PROTECTED.test(branch) || !WORK_BRANCH.test(branch)) {
+    note(HOOK, `branch "${branch || '(none)'}" is not a work branch; skipping.`);
+    return;
+  }
+  if (lastCommitSubject(root).startsWith('test(red):')) {
+    note(HOOK, 'last commit is `test(red):` — that is the negative control; skipping.');
+    return;
+  }
+
+  const commands = detectCommands(root);
+  if (!commands.test && !commands.check) {
+    note(HOOK, 'no check or test command detected (set AGENTIC_TEST_CMD to declare one); skipping — CI is the gate.');
+    return;
+  }
+
+  for (const [kind, command] of [['check', commands.check], ['test', commands.test]]) {
+    if (!command) continue;
+    const r = sh(command, root);
+    if (!r.ok) {
+      process.stderr.write(`[agentic-setup/${HOOK}] ${kind} failed: \`${command}\` (${commands.source})\n${tail(r.output)}\n`);
+      process.exit(2);
+    }
+  }
+}
+
+main().catch((err) => {
+  note(HOOK, `hook error, allowing the stop: ${err?.message ?? err}`);
+  process.exit(0);
+});

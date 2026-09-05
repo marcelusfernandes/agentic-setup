@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentic-setup",
+  "description": "Run a repository with autonomous Claude Code agents: issue → worktree → PR → review → merge, project-agnostic.",
+  "owner": {
+    "name": "Marcelus Fernandes"
+  },
+  "plugins": [
+    {
+      "name": "agentic-setup",
+      "source": "./",
+      "description": "One GitHub issue per unit of work, one git worktree per agent, PRs merged by CI and a reviewing agent. Two small Node hooks, three agents, GitHub templates, scope and negative-control checks.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "category": "workflow",
+      "keywords": ["workflow", "git", "worktree", "orchestration", "subagents", "github-issues", "hooks"]
+    }
+  ]
+}
