@@ -93,15 +93,77 @@ export function valve(name: string, command: string): boolean {
 
 /**
  * Split a shell command into the segments that sit in command position:
- * the start, and after `;` `&&` `||` `|` `(` and newlines. Leading env
- * assignments, `sudo` and `env` are stripped so `FOO=1 git push` still reads
- * as `git push`. Quotes are not parsed: a string that contains `&& git push`
- * will be seen as a push. That errs on the side of denying, and the agent
- * can rephrase — the cheap side of the trade.
+ * the start, and after `;` `&&` `||` `|` `(` `)` and newlines — a `)` closes
+ * a subshell segment the same way `(` opens one, so `$(git push ...)` still
+ * yields a clean `git push ...` segment. Splitting happens only outside
+ * quotes: single quotes escape nothing until the next `'`; double quotes let
+ * a backslash escape the next character (so `\"` inside a double-quoted
+ * string does not end it); outside any quote a backslash also escapes the
+ * next character, so `\"` there is a literal quote and does not open one
+ * either. Leading env assignments, `sudo` and `env` are stripped from each
+ * segment so `FOO=1 git push` still reads as `git push`. An unterminated
+ * quote runs to the end of the string as one segment — the shell would
+ * refuse that command anyway.
  */
 export function commandSegments(command: string): string[] {
-  return String(command)
-    .split(/&&|\|\||[;|\n(]/)
+  const str = String(command);
+  const segments: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+
+    if (inSingle) {
+      current += ch;
+      if (ch === "'") inSingle = false;
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === '\\' && i + 1 < str.length) {
+        current += ch + str[i + 1];
+        i++;
+        continue;
+      }
+      current += ch;
+      if (ch === '"') inDouble = false;
+      continue;
+    }
+
+    // Outside any quote.
+    if (ch === '\\' && i + 1 < str.length) {
+      current += ch + str[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      current += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      current += ch;
+      continue;
+    }
+    if ((ch === '&' && str[i + 1] === '&') || (ch === '|' && str[i + 1] === '|')) {
+      segments.push(current);
+      current = '';
+      i++;
+      continue;
+    }
+    if (ch === ';' || ch === '|' || ch === '(' || ch === ')' || ch === '\n') {
+      segments.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  segments.push(current);
+
+  return segments
     .map((s) => s.trim())
     .filter(Boolean)
     .map((s) => s.replace(/^(?:\w+=\S*\s+|sudo\s+|env\s+)*/, ''));
