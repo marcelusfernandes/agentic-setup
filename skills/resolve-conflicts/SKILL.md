@@ -41,7 +41,7 @@ Ground rules:
    git -C "<worktree>" diff --name-only --diff-filter=U
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/git/conflict-classify.sh" "<file>"    # per file
    ```
-   The classifier emits `trivial:<class>|semantic|unknown` plus a hunk count. Classes: `identical`, `additive-list`, `formatting`, `regenerable` (matches `profile.generated_globs`), `rerere`. `unknown` is treated as **semantic**. Semantic triggers: the same function body, signature, condition, constant or test expectation changed on both sides; any `config.protected_paths` entry; any migration; anything under `**/auth/**`, `**/security/**` or matching `secrets_globs`.
+   The classifier prints one line per file — `<class>  hunks:<n>  <path>` (or `--json`) — with class `protected` (config.protected_paths / secrets_globs), `regenerable` (matches `profile.generated_globs`), `trivial` (both sides identical after whitespace normalization, or purely additive against the zdiff3 base) or `semantic`. The conflict-resolver refines `trivial` into the sub-classes of `references/conflicts.md` (identical, additive-list, formatting, rerere) from the conflict text itself; anything it cannot place is treated as **semantic**. Semantic triggers: the same function body, signature, condition, constant or test expectation changed on both sides; any `config.protected_paths` entry; any migration; anything under `**/auth/**`, `**/security/**` or matching `secrets_globs`.
 
 5. **Autonomy ceilings** (`config.conflict_autonomy`). Exceeding **any** of them converts the whole run into a STOP, even if every file classified trivial:
    - more than `max_files` (default 10) conflicted files

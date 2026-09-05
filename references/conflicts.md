@@ -19,7 +19,7 @@ This runs entirely in memory — no working tree, index or HEAD is touched — w
 
 ## 2. Classification
 
-Requires `merge.conflictStyle=zdiff3` — the `||||||| base` section is what makes the trivial/semantic call reliable. `scripts/git/conflict-classify.sh <file>` emits the class plus a hunk count; the resolver re-derives it from the conflict text.
+Requires `merge.conflictStyle=zdiff3` — the `||||||| base` section is what makes the trivial/semantic call reliable. `scripts/git/conflict-classify.sh [<file>...]` emits a coarse class (`protected`, `regenerable`, `trivial`, `semantic`) plus a hunk count; the resolver re-derives the fine-grained class below from the conflict text.
 
 | Class | Signals | Resolution |
 |---|---|---|
