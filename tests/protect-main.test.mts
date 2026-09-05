@@ -23,6 +23,8 @@ const denied = [
   'echo $(git push origin main)', // subshell content must still be seen
   'echo \\"a && git push origin main', // backslash outside quotes escapes the quote, doesn't open one; && still splits
   'git commit -m "x" && git push origin main', // a cleanly closed string still lets a real operator split after it
+  "git status  # let's see\ngit push origin main", // a # comment must not let its apostrophe swallow the newline
+  "echo $'it\\'s' && git push origin main", // $'...' ANSI-C quoting: backslash escapes even in single quotes
 ];
 for (const command of denied) {
   const r = bash(command, repo);
