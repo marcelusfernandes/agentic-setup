@@ -1,6 +1,7 @@
-# test — this repository's own gate: types and the test suite.
-# Runs on every PR and on main after a merge. `negative-control` runs the
-# same `npm test` on the PR's base with the PR's test files applied.
+# test — this repository's own gate: types and the test suite, run under both
+# Node and Bun as a matrix. Runs on every PR and on main after a merge.
+# `negative-control` runs the same `npm test` on the PR's base with the PR's
+# test files applied.
 
 name: test
 
@@ -14,13 +15,28 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.runtime }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node, bun]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - if: matrix.runtime == 'node'
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npx tsc -p tsconfig.json
-      - run: node tests/run.mts
+      - if: matrix.runtime == 'node'
+        run: npm ci
+      - if: matrix.runtime == 'node'
+        run: npx tsc -p tsconfig.json
+      - if: matrix.runtime == 'node'
+        run: node tests/run.mts
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - if: matrix.runtime == 'bun'
+        run: bun tests/run.mts
