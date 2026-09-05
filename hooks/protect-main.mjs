@@ -33,7 +33,7 @@ function isForcePush(args) {
   return /--force\b/.test(args) || /(?:^|\s)-[A-Za-z]*f[A-Za-z]*(?=\s|$)/.test(args) || /\s\+\S/.test(args);
 }
 
-/** @param {string} args @param {string} cwd */
+/** @param {string} args @param {string} cwd @param {string} command */
 function checkPush(args, cwd, command) {
   if (isForcePush(args)) deny(HOOK, 'force-push is forbidden on every branch.');
   const tokens = args.trim().split(/\s+/).filter(Boolean);
@@ -48,7 +48,7 @@ function checkPush(args, cwd, command) {
   }
 }
 
-/** @param {string} args @param {string} cwd */
+/** @param {string} args @param {string} cwd @param {string} command */
 function checkMerge(args, cwd, command) {
   if (/--admin\b/.test(args)) deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
   if (valve('AGENTIC_ALLOW_MERGE', command)) return;
@@ -76,7 +76,7 @@ function checkMerge(args, cwd, command) {
   }
   if (!pr) deny(HOOK, `could not read the PR (${(view.stderr || 'no output').trim().slice(0, 160)}).`);
   const label = process.env.AGENTIC_REVIEW_LABEL || 'review:approved';
-  const hasLabel = (pr.labels ?? []).some((l) => l.name === label);
+  const hasLabel = (pr.labels ?? []).some((/** @type {{ name: string }} */ l) => l.name === label);
   if (!hasLabel && pr.reviewDecision !== 'APPROVED') {
     deny(HOOK, `the PR has neither the "${label}" label nor an APPROVED review; the reviewer goes first.`);
   }

@@ -18,7 +18,7 @@ export function readStdin() {
   });
 }
 
-/** @returns {Record<string, any> | null} null when the payload is not JSON */
+/** @param {string} raw @returns {Record<string, any> | null} null when the payload is not JSON */
 export function parsePayload(raw) {
   try {
     const parsed = JSON.parse(raw);

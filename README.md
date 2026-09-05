@@ -9,9 +9,26 @@ test command is detected from the repository (`package.json`, `pyproject.toml`,
 `go.mod`, `Cargo.toml`, …) and can be overridden with one setting. The hooks are two
 small Node scripts with no dependencies; they run unchanged under Bun.
 
-> Status: **phase 1** — plugin skeleton and documentation. Agents, hooks, templates and
-> the `/agentic:init` command land in the next phases. Install instructions will appear
-> here when there is something to install.
+## Install
+
+```
+/plugin marketplace add marcelusfernandes/agentic-setup
+/plugin install agentic-setup@agentic-setup
+```
+
+Then, in the repository you want to run this way:
+
+```
+/agentic-setup:init --milestone "M1 foundation"
+```
+
+It copies the GitHub templates and the two CI checks, writes the permission deny list,
+installs the git `pre-push` hook and seeds the labels — and prints the few steps only a
+person can do (required checks, ruleset). From then on, one pass of the loop is:
+
+```
+/agentic-setup:orchestrate
+```
 
 ## The loop
 
@@ -46,17 +63,22 @@ the PR added actually fail without the change.
 
 | piece | what it does |
 |---|---|
-| `agents/` | `orchestrator`, `implementer`, `reviewer` — short prompts, model tiering, `isolation: worktree` |
-| `skills/` | `safe-worktree` (how not to lose work in a worktree), `issue-and-pr` (the exact `gh` contract) |
-| `hooks/` | `protect-main.mjs` (no push to main, no merge without green checks and the review label), `stop-gate.mjs` (run the detected test command before the agent stops) |
-| `commands/` | `/agentic:init` — copies the GitHub templates, writes the permission deny list, seeds labels and the first milestone |
-| `templates/` | issue and PR templates, `guard-main` action, CI with `scope` and `negative-control` jobs |
+| `agents/` | `implementer` (one issue → one PR, test first, own worktree), `reviewer` (read-only, JSON verdict, sets the label), `docs-writer` (docs equal to code, `type:docs` PRs) |
+| `skills/` | `orchestrate` (one pass of the loop, for the main session), `init` (set a repository up), `safe-worktree` (how not to lose work), `issue-and-pr` (the exact `gh` contract) |
+| `hooks/` | `protect-main.mjs` (no push to main, no merge without green checks and the review label), `protect-worktree.mjs` (a subagent may not write into the main checkout), `stop-gate.mjs` (run the detected check and test commands before an agent on a work branch stops), and the git `pre-push` the init installs |
+| `ci/` | `scope-check.mjs` (diff ⊆ the issue's globs), `negative-control.mjs` (the PR's tests must fail on the base), `lib/detect.mjs` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
+| `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
 | `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
+| `tests/smoke.mjs` | 60+ cases against real throwaway repositories; `node tests/smoke.mjs` or `bun tests/smoke.mjs` |
 
 ## Requirements
 
-- Node.js ≥ 18 on the machine that runs Claude Code (Bun works too). The hooks fail
-  **open** when Node is missing — they are one layer of three, not the only one.
+- Node.js ≥ 18 on the machine that runs Claude Code (Bun runs the same files; the smoke
+  suite is run under both). The hooks fail **open** when Node is missing — they are one
+  layer of three, not the only one.
+- Override detection when it guesses wrong: `AGENTIC_TEST_CMD`, `AGENTIC_CHECK_CMD`,
+  `AGENTIC_TEST_GLOBS`. Valves, always declared inline and visible in the transcript:
+  `AGENTIC_ALLOW_PUSH_MAIN=1`, `AGENTIC_ALLOW_MERGE=1`. Review label: `AGENTIC_REVIEW_LABEL`.
 - `gh` authenticated against the repository.
 - git ≥ 2.38 (`git worktree`, `git push` refspec locks).
 

@@ -9,7 +9,9 @@ import { join } from 'node:path';
 
 /** @typedef {{ test: string | null, check: string | null, stack: string }} Commands */
 
+/** @param {string} root @param {string} file */
 const has = (root, file) => existsSync(join(root, file));
+/** @param {string} root @param {string} file */
 const read = (root, file) => {
   try {
     return readFileSync(join(root, file), 'utf8');

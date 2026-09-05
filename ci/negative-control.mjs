@@ -62,7 +62,7 @@ if (!base || !head) finish('cannot-run', 'no base/head (pass --base/--head or ru
 
 const labels = typeof args.labels === 'string'
   ? args.labels.split(',').map((l) => l.trim())
-  : (event?.pull_request?.labels ?? []).map((l) => l.name);
+  : (event?.pull_request?.labels ?? []).map((/** @type {{ name: string }} */ l) => l.name);
 const skip = SKIP_LABELS.find((l) => labels.includes(l));
 if (skip) finish('skipped', `PR is labelled \`${skip}\`; no negative control expected.`);
 

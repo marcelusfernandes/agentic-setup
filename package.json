@@ -1,0 +1,16 @@
+{
+  "name": "agentic-setup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Development manifest for the agentic-setup Claude Code plugin. The plugin itself has no runtime dependencies; this exists so `tsc` can type-check the JSDoc-annotated .mjs files and `npm test` runs the smoke suite.",
+  "scripts": {
+    "test": "node tests/smoke.mjs",
+    "test:bun": "bun tests/smoke.mjs",
+    "check": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}

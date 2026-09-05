@@ -4,7 +4,7 @@
 // `bun tests/smoke.mjs`. Every case spawns the real script with a crafted
 // payload against a throwaway git repository; nothing is mocked.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,7 @@ function commit(dir, files, message) {
   return git(['rev-parse', 'HEAD'], dir);
 }
 
-/** @param {string} script @param {object} payload @param {{ cwd?: string, env?: Record<string, string> }} [opts] */
+/** @param {string} script @param {object | string} payload @param {{ cwd?: string, env?: Record<string, string> }} [opts] */
 function hook(script, payload, opts = {}) {
   const r = spawnSync(RUNTIME, [join(ROOT, 'hooks', script)], {
     input: typeof payload === 'string' ? payload : JSON.stringify(payload),
@@ -76,6 +76,7 @@ function ci(script, args, opts = {}) {
 
 // ---------------------------------------------------------------- protect-main
 {
+  /** @param {string} command @param {string} cwd @param {Record<string, string>} [env] */
   const bash = (command, cwd, env) => hook('protect-main.mjs', { tool_name: 'Bash', tool_input: { command }, cwd }, { cwd, env });
   const repo = tempRepo();
   commit(repo, { 'a.txt': 'a' }, 'init');
@@ -121,6 +122,7 @@ function ci(script, args, opts = {}) {
   commit(repo, { 'a.txt': 'a' }, 'init');
   const wt = join(repo, '.worktrees', 'agent-1');
   git(['worktree', 'add', '-q', '-b', 'feat/1-x', wt], repo);
+  /** @param {string} file_path @param {object} [extra] @param {string} [cwd] */
   const write = (file_path, extra = {}, cwd = wt) => hook('protect-worktree.mjs', { tool_name: 'Write', tool_input: { file_path }, cwd, agent_id: 'agent-1', ...extra }, { cwd });
 
   check('protect-worktree denies a subagent writing into the main checkout', write(join(repo, 'a.txt')).status === 2);
@@ -159,6 +161,7 @@ function ci(script, args, opts = {}) {
 {
   const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  /** @param {string} name @param {string} content */
   const file = (name, content) => {
     writeFileSync(join(dir, name), content);
     return join(dir, name);
@@ -170,6 +173,7 @@ function ci(script, args, opts = {}) {
   const prPlain = file('pr-plain.md', 'Closes #1\n\n## Files\nGlobs touched (must match the issue).\n');
   const prGrant = file('pr-grant.md', 'Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n- authorised: `src/lib/b.ts` — see issue comment\n');
   const prNoClose = file('pr-noclose.md', '## What changed\nstuff\n');
+  /** @param {string} f @param {string | null} i @param {string} p */
   const scope = (f, i, p) => ci('scope-check.mjs', ['--files-file', f, ...(i ? ['--issue-body-file', i] : []), '--pr-body-file', p]);
 
   check('scope passes inside the issue globs', scope(files, issueSrc, prPlain).status === 0);
@@ -196,6 +200,7 @@ function ci(script, args, opts = {}) {
     'lib.mjs': 'export const v = 2;\n',
     'tests/check.mjs': "import { v } from '../lib.mjs';\nprocess.exit(v === 2 ? 0 : 1);\n",
   }, 'feat: v2');
+  /** @param {string} h @param {string} [labels] */
   const nc = (h, labels = '') => ci('negative-control.mjs', ['--base', base, '--head', h, ...(labels ? ['--labels', labels] : [])], { cwd: repo });
 
   let r = nc(head);
@@ -212,6 +217,50 @@ function ci(script, args, opts = {}) {
   r = nc(noTests);
   check('negative-control fails when no test file changed', r.status === 1 && /no-tests/.test(r.out), r.out);
   check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
+}
+
+// ------------------------------------------------------------------------- init
+{
+  const repo = tempRepo();
+  commit(repo, { 'README.md': '# x\n' }, 'init');
+  mkdirSync(join(repo, '.claude'), { recursive: true });
+  writeFileSync(join(repo, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Bash(rm -rf / *)', 'WebFetch'] }, other: true }));
+  /** @param {...string} extra */
+  const init = (...extra) => spawnSync(RUNTIME, [join(ROOT, 'scripts', 'init.mjs'), '--no-gh', ...extra], { cwd: repo, encoding: 'utf8' });
+
+  let r = init();
+  check('init exits 0', r.status === 0, `${r.stdout}${r.stderr}`);
+  for (const f of [
+    '.github/ISSUE_TEMPLATE/task.md', '.github/ISSUE_TEMPLATE/config.yml', '.github/pull_request_template.md',
+    '.github/workflows/guard-main.yml', '.github/workflows/agentic-checks.yml',
+    '.github/scripts/agentic/scope-check.mjs', '.github/scripts/agentic/negative-control.mjs', '.github/scripts/agentic/lib/detect.mjs',
+    '.worktreeinclude',
+  ]) check(`init copies ${f}`, existsSync(join(repo, f)));
+  check('init leaves nothing stray at the root', !existsSync(join(repo, 'claude-settings.json')) && !existsSync(join(repo, 'ci')));
+
+  const settings = JSON.parse(readFileSync(join(repo, '.claude', 'settings.json'), 'utf8'));
+  check('init keeps existing settings', settings.other === true && settings.permissions.deny.includes('WebFetch'));
+  check('init merges the deny list without duplicates', settings.permissions.deny.includes('Bash(git push --force *)') && settings.permissions.deny.filter((/** @type {string} */ d) => d === 'Bash(rm -rf / *)').length === 1);
+
+  const prePush = join(repo, '.git', 'hooks', 'pre-push');
+  check('init installs an executable pre-push', existsSync(prePush) && (statSync(prePush).mode & 0o111) !== 0);
+
+  writeFileSync(join(repo, '.github', 'pull_request_template.md'), 'mine\n');
+  r = init();
+  check('init rerun respects an edited file', r.status === 0 && /pull_request_template\.md exists and differs/.test(r.stdout) && readFileSync(join(repo, '.github', 'pull_request_template.md'), 'utf8') === 'mine\n', r.stdout);
+  const settings2 = JSON.parse(readFileSync(join(repo, '.claude', 'settings.json'), 'utf8'));
+  check('init rerun does not duplicate deny rules', new Set(settings2.permissions.deny).size === settings2.permissions.deny.length);
+  init('--force');
+  check('init --force overwrites an edited file', readFileSync(join(repo, '.github', 'pull_request_template.md'), 'utf8') !== 'mine\n');
+
+  // the installed git pre-push, fed the way git feeds it
+  /** @param {string} line @param {Record<string, string>} [env] */
+  const pre = (line, env = {}) => spawnSync('bash', [prePush, 'origin', 'https://example.invalid/x.git'], { cwd: repo, input: line, encoding: 'utf8', env: { ...process.env, ...env } });
+  const sha = git(['rev-parse', 'HEAD'], repo);
+  const zero = '0'.repeat(40);
+  check('pre-push refuses a push to main', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`).status === 1);
+  check('pre-push allows a new work branch', pre(`refs/heads/feat/1-x ${sha} refs/heads/feat/1-x ${zero}\n`).status === 0);
+  check('pre-push honours the bootstrap valve', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0);
 }
 
 for (const fn of cleanups) fn();
