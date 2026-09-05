@@ -71,3 +71,36 @@ export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files:
   const violations = files.filter((f) => !matchesAny(f, globs));
   return { ok: violations.length === 0, violations, globs };
 }
+
+// GitHub closes an issue on Closes/Fixes/Resolves (and close/closed,
+// fix/fixed, resolve/resolved), each optionally followed by a colon before
+// the `#N`. See docs/workflow.md, "PR": `Closes #N` is plain text.
+const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
+
+/**
+ * The issue numbers a PR body links via a GitHub closing keyword, in order
+ * of first appearance, deduplicated. A bare `#N` with no keyword before it
+ * is not a linked issue and is ignored.
+ */
+export function parseLinkedIssues(prBody: string | null | undefined): number[] {
+  const seen = new Set<number>();
+  const result: number[] = [];
+  for (const m of String(prBody ?? '').matchAll(LINKED_ISSUE_RE)) {
+    const n = Number(m[1]);
+    if (!seen.has(n)) {
+      seen.add(n);
+      result.push(n);
+    }
+  }
+  return result;
+}
+
+export type LinkedIssueGlobs = { issue: number | null; globs: string[] };
+
+/**
+ * Parses the `## Files` globs of several linked issues, keeping each
+ * glob's source issue so the job summary can attribute it.
+ */
+export function collectLinkedGlobs(issues: Array<{ issue: number | null; body: string }>): LinkedIssueGlobs[] {
+  return issues.map(({ issue, body }) => ({ issue, globs: parseIssueGlobs(body) }));
+}
