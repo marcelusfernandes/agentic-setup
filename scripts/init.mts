@@ -8,10 +8,10 @@
 // or on GitHub. Every filesystem write is routed through the write() gate
 // below, so its report line comes from the same code path in both modes. gh
 // writes (label create, milestone POST) are instead skipped by an explicit
-// `if (dryRun)`, because their report line depends on the write's result
-// (e.g. "N/15 labels present") and cannot be produced before it runs;
-// reading gh state (auth status, milestone listing) still happens so the
-// report can say "=" (exists) vs "+" (would be created).
+// `if (dryRun)` and their report line names the outcome a fully successful
+// write would reach (e.g. "N/N labels present") — reading gh state (auth
+// status, milestone listing) still happens so the report can say "="
+// (exists) vs "+" (would be created).
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -161,7 +161,7 @@ if (useGh) {
     say('  ! gh is not authenticated; skipped labels and milestone (run again, or --no-gh)');
   } else {
     if (dryRun) {
-      say(`  + ${LABELS.length} labels`);
+      say(`  + ${LABELS.length}/${LABELS.length} labels present`);
     } else {
       let created = 0;
       for (const [name, color, description] of LABELS) {
