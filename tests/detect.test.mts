@@ -24,7 +24,7 @@ function tempDir(files: Record<string, string> = {}, dirs: string[] = []): strin
 let d = tempDir({ Gemfile: '' }, ['spec']);
 let c = detectCommands(d, {});
 check('ruby with spec/ uses rspec', c.test === 'bundle exec rspec' && c.stack === 'ruby' && c.source === 'detected', JSON.stringify(c));
-check('ruby with spec/ has no check without rubocop config', c.check === null, JSON.stringify(c));
+check('ruby with spec/ has no check without rubocop config', c.check === null && c.stack === 'ruby', JSON.stringify(c));
 
 d = tempDir({ Gemfile: '' });
 c = detectCommands(d, {});
