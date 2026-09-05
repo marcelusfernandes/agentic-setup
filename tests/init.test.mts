@@ -2,8 +2,8 @@
 // Cases for scripts/init.mts: the installer copies templates into a target
 // repository, merges settings, and installs an executable pre-push hook.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { check, commit, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
 
 const repo = tempRepo();
@@ -44,5 +44,46 @@ const zero = '0'.repeat(40);
 check('pre-push refuses a push to main', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`).status === 1);
 check('pre-push allows a new work branch', pre(`refs/heads/feat/1-x ${sha} refs/heads/feat/1-x ${zero}\n`).status === 0);
 check('pre-push honours the bootstrap valve', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0);
+
+// --dry-run: an adopter previews what init would do; nothing is written, and
+// the report of the dry run matches the report of the real run that follows.
+function listFiles(dir: string, base = dir): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    if (name === '.git') return [];
+    const p = join(dir, name);
+    return statSync(p).isDirectory() ? listFiles(p, base) : [relative(base, p)];
+  });
+}
+function snapshot(dir: string): string {
+  return listFiles(dir)
+    .sort()
+    .map((f) => `${f} ${readFileSync(join(dir, f), 'utf8')}`)
+    .join('');
+}
+
+const dryRepo = tempRepo();
+commit(dryRepo, { 'README.md': '# y\n' }, 'init');
+const initIn = (dir: string, ...extra: string[]) =>
+  spawnSync(RUNTIME, [join(ROOT, 'scripts', 'init.mts'), '--no-gh', ...extra], { cwd: dir, encoding: 'utf8' });
+
+const dryPrePush = join(dryRepo, '.git', 'hooks', 'pre-push');
+const beforePrePushExists = existsSync(dryPrePush);
+const beforeTree = snapshot(dryRepo);
+
+const dry = initIn(dryRepo, '--dry-run');
+check('init --dry-run exits 0', dry.status === 0, `${dry.stdout}${dry.stderr}`);
+check('init --dry-run reports a header', /^dry run — nothing written\n/.test(dry.stdout), dry.stdout);
+
+check('init --dry-run creates or modifies no file', snapshot(dryRepo) === beforeTree);
+check('init --dry-run leaves .git/hooks/pre-push untouched', existsSync(dryPrePush) === beforePrePushExists);
+
+const real = initIn(dryRepo);
+check('init real run (after dry run) exits 0', real.status === 0, `${real.stdout}${real.stderr}`);
+check(
+  'dry run report equals the following real run report',
+  dry.stdout === `dry run — nothing written\n${real.stdout}`,
+  `dry:\n${dry.stdout}\nreal:\n${real.stdout}`,
+);
+check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 
 finish();
