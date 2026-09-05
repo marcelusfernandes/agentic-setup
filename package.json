@@ -2,15 +2,19 @@
   "name": "agentic-setup",
   "version": "0.1.0",
   "private": true,
-  "description": "Development manifest for the agentic-setup Claude Code plugin. The plugin itself has no runtime dependencies; this exists so `tsc` can type-check the JSDoc-annotated .mjs files and `npm test` runs the smoke suite.",
+  "type": "module",
+  "description": "Development manifest for the agentic-setup Claude Code plugin. The plugin has no runtime dependencies and no build step: Node 22.18+ runs the .mts sources directly. This exists so `tsc` type-checks them and `npm test` runs the smoke suite.",
   "scripts": {
-    "test": "node tests/smoke.mjs",
-    "test:bun": "bun tests/smoke.mjs",
+    "test": "node tests/smoke.mts",
+    "test:bun": "bun tests/smoke.mts",
     "check": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22.18"
   },
   "license": "MIT"
 }

@@ -36,11 +36,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 22 # 22.18+ runs the .mts scripts directly
       - name: scope
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node .github/scripts/agentic/scope-check.mjs
+        run: node .github/scripts/agentic/scope-check.mts
 
   negative-control:
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 22 # 22.18+ runs the .mts scripts directly
       # --- toolchain setup: mirror your test workflow here -------------------
       # - run: npm ci
       # - uses: actions/setup-python@v5
@@ -62,4 +62,4 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # AGENTIC_TEST_CMD: npm test
-        run: node .github/scripts/agentic/negative-control.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: node .github/scripts/agentic/negative-control.mts --base "$BASE_SHA" --head "$HEAD_SHA"

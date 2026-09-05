@@ -131,7 +131,7 @@ be up to date** — CI runs again on `main` after the merge; a conflict goes bac
 implementer, who runs `git merge origin/main` on the published branch (rebase only
 before the first push; force-push is denied on every branch).
 
-`protect-main.mjs` enforces the same rule on the machine: `gh pr merge` is denied
+`protect-main.mts` enforces the same rule on the machine: `gh pr merge` is denied
 unless every check is green and the review label (or an APPROVED review) is present.
 `AGENTIC_BOOTSTRAP=1` lifts it for the very first PRs of a repository that has no CI
 yet, and for nothing else.

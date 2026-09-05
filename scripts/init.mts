@@ -2,7 +2,7 @@
 // init — sets a repository up for the agent loop. Run from the repository
 // root; idempotent; never overwrites a file you edited unless --force.
 //
-//   node scripts/init.mjs [--milestone "<title>"] [--no-gh] [--force]
+//   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force]
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const LABELS = [
+const LABELS: [string, string, string][] = [
   ['state:ready', '0e8a16', 'Ready to be picked up by an agent'],
   ['state:in-progress', 'fbca04', 'An agent holds the branch lock'],
   ['state:in-review', '1d76db', 'PR open, waiting for CI and the reviewer'],
@@ -35,13 +35,10 @@ const milestone = milestoneIdx !== -1 ? process.argv[milestoneIdx + 1] : null;
 const force = flags.has('--force');
 const useGh = !flags.has('--no-gh');
 
-/** @type {string[]} */
-const report = [];
-/** @param {string} line */
-const say = (line) => report.push(line);
+const report: string[] = [];
+const say = (line: string): number => report.push(line);
 
-/** @param {string} cmd @param {string[]} args @param {string} [cwd] */
-function run(cmd, args, cwd) {
+function run(cmd: string, args: string[], cwd?: string) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
   return { ok: r.status === 0, out: `${r.stdout ?? ''}`.trim(), err: `${r.stderr ?? ''}`.trim() };
 }
@@ -53,8 +50,12 @@ if (!top.ok) {
 }
 const root = top.out;
 
-/** @param {string} dir @returns {string[]} */
-function walk(dir) {
+const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 18)) {
+  say(`! node ${process.versions.node}: the hooks and CI scripts run TypeScript directly and need 22.18 or newer`);
+}
+
+function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
     return statSync(p).isDirectory() ? walk(p) : [p];
@@ -64,9 +65,8 @@ function walk(dir) {
 /**
  * Copy one file. Existing files are left alone unless `overwrite` (plugin-
  * owned code) or --force; identical files are reported as `=`.
- * @param {string} src @param {string} dst @param {boolean} overwrite
  */
-function copyOne(src, dst, overwrite) {
+function copyOne(src: string, dst: string, overwrite: boolean): void {
   const shown = relative(root, dst);
   if (existsSync(dst) && !overwrite && !force) {
     if (readFileSync(dst, 'utf8') === readFileSync(src, 'utf8')) say(`  = ${shown}`);
@@ -78,8 +78,7 @@ function copyOne(src, dst, overwrite) {
   say(`  + ${shown}`);
 }
 
-/** @param {string} srcDir @param {string} dstDir @param {boolean} overwrite */
-function copyTree(srcDir, dstDir, overwrite) {
+function copyTree(srcDir: string, dstDir: string, overwrite: boolean): void {
   for (const src of walk(srcDir)) copyOne(src, join(dstDir, relative(srcDir, src)), overwrite);
 }
 
@@ -96,8 +95,7 @@ copyTree(join(PLUGIN, 'ci'), join(root, '.github', 'scripts', 'agentic'), true);
 say('.claude/settings.json');
 const settingsPath = join(root, '.claude', 'settings.json');
 const wanted = JSON.parse(readFileSync(join(PLUGIN, 'templates', 'claude-settings.json'), 'utf8'));
-/** @type {Record<string, any> | null} */
-let settings = {};
+let settings: Record<string, any> | null = {};
 if (existsSync(settingsPath)) {
   try {
     settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
@@ -108,7 +106,7 @@ if (existsSync(settingsPath)) {
 }
 if (settings) {
   const current = new Set(settings.permissions?.deny ?? []);
-  const added = wanted.permissions.deny.filter((/** @type {string} */ rule) => !current.has(rule));
+  const added = wanted.permissions.deny.filter((rule: string) => !current.has(rule));
   const merged = { ...settings, permissions: { ...(settings.permissions ?? {}), deny: [...current, ...added] } };
   mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, `${JSON.stringify(merged, null, 2)}\n`);

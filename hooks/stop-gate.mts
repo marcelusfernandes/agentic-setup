@@ -2,7 +2,7 @@
 // stop-gate — Stop.
 //
 // Before an agent on a work branch is allowed to stop, run the project's
-// check and test commands (ci/lib/detect.mjs; AGENTIC_CHECK_CMD /
+// check and test commands (ci/lib/detect.mts; AGENTIC_CHECK_CMD /
 // AGENTIC_TEST_CMD override). Red output goes to stderr and the stop is
 // blocked (exit 2), so the agent reads the failure and keeps working.
 //
@@ -14,8 +14,8 @@
 //   - no test command can be detected — the real gate is CI.
 //
 // Crash policy: ALLOW. A hook that cannot run must not trap the agent.
-import { currentBranch, lastCommitSubject, note, parsePayload, readStdin, repoRoot, run } from './lib/common.mjs';
-import { detectCommands } from '../ci/lib/detect.mjs';
+import { currentBranch, lastCommitSubject, note, parsePayload, readStdin, repoRoot, run } from './lib/common.mts';
+import { detectCommands } from '../ci/lib/detect.mts';
 
 const HOOK = 'stop-gate';
 const WORK_BRANCH = /^[a-z]+\/\d+-[a-z0-9-]+$/;
@@ -23,11 +23,9 @@ const PROTECTED = /^(?:main|master)$/;
 const TAIL_LINES = 60;
 const REENTRY = 'AGENTIC_STOP_GATE_ACTIVE';
 
-/** @param {string} text */
-const tail = (text) => text.trim().split('\n').slice(-TAIL_LINES).join('\n');
+const tail = (text: string): string => text.trim().split('\n').slice(-TAIL_LINES).join('\n');
 
-/** @param {string} command @param {string} cwd */
-function sh(command, cwd) {
+function sh(command: string, cwd: string) {
   const env = { ...process.env, [REENTRY]: '1' };
   const r = run(command, [], { cwd, shell: true, env });
   return { ok: r.ok, output: `${r.stdout}${r.stderr}` };
@@ -59,7 +57,8 @@ async function main() {
     return;
   }
 
-  for (const [kind, command] of [['check', commands.check], ['test', commands.test]]) {
+  const steps: [string, string | null][] = [['check', commands.check], ['test', commands.test]];
+  for (const [kind, command] of steps) {
     if (!command) continue;
     const r = sh(command, root);
     if (!r.ok) {

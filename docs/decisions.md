@@ -70,7 +70,7 @@ the agent lacks; production cut-overs; any `state:blocked` issue.
   checks, no force-push, no deletion. Free on public repositories and on paid
   organisations; **not available on private repositories under the free plan** (rulesets
   and branch protection return 403 there).
-- **(b) On every machine that runs Claude Code:** the plugin's `protect-main.mjs` hook
+- **(b) On every machine that runs Claude Code:** the plugin's `protect-main.mts` hook
   plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
   `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
   not cover a push from elsewhere.

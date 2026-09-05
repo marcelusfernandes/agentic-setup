@@ -22,19 +22,17 @@
 // guard-main action are the other layers. The one place this fails CLOSED is
 // item 5: if `gh` cannot report the checks or the PR, the merge is denied,
 // because "could not verify" is not "verified".
-import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, run, valve } from './lib/common.mjs';
+import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, run, valve } from './lib/common.mts';
 
 const HOOK = 'protect-main';
 const PROTECTED = /^(?:refs\/heads\/)?(?:main|master)$/;
 const GREEN = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
 
-/** @param {string} args */
-function isForcePush(args) {
+function isForcePush(args: string): boolean {
   return /--force\b/.test(args) || /(?:^|\s)-[A-Za-z]*f[A-Za-z]*(?=\s|$)/.test(args) || /\s\+\S/.test(args);
 }
 
-/** @param {string} args @param {string} cwd @param {string} command */
-function checkPush(args, cwd, command) {
+function checkPush(args: string, cwd: string, command: string): void {
   if (isForcePush(args)) deny(HOOK, 'force-push is forbidden on every branch.');
   const tokens = args.trim().split(/\s+/).filter(Boolean);
   const deleting = tokens.includes('--delete') || tokens.includes('-d');
@@ -48,15 +46,14 @@ function checkPush(args, cwd, command) {
   }
 }
 
-/** @param {string} args @param {string} cwd @param {string} command */
-function checkMerge(args, cwd, command) {
+function checkMerge(args: string, cwd: string, command: string): void {
   if (/--admin\b/.test(args)) deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
   if (valve('AGENTIC_ALLOW_MERGE', command)) return;
   const target = args.trim().split(/\s+/).find((t) => t && !t.startsWith('-'));
   const ref = target ? [target] : [];
 
   const checks = run('gh', ['pr', 'checks', ...ref, '--json', 'name,state'], { cwd });
-  let list = null;
+  let list: { name: string; state: string }[] | null = null;
   try {
     list = JSON.parse(checks.stdout || '[]');
   } catch {
@@ -68,7 +65,7 @@ function checkMerge(args, cwd, command) {
   if (red.length) deny(HOOK, `checks not green: ${red.map((c) => `${c.name}=${c.state}`).join(', ')}.`);
 
   const view = run('gh', ['pr', 'view', ...ref, '--json', 'labels,reviewDecision'], { cwd });
-  let pr = null;
+  let pr: { labels?: { name: string }[]; reviewDecision?: string } | null = null;
   try {
     pr = JSON.parse(view.stdout || 'null');
   } catch {
@@ -76,7 +73,7 @@ function checkMerge(args, cwd, command) {
   }
   if (!pr) deny(HOOK, `could not read the PR (${(view.stderr || 'no output').trim().slice(0, 160)}).`);
   const label = process.env.AGENTIC_REVIEW_LABEL || 'review:approved';
-  const hasLabel = (pr.labels ?? []).some((/** @type {{ name: string }} */ l) => l.name === label);
+  const hasLabel = (pr.labels ?? []).some((l) => l.name === label);
   if (!hasLabel && pr.reviewDecision !== 'APPROVED') {
     deny(HOOK, `the PR has neither the "${label}" label nor an APPROVED review; the reviewer goes first.`);
   }

@@ -3,13 +3,12 @@
 // "PR": only bullet lines count in the issue; only `authorised:` lines
 // count in the PR; only backtick-quoted spans are globs when any are
 // present, otherwise the first whitespace-delimited token is.
-import { matchesAny } from './globs.mjs';
+import { matchesAny } from './globs.mts';
 
 /**
  * The text under `## <heading>` up to the next `## `.
- * @param {string | null | undefined} body @param {string} heading
  */
-export function extractSection(body, heading) {
+export function extractSection(body: string | null | undefined, heading: string): string | null {
   const lines = String(body ?? '').split(/\r?\n/);
   const start = lines.findIndex((l) => new RegExp(`^##\\s+${heading}\\s*$`, 'i').test(l.trim()));
   if (start === -1) return null;
@@ -18,20 +17,18 @@ export function extractSection(body, heading) {
   return (end === -1 ? rest : rest.slice(0, end)).join('\n');
 }
 
-/** @param {string} text */
-function backticked(text) {
+function backticked(text: string): string[] {
   return [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim()).filter(Boolean);
 }
 
 /**
  * One or more globs per bullet line, backticked or bare, comma-separated.
  * Prose lines (no leading `-`/`*`) are ignored.
- * @param {string} issueBody @returns {string[]}
  */
-export function parseIssueGlobs(issueBody) {
+export function parseIssueGlobs(issueBody: string): string[] {
   const section = extractSection(issueBody, 'Files');
   if (section === null) return [];
-  const globs = [];
+  const globs: string[] = [];
   for (const raw of section.split(/\r?\n/)) {
     const bullet = raw.trim().match(/^[-*]\s+(.*)$/);
     if (!bullet) continue;
@@ -49,12 +46,11 @@ export function parseIssueGlobs(issueBody) {
  * Only `authorised:` lines (bullet or bare) grant globs; the rest of the
  * PR's `## Files` section is prose. Trailing prose on an `authorised:` line
  * is ignored when the glob is backticked; otherwise the first token wins.
- * @param {string} prBody @returns {string[]}
  */
-export function parseAuthorisedGlobs(prBody) {
+export function parseAuthorisedGlobs(prBody: string): string[] {
   const section = extractSection(prBody, 'Files');
   if (section === null) return [];
-  const globs = [];
+  const globs: string[] = [];
   for (const raw of section.split(/\r?\n/)) {
     const line = raw.trim().replace(/^[-*]\s+/, '');
     const m = line.match(/^authorised:\s*(.*)$/i);
@@ -70,10 +66,7 @@ export function parseAuthorisedGlobs(prBody) {
   return globs;
 }
 
-/**
- * @param {{ files: string[], issueGlobs: string[], authorisedGlobs?: string[] }} input
- */
-export function checkScope({ files, issueGlobs, authorisedGlobs = [] }) {
+export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
   const globs = [...issueGlobs, ...authorisedGlobs];
   const violations = files.filter((f) => !matchesAny(f, globs));
   return { ok: violations.length === 0, violations, globs };

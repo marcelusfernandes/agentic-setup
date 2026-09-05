@@ -4,11 +4,9 @@
 // but `/`), everything else literal. Paths are POSIX-relative, which is what
 // `git diff --name-only` prints on every OS.
 
-/** @param {string} literal */
-const escapeRegExp = (literal) => literal.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (literal: string): string => literal.replace(/[.+^${}()|[\]\\]/g, '\\$&');
 
-/** @param {string} glob */
-export function globToRegExp(glob) {
+export function globToRegExp(glob: string): RegExp {
   const source = glob
     .split(/(\*\*\/|\*\*|\*)/)
     .map((piece) => {
@@ -21,5 +19,4 @@ export function globToRegExp(glob) {
   return new RegExp(`^${source}$`);
 }
 
-/** @param {string} file @param {string[]} globs */
-export const matchesAny = (file, globs) => globs.some((g) => globToRegExp(g).test(file));
+export const matchesAny = (file: string, globs: string[]): boolean => globs.some((g) => globToRegExp(g).test(file));

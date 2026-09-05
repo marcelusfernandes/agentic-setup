@@ -1,10 +1,8 @@
 // `--key value` and `--flag` into an object. Enough for these scripts; no
 // dependency.
 
-/** @param {string[]} argv @returns {Record<string, string | true>} */
-export function parseArgs(argv) {
-  /** @type {Record<string, string | true>} */
-  const out = {};
+export function parseArgs(argv: string[]): Record<string, string | true> {
+  const out: Record<string, string | true> = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;

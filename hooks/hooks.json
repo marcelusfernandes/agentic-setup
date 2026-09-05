@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-main.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-main.mts\"",
             "timeout": 60
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-worktree.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-worktree.mts\"",
             "timeout": 10
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.mts\"",
             "timeout": 600
           }
         ]

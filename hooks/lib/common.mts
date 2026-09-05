@@ -1,12 +1,12 @@
 // Shared helpers for the agentic-setup hooks. Node built-ins only, so the
 // same files run unchanged under Bun. Nothing here exits on its own: every
 // hook states its crash policy in its own header and decides for itself.
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
 
 const MAX_STDIN = 1024 * 1024;
 
-/** @returns {Promise<string>} the raw stdin, capped at 1 MiB */
-export function readStdin() {
+/** The raw stdin, capped at 1 MiB. */
+export function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let raw = '';
     process.stdin.setEncoding('utf8');
@@ -18,8 +18,8 @@ export function readStdin() {
   });
 }
 
-/** @param {string} raw @returns {Record<string, any> | null} null when the payload is not JSON */
-export function parsePayload(raw) {
+/** `null` when the payload is not JSON. */
+export function parsePayload(raw: string): Record<string, any> | null {
   try {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -28,12 +28,7 @@ export function parsePayload(raw) {
   }
 }
 
-/**
- * @param {string} cmd
- * @param {string[]} args
- * @param {import('node:child_process').SpawnSyncOptions} [opts]
- */
-export function run(cmd, args, opts = {}) {
+export function run(cmd: string, args: string[], opts: SpawnSyncOptions = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
   return {
     ok: r.status === 0,
@@ -44,23 +39,19 @@ export function run(cmd, args, opts = {}) {
   };
 }
 
-/** @param {string[]} args @param {string} cwd */
-export const git = (args, cwd) => run('git', args, { cwd });
+export const git = (args: string[], cwd: string) => run('git', args, { cwd });
 
-/** @param {string} cwd */
-export function currentBranch(cwd) {
+export function currentBranch(cwd: string): string {
   const r = git(['branch', '--show-current'], cwd);
   return r.ok ? r.stdout.trim() : '';
 }
 
-/** @param {string} cwd */
-export function repoRoot(cwd) {
+export function repoRoot(cwd: string): string {
   const r = git(['rev-parse', '--show-toplevel'], cwd);
   return r.ok ? r.stdout.trim() : cwd;
 }
 
-/** @param {string} cwd */
-export function lastCommitSubject(cwd) {
+export function lastCommitSubject(cwd: string): string {
   const r = git(['log', '-1', '--pretty=%s'], cwd);
   return r.ok ? r.stdout.trim() : '';
 }
@@ -68,10 +59,8 @@ export function lastCommitSubject(cwd) {
 /**
  * Deny a PreToolUse call: JSON decision on stdout (the documented channel),
  * the reason on stderr (what the agent reads), exit 2 (blocks regardless).
- * @param {string} hook @param {string} reason
- * @returns {never}
  */
-export function deny(hook, reason) {
+export function deny(hook: string, reason: string): never {
   const text = `[agentic-setup/${hook}] ${reason}`;
   process.stdout.write(
     JSON.stringify({
@@ -86,8 +75,7 @@ export function deny(hook, reason) {
   process.exit(2);
 }
 
-/** @param {string} hook @param {string} message */
-export function note(hook, message) {
+export function note(hook: string, message: string): void {
   process.stderr.write(`[agentic-setup/${hook}] ${message}\n`);
 }
 
@@ -97,9 +85,8 @@ export function note(hook, message) {
  * Hooks run with Claude Code's environment, not the command's, so inline is
  * the only way an agent can declare one — and declaring it is deliberate,
  * visible in the transcript, and greppable.
- * @param {string} name @param {string} command
  */
-export function valve(name, command) {
+export function valve(name: string, command: string): boolean {
   if (process.env[name] === '1') return true;
   return new RegExp(`(?:^|[\\s;&|(])${name}=1(?=\\s)`).test(command);
 }
@@ -111,9 +98,8 @@ export function valve(name, command) {
  * as `git push`. Quotes are not parsed: a string that contains `&& git push`
  * will be seen as a push. That errs on the side of denying, and the agent
  * can rephrase — the cheap side of the trade.
- * @param {string} command @returns {string[]}
  */
-export function commandSegments(command) {
+export function commandSegments(command: string): string[] {
   return String(command)
     .split(/&&|\|\||[;|\n(]/)
     .map((s) => s.trim())

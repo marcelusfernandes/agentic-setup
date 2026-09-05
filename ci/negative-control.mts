@@ -13,17 +13,17 @@
 //
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
 // the event or --labels a,b. Test files: TEST_FILE_GLOBS below, extended
-// with AGENTIC_TEST_GLOBS (comma-separated). Test command: ci/lib/detect.mjs
+// with AGENTIC_TEST_GLOBS (comma-separated). Test command: ci/lib/detect.mts
 // or AGENTIC_TEST_CMD. For Node projects the head checkout's node_modules is
 // linked into the base worktree so nothing is reinstalled.
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { parseArgs } from './lib/args.mjs';
-import { detectCommands } from './lib/detect.mjs';
-import { matchesAny } from './lib/globs.mjs';
-import { appendSummary } from './lib/summary.mjs';
+import { parseArgs } from './lib/args.mts';
+import { detectCommands } from './lib/detect.mts';
+import { matchesAny } from './lib/globs.mts';
+import { appendSummary } from './lib/summary.mts';
 
 const SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra', 'type:refactor', 'type:spec'];
 const TEST_FILE_GLOBS = [
@@ -35,8 +35,9 @@ const TAIL = 40;
 const args = parseArgs(process.argv.slice(2));
 const root = process.cwd();
 
-/** @param {'skipped'|'pass'|'vacuous'|'no-tests'|'cannot-run'} outcome @param {string} detail */
-function finish(outcome, detail) {
+type Outcome = 'skipped' | 'pass' | 'vacuous' | 'no-tests' | 'cannot-run';
+
+function finish(outcome: Outcome, detail: string): never {
   const ok = outcome === 'skipped' || outcome === 'pass';
   appendSummary(`## negative-control\n\n${ok ? '' : '**FAILED** — '}\`${outcome}\` — ${detail}`);
   console.log(`negative-control: ${outcome} — ${detail}`);
@@ -49,8 +50,7 @@ function readEvent() {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-/** @param {string[]} gitArgs @param {string} [cwd] */
-function git(gitArgs, cwd = root) {
+function git(gitArgs: string[], cwd: string = root): string {
   const r = spawnSync('git', gitArgs, { cwd, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${gitArgs.join(' ')}: ${r.stderr.trim()}`);
   return r.stdout;
@@ -63,7 +63,7 @@ if (!base || !head) finish('cannot-run', 'no base/head (pass --base/--head or ru
 
 const labels = typeof args.labels === 'string'
   ? args.labels.split(',').map((l) => l.trim())
-  : (event?.pull_request?.labels ?? []).map((/** @type {{ name: string }} */ l) => l.name);
+  : (event?.pull_request?.labels ?? []).map((l: { name: string }) => l.name);
 const skip = SKIP_LABELS.find((l) => labels.includes(l));
 if (skip) finish('skipped', `PR is labelled \`${skip}\`; no negative control expected.`);
 
@@ -79,9 +79,8 @@ if (!commands.test) finish('cannot-run', 'no test command detected; set AGENTIC_
  * Runs the test command on a base worktree with the head's test files on top.
  * Returns the outcome instead of exiting, so the worktree is always removed
  * (`process.exit` inside a `try` skips `finally`).
- * @returns {{ outcome: 'pass'|'vacuous'|'cannot-run', detail: string }}
  */
-function runOnBase() {
+function runOnBase(): { outcome: Outcome; detail: string } {
   const tmp = mkdtempSync(join(tmpdir(), 'negative-control-'));
   try {
     git(['worktree', 'add', '--detach', tmp, base]);

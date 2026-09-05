@@ -8,15 +8,14 @@
 //   --files-file <path>  --issue-body-file <path>  --pr-body-file <path>
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { parseArgs } from './lib/args.mjs';
-import { checkScope, parseAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mjs';
-import { appendSummary } from './lib/summary.mjs';
+import { parseArgs } from './lib/args.mts';
+import { checkScope, parseAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
+import { appendSummary } from './lib/summary.mts';
 
 const args = parseArgs(process.argv.slice(2));
 const root = typeof args.root === 'string' ? args.root : process.cwd();
 
-/** @param {string} message @returns {never} */
-function fail(message) {
+function fail(message: string): never {
   console.error(`scope: ${message}`);
   appendSummary(`## scope\n\n**FAILED** — ${message}`);
   process.exit(1);
@@ -28,22 +27,19 @@ function readEvent() {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-/** @param {string[]} ghArgs */
-function gh(ghArgs) {
+function gh(ghArgs: string[]): string {
   const r = spawnSync('gh', ghArgs, { encoding: 'utf8' });
   if (r.status !== 0) fail(`gh ${ghArgs.join(' ')} failed: ${(r.stderr || r.stdout).trim()}`);
   return r.stdout;
 }
 
-/** @param {string} base @param {string} head */
-function changedFiles(base, head) {
+function changedFiles(base: string, head: string): string[] {
   const r = spawnSync('git', ['diff', '--no-renames', '--name-only', `${base}...${head}`], { cwd: root, encoding: 'utf8' });
   if (r.status !== 0) fail(`git diff failed: ${r.stderr.trim()}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-/** @param {string} p */
-const lines = (p) => readFileSync(p, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+const lines = (p: string): string[] => readFileSync(p, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean);
 
 const event = readEvent();
 
@@ -58,7 +54,7 @@ const prBody = typeof args['pr-body-file'] === 'string'
   ? readFileSync(args['pr-body-file'], 'utf8')
   : String(event?.pull_request?.body ?? '');
 
-let issueBody;
+let issueBody: string;
 if (typeof args['issue-body-file'] === 'string') {
   issueBody = readFileSync(args['issue-body-file'], 'utf8');
 } else {

@@ -7,12 +7,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** @typedef {{ test: string | null, check: string | null, stack: string }} Commands */
+export type Commands = { test: string | null; check: string | null; stack: string };
+export type Detected = Commands & { source: 'override' | 'detected' | 'none' };
 
-/** @param {string} root @param {string} file */
-const has = (root, file) => existsSync(join(root, file));
-/** @param {string} root @param {string} file */
-const read = (root, file) => {
+const has = (root: string, file: string) => existsSync(join(root, file));
+const read = (root: string, file: string): string => {
   try {
     return readFileSync(join(root, file), 'utf8');
   } catch {
@@ -20,24 +19,21 @@ const read = (root, file) => {
   }
 };
 
-/** @param {string} root */
-function fromMakefile(root) {
+function fromMakefile(root: string): Commands | null {
   const mk = read(root, 'Makefile');
   if (!/^test\s*:/m.test(mk)) return null;
   const check = /^check\s*:/m.test(mk) ? 'make check' : /^lint\s*:/m.test(mk) ? 'make lint' : null;
   return { test: 'make test', check, stack: 'make' };
 }
 
-/** @param {string} root */
-function nodePackageManager(root) {
+function nodePackageManager(root: string): string {
   if (has(root, 'pnpm-lock.yaml')) return 'pnpm';
   if (has(root, 'yarn.lock')) return 'yarn';
   if (has(root, 'bun.lock') || has(root, 'bun.lockb')) return 'bun';
   return 'npm';
 }
 
-/** @param {string} root */
-function fromPackageJson(root) {
+function fromPackageJson(root: string): Commands | null {
   if (!has(root, 'package.json')) return null;
   let pkg;
   try {
@@ -51,15 +47,14 @@ function fromPackageJson(root) {
   const placeholder = /no test specified/;
   const test =
     typeof scripts.test === 'string' && !placeholder.test(scripts.test) ? `${pm} test` : null;
-  let check = null;
+  let check: string | null = null;
   if (typeof scripts.check === 'string') check = `${pm} run check`;
   else if (typeof scripts.lint === 'string') check = `${pm} run lint`;
   else if (has(root, 'tsconfig.json')) check = `${exec} tsc --noEmit`;
   return { test, check, stack: 'node' };
 }
 
-/** @param {string} root */
-function fromPython(root) {
+function fromPython(root: string): Commands | null {
   const markers = ['pyproject.toml', 'pytest.ini', 'setup.py', 'requirements.txt'];
   if (!markers.some((m) => has(root, m))) return null;
   const runner = has(root, 'uv.lock') ? 'uv run ' : has(root, 'poetry.lock') ? 'poetry run ' : '';
@@ -68,27 +63,20 @@ function fromPython(root) {
   return { test: `${runner}pytest`, check: hasRuff ? `${runner}ruff check .` : null, stack: 'python' };
 }
 
-/** @param {string} root */
-function fromGo(root) {
+function fromGo(root: string): Commands | null {
   if (!has(root, 'go.mod')) return null;
   return { test: 'go test ./...', check: 'go vet ./...', stack: 'go' };
 }
 
-/** @param {string} root */
-function fromCargo(root) {
+function fromCargo(root: string): Commands | null {
   if (!has(root, 'Cargo.toml')) return null;
   return { test: 'cargo test', check: 'cargo check', stack: 'rust' };
 }
 
 const DETECTORS = [fromMakefile, fromPackageJson, fromPython, fromGo, fromCargo];
 
-/**
- * @param {string} root
- * @param {NodeJS.ProcessEnv} [env]
- * @returns {Commands & { source: 'override' | 'detected' | 'none' }}
- */
-export function detectCommands(root, env = process.env) {
-  let detected = null;
+export function detectCommands(root: string, env: NodeJS.ProcessEnv = process.env): Detected {
+  let detected: Commands | null = null;
   for (const detector of DETECTORS) {
     detected = detector(root);
     if (detected) break;

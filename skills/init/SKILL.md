@@ -9,9 +9,9 @@ Run the installer from the repository root. `CLAUDE_PLUGIN_ROOT` is set for hook
 processes but not for the Bash tool, so locate the script first:
 
 ```bash
-INIT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/init.mjs}"
-[ -f "$INIT" ] || INIT="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/init.mjs' 2>/dev/null | head -1)"
-[ -f "$INIT" ] || { echo "agentic-setup: init.mjs not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+INIT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/init.mts}"
+[ -f "$INIT" ] || INIT="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/init.mts' 2>/dev/null | head -1)"
+[ -f "$INIT" ] || { echo "agentic-setup: init.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
 node "$INIT" --milestone "M1 <name>"
 ```
 

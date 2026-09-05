@@ -7,7 +7,8 @@ agent** — no human in the loop except at the points the loop names.
 Project-agnostic by construction. Nothing here assumes a language or framework: the
 test command is detected from the repository (`package.json`, `pyproject.toml`,
 `go.mod`, `Cargo.toml`, …) and can be overridden with one setting. The hooks are two
-small Node scripts with no dependencies; they run unchanged under Bun.
+small TypeScript scripts with no dependencies and no build step — Node 22.18+ runs
+`.mts` files directly; Bun runs the same files.
 
 ## Install
 
@@ -65,17 +66,25 @@ the PR added actually fail without the change.
 |---|---|
 | `agents/` | `implementer` (one issue → one PR, test first, own worktree), `reviewer` (read-only, JSON verdict, sets the label), `docs-writer` (docs equal to code, `type:docs` PRs) |
 | `skills/` | `orchestrate` (one pass of the loop, for the main session), `init` (set a repository up), `safe-worktree` (how not to lose work), `issue-and-pr` (the exact `gh` contract) |
-| `hooks/` | `protect-main.mjs` (no push to main, no merge without green checks and the review label), `protect-worktree.mjs` (a subagent may not write into the main checkout), `stop-gate.mjs` (run the detected check and test commands before an agent on a work branch stops), and the git `pre-push` the init installs |
-| `ci/` | `scope-check.mjs` (diff ⊆ the issue's globs), `negative-control.mjs` (the PR's tests must fail on the base), `lib/detect.mjs` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
+| `hooks/` | `protect-main.mts` (no push to main, no merge without green checks and the review label), `protect-worktree.mts` (a subagent may not write into the main checkout), `stop-gate.mts` (run the detected check and test commands before an agent on a work branch stops), and the git `pre-push` the init installs |
+| `ci/` | `scope-check.mts` (diff ⊆ the issue's globs), `negative-control.mts` (the PR's tests must fail on the base), `lib/detect.mts` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
 | `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
 | `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
-| `tests/smoke.mjs` | 60+ cases against real throwaway repositories; `node tests/smoke.mjs` or `bun tests/smoke.mjs` |
+| `tests/smoke.mts` | 73 cases against real throwaway repositories, nothing mocked; `node tests/smoke.mts` or `bun tests/smoke.mts` |
 
 ## Requirements
 
-- Node.js ≥ 18 on the machine that runs Claude Code (Bun runs the same files; the smoke
-  suite is run under both). The hooks fail **open** when Node is missing — they are one
-  layer of three, not the only one.
+- **Node.js ≥ 22.18** on the machine that runs Claude Code: the hooks and CI scripts are
+  `.mts` files run directly (type stripping, on by default since 22.18; no build). `.mts`
+  rather than `.ts` because a `.ts` file takes its module format from the nearest
+  `package.json` `"type"`, and the CI scripts are copied into repositories this plugin
+  does not control. The hooks fail **open** when Node is missing or too old — they are
+  one layer of three, not the only one. GitHub's `ubuntu-latest` already ships 22.23.
+- Bun runs the same files (the smoke suite is run under both), with one caveat: Bun 1.2.8
+  treats `.mts` as CommonJS inside a repository whose `package.json` says
+  `"type": "commonjs"` — a Bun bug Node does not have. The plugin's own directory declares
+  `"type": "module"`, so the hooks are unaffected; only run the copied CI scripts under Bun
+  in such a repository if you have checked your Bun version.
 - Override detection when it guesses wrong: `AGENTIC_TEST_CMD`, `AGENTIC_CHECK_CMD`,
   `AGENTIC_TEST_GLOBS`. Valves, always declared inline and visible in the transcript:
   `AGENTIC_ALLOW_PUSH_MAIN=1`, `AGENTIC_ALLOW_MERGE=1`. Review label: `AGENTIC_REVIEW_LABEL`.

@@ -14,7 +14,7 @@
 // Crash policy: ALLOW.
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { deny, git, note, parsePayload, readStdin } from './lib/common.mjs';
+import { deny, git, note, parsePayload, readStdin } from './lib/common.mts';
 
 const HOOK = 'protect-worktree';
 
@@ -22,9 +22,8 @@ const HOOK = 'protect-worktree';
  * Real path of `p`, resolving symlinks through the deepest ancestor that
  * exists (the file itself may not exist yet). `/var/...` and
  * `/private/var/...` must compare equal on macOS.
- * @param {string} p
  */
-function realish(p) {
+function realish(p: string): string {
   let existing = p;
   while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
   const rest = relative(existing, p);
@@ -35,8 +34,7 @@ function realish(p) {
   }
 }
 
-/** @param {string} parent @param {string} child */
-const isInside = (parent, child) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+const isInside = (parent: string, child: string): boolean => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 
 async function main() {
   const payload = parsePayload(await readStdin());
