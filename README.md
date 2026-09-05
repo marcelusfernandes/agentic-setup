@@ -70,7 +70,7 @@ the PR added actually fail without the change.
 | `ci/` | `scope-check.mts` (diff ⊆ the issue's globs), `negative-control.mts` (the PR's tests must fail on the base), `lib/detect.mts` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
 | `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
 | `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
-| `tests/run.mts` | discovers and runs every `tests/*.test.mts` file (80 cases total, split by area), against real throwaway repositories, nothing mocked; `npm test` or `npm run test:bun` |
+| `tests/run.mts` | discovers and runs every `tests/*.test.mts` file (split by area) — cases against real throwaway repositories, nothing mocked; `npm test` or `npm run test:bun` |
 
 ## Requirements
 
