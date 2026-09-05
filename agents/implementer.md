@@ -32,7 +32,7 @@ Read before writing. Follow the conventions already present in neighbouring file
 
 ## Verification
 
-Run the profile's `test_file` command on the tests covering your scope — not the whole suite; the orchestrator runs that once at the end. Then run `lint` and `format` on your files. Use the commands exactly as given in your prompt: never invent `npm test`, `pytest`, `cargo test` or any other stack command. A command given as `null` does not exist — skip that gate and say so in your report.
+Run the profile's `test_file` command on the tests covering your scope — not the whole suite; the orchestrator runs that once at the end. Then run `lint` and `format` on your files. Use the commands exactly as given in your prompt: never invent a stack-specific test, lint or format command that was not given to you. A command given as `null` does not exist — skip that gate and say so in your report.
 
 ## Committing
 

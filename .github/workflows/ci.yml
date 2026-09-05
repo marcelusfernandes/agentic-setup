@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: lint + smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            if [ "$(uname -s)" = "Darwin" ]; then brew install jq; else sudo apt-get update && sudo apt-get install -y jq; fi
+          fi
+
+      - name: Install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            if [ "$(uname -s)" = "Darwin" ]; then brew install shellcheck; else sudo apt-get update && sudo apt-get install -y shellcheck; fi
+          fi
+
+      - name: Lint (shellcheck + portability + repo policy)
+        run: bash tests/lint.sh
+
+      - name: Smoke tests
+        run: bash tests/smoke.sh
+
+  validate:
+    name: claude plugin validate --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin manifest
+        run: claude plugin validate --strict .
