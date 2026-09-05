@@ -4,6 +4,13 @@
 //
 // Detection is a default, not a contract: AGENTIC_TEST_CMD and
 // AGENTIC_CHECK_CMD override each field. Node built-ins only.
+//
+// Detector order (first match wins, see DETECTORS below): Makefile,
+// package.json (node), Python (pyproject.toml/pytest.ini/setup.py/
+// requirements.txt), go.mod, Cargo.toml, Gemfile (ruby), mix.exs (elixir),
+// build.gradle(.kts) (gradle), pom.xml (maven). Makefile always wins: a repo
+// that also happens to hold, say, a Gemfile still gets `make test` when it
+// has a Makefile with a test: target.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -73,7 +80,43 @@ function fromCargo(root: string): Commands | null {
   return { test: 'cargo test', check: 'cargo check', stack: 'rust' };
 }
 
-const DETECTORS = [fromMakefile, fromPackageJson, fromPython, fromGo, fromCargo];
+function fromRuby(root: string): Commands | null {
+  if (!has(root, 'Gemfile')) return null;
+  const test = has(root, 'spec') ? 'bundle exec rspec' : 'bundle exec rake test';
+  const check = has(root, '.rubocop.yml') ? 'bundle exec rubocop' : null;
+  return { test, check, stack: 'ruby' };
+}
+
+function fromElixir(root: string): Commands | null {
+  if (!has(root, 'mix.exs')) return null;
+  return { test: 'mix test', check: 'mix format --check-formatted', stack: 'elixir' };
+}
+
+function fromGradle(root: string): Commands | null {
+  if (!has(root, 'build.gradle') && !has(root, 'build.gradle.kts')) return null;
+  const test = has(root, 'gradlew') ? './gradlew test' : 'gradle test';
+  // No obvious universal check task across Gradle projects (checkstyle,
+  // ktlint, spotless, etc. all need opt-in plugin detection); leave null.
+  return { test, check: null, stack: 'gradle' };
+}
+
+function fromMaven(root: string): Commands | null {
+  if (!has(root, 'pom.xml')) return null;
+  // Same reasoning as Gradle: no universal lint/format plugin to assume.
+  return { test: 'mvn -q test', check: null, stack: 'maven' };
+}
+
+const DETECTORS = [
+  fromMakefile,
+  fromPackageJson,
+  fromPython,
+  fromGo,
+  fromCargo,
+  fromRuby,
+  fromElixir,
+  fromGradle,
+  fromMaven,
+];
 
 export function detectCommands(root: string, env: NodeJS.ProcessEnv = process.env): Detected {
   let detected: Commands | null = null;

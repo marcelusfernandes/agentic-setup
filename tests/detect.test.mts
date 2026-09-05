@@ -62,7 +62,8 @@ check('Makefile wins over other stacks', c.test === 'make test' && c.stack === '
 
 // --- AC3: env still overrides every new stack ---
 
-for (const files of [{ Gemfile: '' }, { 'mix.exs': '' }, { 'build.gradle': '' }, { 'pom.xml': '' }]) {
+const markerFiles: Array<Record<string, string>> = [{ Gemfile: '' }, { 'mix.exs': '' }, { 'build.gradle': '' }, { 'pom.xml': '' }];
+for (const files of markerFiles) {
   d = tempDir(files);
   c = detectCommands(d, { AGENTIC_TEST_CMD: 'custom test', AGENTIC_CHECK_CMD: 'custom check' });
   check(`env overrides ${Object.keys(files)[0]}`, c.test === 'custom test' && c.check === 'custom check' && c.source === 'override', JSON.stringify(c));
