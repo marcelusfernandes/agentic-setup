@@ -1,0 +1,17 @@
+{
+  "name": "node-pnpm-fixture",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}

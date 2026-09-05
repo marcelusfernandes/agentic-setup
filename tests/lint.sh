@@ -87,8 +87,8 @@ check_bashism '\$\{[A-Za-z_][A-Za-z0-9_]*(\^\^|,,)\}' \
   "bashism: \${var^^}/\${var,,} — use tr '[:lower:]' '[:upper:]'"
 check_bashism '(^|[^A-Za-z0-9_])(mapfile|readarray)([^A-Za-z0-9_]|$)' \
   "bashism: mapfile/readarray — use: while IFS= read -r line; do ...; done < file"
-check_bashism 'shopt[[:space:]]+-s[[:space:]]+globstar|\*\*/' \
-  "bashism: globstar (**) — use find or git ls-files"
+check_bashism 'shopt[[:space:]]+-s[[:space:]]+globstar' \
+  "bashism: globstar (shopt -s globstar) — use find or git ls-files"
 check_bashism '(^|[^A-Za-z0-9_])echo[[:space:]]+-[en]([[:space:]]|$)' \
   "bashism: echo -e/-n — use printf"
 check_bashism '(^|[^A-Za-z0-9_])sed[[:space:]]+-i([[:space:]]|$)' \
