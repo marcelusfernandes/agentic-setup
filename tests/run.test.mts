@@ -28,10 +28,11 @@ const r = spawnSync(RUNTIME, [join(ROOT, 'tests', 'run.mts'), dir], { encoding: 
 const out = `${r.stdout}${r.stderr}`;
 
 check('run.mts exits non-zero when a discovered file fails', r.status !== 0, out);
-check('run.mts runs the passing file', /b\.test\.mts.*3 passed, 0 failed/.test(out) || /b\.test\.mts[\s\S]*3 passed, 0 failed/.test(out), out);
+check('run.mts runs the passing file', /b\.test\.mts[\s\S]*3 passed, 0 failed/.test(out), out);
 check('run.mts runs the failing file', /a\.test\.mts[\s\S]*1 passed, 1 failed/.test(out), out);
 check('run.mts discovers files in sorted order (a before b)', out.indexOf('a.test.mts') < out.indexOf('b.test.mts'), out);
 check('run.mts ignores files that are not *.test.mts', !/helper\.mts/.test(out), out);
 check('run.mts prints an aggregate line summing both files (4 passed, 1 failed)', /\b4 passed, 1 failed\b/.test(out), out);
+check('run.mts spawns test files with the runtime that launched it', out.includes(`1 passed, 1 failed (${RUNTIME.split('/').pop()})`), out);
 
 finish();
