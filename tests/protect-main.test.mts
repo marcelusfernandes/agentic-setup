@@ -20,6 +20,9 @@ const denied = [
   'gh pr merge --admin 12',
   'cd sub && git push origin main',
   'git push', // bare push while on main
+  'echo $(git push origin main)', // subshell content must still be seen
+  'echo \\"a && git push origin main', // backslash outside quotes escapes the quote, doesn't open one; && still splits
+  'git commit -m "x" && git push origin main', // a cleanly closed string still lets a real operator split after it
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -32,6 +35,9 @@ const allowed = [
   'ls -la',
   'AGENTIC_ALLOW_PUSH_MAIN=1 git push origin main',
   'AGENTIC_ALLOW_MERGE=1 gh pr merge 1 --squash',
+  'echo "a && git push origin main"', // one segment, starting with echo
+  "git commit -m 'x; git push --force'", // one segment, starting with git commit
+  'echo "a \\" && git push origin main && b"', // escaped quote doesn't end the string; still one segment
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
