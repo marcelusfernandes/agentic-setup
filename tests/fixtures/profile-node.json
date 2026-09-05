@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-01-01T00:00:00Z",
+  "generated_by": "agentic-git@0.1.0",
+  "confidence": "high",
+  "ambiguities": [],
+  "repo": { "host": "github", "owner": "o", "name": "r", "default_branch": "main", "remote": "git@github.com:o/r.git" },
+  "languages": [ { "name": "typescript", "share": 0.9, "evidence": ["tsconfig.json", "package.json"] } ],
+  "package_manager": { "name": "pnpm", "lockfile": "pnpm-lock.yaml", "runner_prefix": "pnpm exec", "version_file": null },
+  "monorepo": { "is_monorepo": false, "tool": null, "workspaces": [] },
+  "tools": { "test_runner": "vitest", "linter": "eslint", "formatter": "prettier", "typechecker": "tsc", "build": null },
+  "commands": {
+    "install": "pnpm install --frozen-lockfile",
+    "build": null,
+    "test": "pnpm test",
+    "test_file": "pnpm vitest run {file}",
+    "lint": "pnpm eslint .",
+    "lint_fix": "pnpm eslint --fix {file}",
+    "format": "prettier --write {file}",
+    "format_all": "prettier --write .",
+    "typecheck": "pnpm tsc --noEmit",
+    "run": null
+  },
+  "command_cwd": ".",
+  "ci": { "provider": "github-actions", "workflows": [".github/workflows/ci.yml"], "required_checks": [] },
+  "source_globs": ["src/**"],
+  "test_globs": ["**/*.test.ts"],
+  "generated_globs": ["dist/**", "pnpm-lock.yaml"],
+  "shared_files": ["package.json", "pnpm-lock.yaml"],
+  "secrets_globs": [".env", ".env.*", "!.env.example", "*.pem", "*.key", "**/id_rsa*", "secrets.*", "credentials.json"],
+  "claude": { "claude_md_path": "CLAUDE.md", "claude_md_has_sentinel": false, "settings_path": ".claude/settings.json", "existing_hook_events": [], "existing_agents": [], "existing_skills": [] },
+  "overrides": {}
+}

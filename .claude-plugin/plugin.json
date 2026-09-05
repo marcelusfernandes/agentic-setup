@@ -1,0 +1,12 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "agentic-git",
+  "displayName": "Agentic Git Workflow",
+  "version": "0.1.0",
+  "description": "Milestones to issues to worktrees to parallel agents to reviewed PRs, plus stack-aware onboarding that generates or adapts your .claude/ config.",
+  "author": { "name": "Marcelus Fernandes", "url": "https://github.com/marcelusfernandes" },
+  "homepage": "https://github.com/marcelusfernandes/agentic-setup",
+  "repository": "https://github.com/marcelusfernandes/agentic-setup",
+  "license": "MIT",
+  "keywords": ["git", "github", "worktree", "issues", "parallel-agents", "workflow", "onboarding", "conflicts"]
+}

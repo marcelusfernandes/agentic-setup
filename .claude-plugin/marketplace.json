@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentic-setup",
+  "description": "Claude Code plugins by Marcelus Fernandes: agentic GitHub workflow and stack-aware project onboarding.",
+  "owner": { "name": "Marcelus Fernandes", "url": "https://github.com/marcelusfernandes" },
+  "plugins": [
+    {
+      "name": "agentic-git",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "Agentic GitHub workflow: epics, sub-issues, worktrees, parallel agents, reviewed merges, and stack-aware project onboarding.",
+      "author": { "name": "Marcelus Fernandes" },
+      "category": "workflow"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# agentic-git plugin repo
+node_modules/
+.worktrees/
+*.bak
+tests/tmp/
+.DS_Store
