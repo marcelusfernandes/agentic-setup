@@ -5,9 +5,13 @@
 //   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force] [--dry-run]
 //
 // --dry-run prints the same report a real run would, changes nothing on disk
-// or on GitHub: every filesystem write and every gh write is routed through
-// the write() gate below, so the report lines come from the same code path
-// in both modes.
+// or on GitHub. Every filesystem write is routed through the write() gate
+// below, so its report line comes from the same code path in both modes. gh
+// writes (label create, milestone POST) are instead skipped by an explicit
+// `if (dryRun)`, because their report line depends on the write's result
+// (e.g. "N/15 labels present") and cannot be produced before it runs;
+// reading gh state (auth status, milestone listing) still happens so the
+// report can say "=" (exists) vs "+" (would be created).
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -46,9 +50,9 @@ const say = (line: string): number => report.push(line);
 if (dryRun) say('dry run — nothing written');
 
 /**
- * The single gate every filesystem write and every gh write goes through:
- * performs the action, or no-ops under --dry-run. Report lines are produced
- * by the caller regardless of mode, so the report is identical either way.
+ * The single gate every filesystem write goes through: performs the action,
+ * or no-ops under --dry-run. Report lines are produced by the caller
+ * regardless of mode, so the report is identical either way.
  */
 function write(action: () => void): void {
   if (!dryRun) action();
