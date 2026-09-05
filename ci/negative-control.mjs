@@ -4,7 +4,8 @@
 // Checks out the PR's base in a temporary worktree, copies ONLY the test
 // files from the PR's diff on top of it, runs the project's test command
 // there, and requires it to fail. Outcomes:
-//   skipped     the PR carries a label in SKIP_LABELS (docs, deps, infra)
+//   skipped     the PR carries a label in SKIP_LABELS (docs, deps, infra,
+//               refactor, spec) — only feature and bug PRs owe a negative control
 //   pass        the test command failed on the base — the tests bite
 //   vacuous     the test command passed on the base — the tests prove nothing
 //   no-tests    the diff adds or changes no test files
@@ -24,7 +25,7 @@ import { detectCommands } from './lib/detect.mjs';
 import { matchesAny } from './lib/globs.mjs';
 import { appendSummary } from './lib/summary.mjs';
 
-const SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra'];
+const SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra', 'type:refactor', 'type:spec'];
 const TEST_FILE_GLOBS = [
   '**/*.test.*', '**/*.spec.*', '**/*_test.go', '**/test_*.py', '**/*_test.py',
   '**/tests/**', '**/test/**', '**/__tests__/**', 'e2e/**', 'spec/**',

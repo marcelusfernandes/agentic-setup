@@ -71,7 +71,7 @@ the agent lacks; production cut-overs; any `state:blocked` issue.
   organisations; **not available on private repositories under the free plan** (rulesets
   and branch protection return 403 there).
 - **(b) On every machine that runs Claude Code:** the plugin's `protect-main.mjs` hook
-  plus the permission deny list `/agentic:init` writes (force-push, `reset --hard`,
+  plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
   `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
   not cover a push from elsewhere.
 - **(c) Detection:** the `guard-main` action. On a push to `main` that belongs to no PR

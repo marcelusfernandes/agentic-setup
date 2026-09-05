@@ -5,16 +5,19 @@ description: Set a repository up for the agent loop — copy the GitHub template
 
 # Init
 
-Run the installer from the repository root:
+Run the installer from the repository root. `CLAUDE_PLUGIN_ROOT` is set for hook
+processes but not for the Bash tool, so locate the script first:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/init.mjs" --milestone "M1 <name>"
+INIT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/init.mjs}"
+[ -f "$INIT" ] || INIT="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/init.mjs' 2>/dev/null | head -1)"
+[ -f "$INIT" ] || { echo "agentic-setup: init.mjs not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$INIT" --milestone "M1 <name>"
 ```
 
-Flags: `--milestone "<title>"` creates the first milestone (optional); `--no-gh` skips
-labels and milestone (offline, or no `gh` auth); `--force` overwrites files you edited
-before (it never overwrites silently). If `${CLAUDE_PLUGIN_ROOT}` is empty in your shell,
-the plugin directory is the one `/plugin` lists for `agentic-setup`.
+Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--milestone "<title>"` creates
+the first milestone (optional); `--no-gh` skips labels and milestone (offline, or no `gh`
+auth); `--force` overwrites files you edited before (it never overwrites silently).
 
 The script is idempotent. It:
 

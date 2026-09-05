@@ -200,21 +200,26 @@ function ci(script, args, opts = {}) {
     'lib.mjs': 'export const v = 2;\n',
     'tests/check.mjs': "import { v } from '../lib.mjs';\nprocess.exit(v === 2 ? 0 : 1);\n",
   }, 'feat: v2');
+  git(['checkout', '-q', '-b', 'feat/3-notests', base], repo);
+  const noTestsHead = commit(repo, { 'lib.mjs': 'export const v = 4;\n' }, 'feat: no tests');
+  git(['checkout', '-q', 'feat/1-x'], repo);
   /** @param {string} h @param {string} [labels] */
   const nc = (h, labels = '') => ci('negative-control.mjs', ['--base', base, '--head', h, ...(labels ? ['--labels', labels] : [])], { cwd: repo });
 
   let r = nc(head);
   check('negative-control passes when the new test fails on the base', r.status === 0 && /\bpass\b/.test(r.out), r.out);
-  check('negative-control skips docs PRs by label', nc(head, 'type:docs').status === 0 && /skipped/.test(nc(head, 'type:docs').out));
+  for (const label of ['type:docs', 'type:deps', 'type:infra', 'type:refactor', 'type:spec']) {
+    const skipped = nc(noTestsHead, label);
+    check(`negative-control skips ${label} PRs by label`, skipped.status === 0 && /skipped/.test(skipped.out), skipped.out);
+  }
+  check('negative-control does not skip type:feature', /no-tests/.test(nc(noTestsHead, 'type:feature').out));
 
   git(['checkout', '-q', '-b', 'feat/2-vacuous', base], repo);
   const vacuous = commit(repo, { 'lib.mjs': 'export const v = 3;\n', 'tests/check.mjs': "console.log('looks tested');\nprocess.exit(0);\n" }, 'feat: vacuous');
   r = nc(vacuous);
   check('negative-control fails a vacuous test', r.status === 1 && /vacuous/.test(r.out), r.out);
 
-  git(['checkout', '-q', '-b', 'feat/3-notests', base], repo);
-  const noTests = commit(repo, { 'lib.mjs': 'export const v = 4;\n' }, 'feat: no tests');
-  r = nc(noTests);
+  r = nc(noTestsHead);
   check('negative-control fails when no test file changed', r.status === 1 && /no-tests/.test(r.out), r.out);
   check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
 }

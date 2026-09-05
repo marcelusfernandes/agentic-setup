@@ -31,7 +31,7 @@ parent issue is the orchestrator's job when the current one has nothing left.
 | `review:approved` | the reviewer returned approved | reviewer |
 | `human` | needs a person | orchestrator |
 
-`/agentic:init` seeds `state:`, `type:`, `review:approved` and `human`; you add the
+`/agentic-setup:init` seeds `state:`, `type:`, `review:approved` and `human`; you add the
 `scope:` values that match your repository.
 
 ## Issue (one template)
@@ -118,10 +118,10 @@ the PR's labels and body, never the issue's.
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ globs of the issue linked by `Closes #N`, plus whatever an `authorised:` line grants |
-| `negative-control` | checkout of the PR base + **only the test files from the diff** + the test command **must fail**. Outcomes: ≥ 1 distinct failure = pass; 0 failures = fail (vacuous tests); no test files in the diff = fail for `type:feature`/`bug`, skipped for `docs`/`deps`/`infra` |
+| `negative-control` | checkout of the PR base + **only the test files from the diff** + the test command **must fail**. Outcomes: the command fails = pass; the command passes = fail (vacuous tests); no test files in the diff = fail. Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
 
-`docs` and `deps` PRs are exempt from `negative-control` by label, not by hand: the job
-reads the PR's `type:` label. Without a label it runs and fails.
+The exemption is by label, not by hand: the job reads the PR's `type:` label. Without a
+label it runs and fails.
 
 ## Merge
 
