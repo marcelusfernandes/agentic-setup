@@ -59,8 +59,11 @@ const scopeTwo = (f: string) => ci('scope-check.mts', ['--files-file', f, '--iss
 const r2 = scopeTwo(filesTwo);
 check('scope unions the globs of several linked issues', r2.status === 0, r2.out);
 check(
-  'scope summary attributes each glob to its linked issue',
-  /#1/.test(r2.out) && /#2/.test(r2.out) && /src\/\*\*/.test(r2.out) && /lib\/\*\*/.test(r2.out),
+  'scope summary attributes each glob to its linked issue, not the other one',
+  /#1:[^\n]*src\/\*\*/.test(r2.out) &&
+    /#2:[^\n]*lib\/\*\*/.test(r2.out) &&
+    !/#1:[^\n]*lib\/\*\*/.test(r2.out) &&
+    !/#2:[^\n]*src\/\*\*/.test(r2.out),
   r2.out,
 );
 
