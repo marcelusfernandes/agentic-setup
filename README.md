@@ -70,7 +70,7 @@ the PR added actually fail without the change.
 | `ci/` | `scope-check.mts` (diff ⊆ the issue's globs), `negative-control.mts` (the PR's tests must fail on the base), `lib/detect.mts` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
 | `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
 | `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
-| `tests/smoke.mts` | 73 cases against real throwaway repositories, nothing mocked; `node tests/smoke.mts` or `bun tests/smoke.mts` |
+| `tests/run.mts` | discovers and runs every `tests/*.test.mts` file (split by area) — cases against real throwaway repositories, nothing mocked; `npm test` or `npm run test:bun` |
 
 ## Requirements
 
@@ -80,8 +80,8 @@ the PR added actually fail without the change.
   `package.json` `"type"`, and the CI scripts are copied into repositories this plugin
   does not control. The hooks fail **open** when Node is missing or too old — they are
   one layer of three, not the only one. GitHub's `ubuntu-latest` already ships 22.23.
-- Bun runs the same files (the smoke suite is run under both), with one caveat: Bun 1.2.8
-  treats `.mts` as CommonJS inside a repository whose `package.json` says
+- Bun runs the same files (the test suite is run under both via `tests/run.mts`), with one
+  caveat: Bun 1.2.8 treats `.mts` as CommonJS inside a repository whose `package.json` says
   `"type": "commonjs"` — a Bun bug Node does not have. The plugin's own directory declares
   `"type": "module"`, so the hooks are unaffected; only run the copied CI scripts under Bun
   in such a repository if you have checked your Bun version.

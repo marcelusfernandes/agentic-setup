@@ -5,7 +5,8 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 
 ## Commands
 
-- `npm test` — smoke suite (`tests/smoke.mts`), real throwaway git repositories, no mocks.
+- `npm test` — `tests/run.mts` discovers and runs every `tests/*.test.mts` file (per area:
+  hooks, CI scripts, the installer), real throwaway git repositories, no mocks.
 - `npm run test:bun` — the same suite under Bun; both must pass.
 - `npm run check` — `tsc` over the `.mts` sources (`erasableSyntaxOnly`, `verbatimModuleSyntax`).
 
