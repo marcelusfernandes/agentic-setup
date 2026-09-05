@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-// scope — the PR's diff must sit inside the `## Files` globs of the issue
-// it closes, plus whatever an `authorised:` line in the PR body grants.
+// scope — the PR's diff must sit inside the union of the `## Files` globs
+// of every issue it closes, plus whatever an `authorised:` line in the PR
+// body grants. A PR links an issue with Closes/Fixes/Resolves (or their
+// close/closed, fix/fixed, resolve/resolved forms), and may link several.
 //
 // In CI it reads the pull_request event (body, base, head), diffs with git
-// and fetches the issue body with `gh` (GH_TOKEN from the workflow). For a
-// dry run, every input can come from flags instead:
-//   --files-file <path>  --issue-body-file <path>  --pr-body-file <path>
+// and fetches each linked issue's body with `gh` (GH_TOKEN from the
+// workflow). For a dry run, every input can come from flags instead:
+//   --files-file <path>
+//   --issue-body-file <path>[,<path>...]   (comma-separated, repeatable set)
+//   --issue <N>[,<N>...]                   (pairs positionally with the files above)
+//   --pr-body-file <path>
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, parseAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import { appendSummary } from './lib/summary.mts';
 
 const args = parseArgs(process.argv.slice(2));
@@ -40,6 +45,8 @@ function changedFiles(base: string, head: string): string[] {
 }
 
 const lines = (p: string): string[] => readFileSync(p, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+const splitList = (v: string | true | undefined): string[] =>
+  typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
 const event = readEvent();
 
@@ -54,28 +61,38 @@ const prBody = typeof args['pr-body-file'] === 'string'
   ? readFileSync(args['pr-body-file'], 'utf8')
   : String(event?.pull_request?.body ?? '');
 
-let issueBody: string;
-if (typeof args['issue-body-file'] === 'string') {
-  issueBody = readFileSync(args['issue-body-file'], 'utf8');
+const issueBodyFiles = splitList(args['issue-body-file']);
+const explicitIssues = splitList(args.issue).map(Number);
+
+let linked: Array<{ issue: number | null; body: string }>;
+if (issueBodyFiles.length > 0) {
+  const numbers = explicitIssues.length > 0 ? explicitIssues : parseLinkedIssues(prBody);
+  linked = issueBodyFiles.map((path, i) => ({ issue: numbers[i] ?? null, body: readFileSync(path, 'utf8') }));
 } else {
-  const issue = args.issue ?? prBody.match(/\bcloses\s+#(\d+)/i)?.[1];
-  if (!issue) fail('no "Closes #N" in the PR body (and no --issue-body-file).');
-  issueBody = gh(['issue', 'view', String(issue), '--json', 'body', '-q', '.body']);
+  const numbers = explicitIssues.length > 0 ? explicitIssues : parseLinkedIssues(prBody);
+  if (numbers.length === 0) {
+    fail('no "Closes #N", "Fixes #N" or "Resolves #N" in the PR body (and no --issue-body-file).');
+  }
+  linked = numbers.map((n) => ({ issue: n, body: gh(['issue', 'view', String(n), '--json', 'body', '-q', '.body']) }));
 }
 
-const issueGlobs = parseIssueGlobs(issueBody);
-if (issueGlobs.length === 0) fail('the linked issue declares no globs under `## Files`.');
-const result = checkScope({ files, issueGlobs, authorisedGlobs: parseAuthorisedGlobs(prBody) });
+const linkedGlobs = collectLinkedGlobs(linked);
+const issueGlobs = linkedGlobs.flatMap((g) => g.globs);
+if (issueGlobs.length === 0) fail('the linked issue(s) declare no globs under `## Files`.');
+const authorisedGlobs = parseAuthorisedGlobs(prBody);
+const result = checkScope({ files, issueGlobs, authorisedGlobs });
 
 console.log(JSON.stringify(result, null, 2));
 appendSummary(
   [
     '## scope',
     '',
-    result.ok ? `${files.length} file(s), all inside the issue's globs.` : '**FAILED** — outside the issue globs:',
+    result.ok ? `${files.length} file(s), all inside the linked issues' globs.` : '**FAILED** — outside the linked issues\' globs:',
     ...(result.ok ? [] : result.violations.map((f) => `- \`${f}\``)),
     '',
-    `Globs: ${result.globs.map((g) => `\`${g}\``).join(', ')}`,
+    'Globs by linked issue:',
+    ...linkedGlobs.map(({ issue, globs }) => `- #${issue ?? '?'}: ${globs.length ? globs.map((g) => `\`${g}\``).join(', ') : '(none)'}`),
+    ...(authorisedGlobs.length ? ['', `Authorised by the PR: ${authorisedGlobs.map((g) => `\`${g}\``).join(', ')}`] : []),
   ].join('\n'),
 );
 if (!result.ok) process.exit(1);

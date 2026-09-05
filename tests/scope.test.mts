@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, finish } from './lib/harness.mts';
+import { parseLinkedIssues } from '../ci/lib/scope.mts';
 
 const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
 cleanup(() => rmSync(dir, { recursive: true, force: true }));
@@ -28,5 +29,67 @@ check('scope passes when the PR grants the files with authorised:', scope(files,
 check('scope fails without Closes #N', scope(files, null, prNoClose).status === 1);
 const r = scope(files, issueLib, prPlain);
 check('scope names the violations', /src\/a\.ts/.test(r.out) && /src\/lib\/b\.ts/.test(r.out), r.out);
+
+// AC1: parseLinkedIssues accepts Closes/Fixes/Resolves and their forms,
+// in order, deduplicated, and ignores a bare #N with no keyword before it.
+const linkedBody = [
+  'Closes #1',
+  'Fixes #2',
+  'Resolves #3',
+  'this closed #4 already',
+  'fixes: #5',
+  'see also #6 for context',
+  'Closes #1 again',
+].join('\n');
+check(
+  'parseLinkedIssues finds Closes/Fixes/Resolves + closed/fixes: forms, ordered and deduped, ignoring bare #N',
+  JSON.stringify(parseLinkedIssues(linkedBody)) === JSON.stringify([1, 2, 3, 4, 5]),
+  JSON.stringify(parseLinkedIssues(linkedBody)),
+);
+check('parseLinkedIssues returns nothing for a body with no linking keyword', parseLinkedIssues('## What changed\nstuff\n#6\n').length === 0);
+
+const linkedBodyWithCode = [
+  'fixes: #5',
+  'quoted example: `fixes: #6`',
+  '```',
+  'Closes #7',
+  '```',
+].join('\n');
+check(
+  'parseLinkedIssues ignores keywords inside inline code spans and fenced code blocks',
+  JSON.stringify(parseLinkedIssues(linkedBodyWithCode)) === JSON.stringify([5]),
+  JSON.stringify(parseLinkedIssues(linkedBodyWithCode)),
+);
+
+// AC2: several linked issues (Closes #1, Fixes #2) union their `## Files`
+// globs, and the job summary attributes each glob to its issue.
+const issueA = file('issue-a.md', '## Files\n- `src/**`\n');
+const issueB = file('issue-b.md', '## Files\n- `lib/**`\n');
+const prTwo = file('pr-two.md', 'Closes #1\nFixes #2\n\n## Files\nGlobs touched.\n');
+const filesTwo = file('files-two.txt', 'src/a.ts\nlib/b.ts\n');
+const scopeTwo = (f: string) => ci('scope-check.mts', ['--files-file', f, '--issue-body-file', `${issueA},${issueB}`, '--pr-body-file', prTwo]);
+
+const r2 = scopeTwo(filesTwo);
+check('scope unions the globs of several linked issues', r2.status === 0, r2.out);
+check(
+  'scope summary attributes each glob to its linked issue, not the other one',
+  /#1:[^\n]*src\/\*\*/.test(r2.out) &&
+    /#2:[^\n]*lib\/\*\*/.test(r2.out) &&
+    !/#1:[^\n]*lib\/\*\*/.test(r2.out) &&
+    !/#2:[^\n]*src\/\*\*/.test(r2.out),
+  r2.out,
+);
+
+const filesOutsideUnion = file('files-outside-union.txt', 'other/x.ts\n');
+const r3 = scopeTwo(filesOutsideUnion);
+check('scope fails on a file outside the union of the linked issues\' globs', r3.status === 1, r3.out);
+
+// AC3: zero linked issues still fails, naming the three keywords.
+const rZero = scope(files, null, prNoClose);
+check(
+  'scope names Closes/Fixes/Resolves when no issue is linked',
+  /closes/i.test(rZero.out) && /fixes/i.test(rZero.out) && /resolves/i.test(rZero.out),
+  rZero.out,
+);
 
 finish();
