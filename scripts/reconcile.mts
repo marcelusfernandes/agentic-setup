@@ -3,9 +3,18 @@
 // step 0 of skills/orchestrate/SKILL.md reads it instead of running three
 // gh/git commands and cross-referencing them by hand.
 //
-//   node scripts/reconcile.mts [--milestone "<title>"]
+//   node scripts/reconcile.mts [--milestone "<title>"] [--no-fetch]
 //
 // Without --milestone, picks the open milestone with the lowest number.
+//
+// Without --no-fetch, runs `git fetch --prune origin` once before reading
+// remote branches — the same fetch step 0 of skills/orchestrate/SKILL.md
+// already asks the orchestrator to run, so a pass makes one network call for
+// git, not two. Remote branches then come from the local refs
+// (`git for-each-ref refs/remotes/origin`), not a second network round trip.
+// --no-fetch skips the fetch and reads whatever those local refs already
+// hold, so a pass can run offline against the state of the last fetch — at
+// the cost of not seeing a branch deleted on the remote since then.
 //
 // Output shape:
 //   {
@@ -18,8 +27,9 @@
 //   }
 //
 // GitHub data comes only from `gh` (issue list, pr list, api); worktree and
-// branch data from `git worktree list --porcelain` and `git ls-remote
-// --heads origin`. Node built-ins only, no dependency.
+// branch data from `git worktree list --porcelain` and (after `git fetch
+// --prune origin`, unless --no-fetch) `git for-each-ref refs/remotes/origin`.
+// Node built-ins only, no dependency.
 //
 // Crash policy: never a stack trace. A failing `gh` or `git` call (auth,
 // rate limit, an unknown milestone, no remote) prints { "error": "..." } to
@@ -149,13 +159,18 @@ const prs = ghJson<PR[]>(
   [],
 );
 
-// 5. remote branches (one call).
+// 5. remote branches: one fetch (unless --no-fetch), then local refs — no
+// `git ls-remote` network round trip.
+if (!args['no-fetch']) {
+  git(['fetch', '--prune', 'origin']);
+}
 const remoteHeads = new Set(
-  git(['ls-remote', '--heads', 'origin'])
+  git(['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'])
     .split('\n')
-    .map((l) => l.trim().split('\t')[1])
-    .filter((ref): ref is string => Boolean(ref))
-    .map((ref) => ref.replace(/^refs\/heads\//, '')),
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((ref) => ref.replace(/^origin\//, ''))
+    .filter((ref) => ref !== 'HEAD'),
 );
 
 // 6. worktrees; the first block from `git worktree list` is always the main one.
