@@ -48,6 +48,19 @@ check(
   bash('git push origin main', repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0,
 );
 
+// AC1/AC3: the valve lifts pushing to main, never deleting it.
+const deniedWithValve = [
+  'git push origin :main',
+  'git push origin :refs/heads/main',
+  'git push origin --delete main',
+  'git push -d origin main',
+];
+for (const command of deniedWithValve) {
+  const r = bash(command, repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' });
+  check(`protect-main denies deleting main even with the valve set: ${command}`, r.status === 2 && /permissionDecision":"deny/.test(r.stdout), r.stderr);
+}
+check('protect-main allows deleting a work branch', bash('git push origin :feat/x', repo).status === 0);
+
 git(['checkout', '-q', '-b', 'feat/1-x'], repo);
 check('protect-main allows bare push from a work branch', bash('git push', repo).status === 0);
 
