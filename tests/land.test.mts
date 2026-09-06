@@ -24,6 +24,9 @@
 // base always accepts a `review:approved` label as approval, so it queues a
 // label-only PR even with AGENTIC_REVIEWER_TOKEN set -- this test fails on
 // that base and passes only once the label alone stops being sufficient.
+// Cases M and O are the negative control for #78: the base never retries a
+// clean-status failure and always prints { queued } after a successful
+// --auto call, so both fail against the old script.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,20 +59,34 @@ case "\${1:-} \${2:-}" in
     ;;
   "pr view")
     pr="$3"
-    case "$pr" in
-      10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      11) echo '{"state":"OPEN","labels":[],"reviewDecision":null,"baseRefName":"main"}' ;;
-      12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      19) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-      20) echo '{"state":"OPEN","labels":[],"reviewDecision":"APPROVED","baseRefName":"main"}' ;;
-      *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
-    esac
+    fields="$5"
+    if [ "$fields" = "state" ]; then
+      # The post-merge status probe (land.mts reads only { state } here) --
+      # decides merged vs. queued without caring which merge call got there.
+      case "$pr" in
+        21) echo '{"state":"MERGED"}' ;;
+        23) echo '{"state":"MERGED"}' ;;
+        *) echo '{"state":"OPEN"}' ;;
+      esac
+    else
+      case "$pr" in
+        10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        11) echo '{"state":"OPEN","labels":[],"reviewDecision":null,"baseRefName":"main"}' ;;
+        12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        19) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        20) echo '{"state":"OPEN","labels":[],"reviewDecision":"APPROVED","baseRefName":"main"}' ;;
+        21) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        22) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        23) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
+      esac
+    fi
     ;;
   "pr checks")
     pr="$3"
@@ -81,8 +98,24 @@ case "\${1:-} \${2:-}" in
     ;;
   "pr merge")
     pr="$3"
+    auto="no"
+    for a in "$@"; do
+      if [ "$a" = "--auto" ]; then auto="yes"; fi
+    done
     if [ "$pr" = "16" ]; then
       echo "fake-gh: Auto merge is not allowed for this repository" >&2
+      exit 1
+    fi
+    if [ "$pr" = "21" ] && [ "$auto" = "yes" ]; then
+      # The race in #78: gh chose enable-auto-merge off a stale
+      # mergeStateStatus, but GitHub already considers the PR clean and
+      # refuses the mutation. The plain merge (no --auto) that follows
+      # succeeds via the default case below.
+      echo "fake-gh: GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)" >&2
+      exit 1
+    fi
+    if [ "$pr" = "22" ] && [ "$auto" = "yes" ]; then
+      echo "fake-gh: some unrelated merge failure" >&2
       exit 1
     fi
     echo "https://github.com/org/repo/pull/$pr"
@@ -163,7 +196,8 @@ check('no-rules + green checks reports { queued, gate: client-checks }', eOut?.q
 check('no-rules + green checks invoked gh pr checks --required', /pr checks 14 --required/.test(e.log), e.log);
 
 // --- F: required_status_checks present -> queued straight from the server,
-// no client checks call at all; the merge is the last gh call made ----------
+// no client checks call at all; the merge is the last *mutating* call, a
+// state read follows it ------------------------------------------------
 const f = land(15, { FAKE_GH_RULES: 'required' });
 check('required_status_checks present queues (exit 0)', f.status === 0, `${f.stdout}\n${f.stderr}`);
 const fOut = parse(f.stdout);
@@ -171,7 +205,9 @@ check('required_status_checks present reports { queued, gate: ruleset }', fOut?.
 check('required_status_checks present invoked gh pr merge --squash --auto, never --delete-branch or --admin', /pr merge 15 --squash --auto/.test(f.log) && !/--delete-branch/.test(f.log) && !/--admin/.test(f.log), f.log);
 check('required_status_checks present never called gh pr checks', !/pr checks/.test(f.log), f.log);
 const fLines = f.log.trim().split('\n').filter(Boolean);
-check('required_status_checks present did nothing after gh pr merge --auto', fLines[fLines.length - 1] === 'pr merge 15 --squash --auto', f.log);
+const fMutatingLines = fLines.filter((l) => l.startsWith('pr merge') || l.startsWith('pr checks'));
+check('required_status_checks present: gh pr merge --auto is the last mutating call (only a status read follows)', fMutatingLines[fMutatingLines.length - 1] === 'pr merge 15 --squash --auto', f.log);
+check('required_status_checks present: the merge is followed by a fresh gh pr view --json state read', fLines[fLines.length - 1] === 'pr view 15 --json state', f.log);
 
 // --- G: preconditions and gate pass, but auto-merge is disabled on the repo -
 const g = land(16, { FAKE_GH_RULES: 'required' });
@@ -221,5 +257,37 @@ const l = land(15, { FAKE_GH_RULES: 'required' });
 check('no reviewer identity: label-only still queues (exit 0)', l.status === 0, `${l.stdout}\n${l.stderr}`);
 const lOut = parse(l.stdout);
 check('no reviewer identity: label-only reports { queued, gate: ruleset }', lOut?.queued === 15 && lOut?.gate === 'ruleset', l.stdout);
+
+// --- M: `--auto` loses the clean-status race (#78) -> land.mts retries
+// once with a plain `gh pr merge --squash` (no --auto), which succeeds; the
+// post-merge state read reports MERGED -> { merged }, not { queued } ------
+const m = land(21, { FAKE_GH_RULES: 'required' });
+check('clean-status race: retries once and merges (exit 0)', m.status === 0, `${m.stdout}\n${m.stderr}`);
+const mOut = parse(m.stdout);
+check('clean-status race: reports { merged, gate: ruleset }', mOut?.merged === 21 && mOut?.gate === 'ruleset', m.stdout);
+const mLines = m.log.trim().split('\n').filter(Boolean);
+const mMerges = mLines.filter((l) => l.startsWith('pr merge'));
+check('clean-status race: exactly two merge calls, --auto then plain --squash', mMerges.length === 2 && mMerges[0] === 'pr merge 21 --squash --auto' && mMerges[1] === 'pr merge 21 --squash', m.log);
+check('clean-status race: reads state back with gh pr view --json state after merging', mLines[mLines.length - 1] === 'pr view 21 --json state', m.log);
+
+// --- N: `--auto` fails with an unrelated message -> reported as today,
+// with no retry attempted -----------------------------------------------
+const n = land(22, { FAKE_GH_RULES: 'required' });
+check('unrelated merge failure refuses (exit 1)', n.status === 1, `${n.stdout}\n${n.stderr}`);
+const nOut = parse(n.stdout);
+check('unrelated merge failure reports { error } with gh\'s own message', typeof nOut?.error === 'string' && /unrelated merge failure/.test(nOut.error), n.stdout);
+const nLines = n.log.trim().split('\n').filter(Boolean);
+const nMerges = nLines.filter((l) => l.startsWith('pr merge'));
+check('unrelated merge failure: only the one --auto call, never a second merge call', nMerges.length === 1 && nMerges[0] === 'pr merge 22 --squash --auto', n.log);
+check('unrelated merge failure never read PR state back', !nLines.includes('pr view 22 --json state'), n.log);
+
+// --- O: `--auto` succeeds outright and the PR is already MERGED by the
+// time land.mts reads it back -> { merged }, not { queued } ---------------
+const o = land(23, { FAKE_GH_RULES: 'required' });
+check('auto-merge succeeded and already merged (exit 0)', o.status === 0, `${o.stdout}\n${o.stderr}`);
+const oOut = parse(o.stdout);
+check('already-merged reports { merged, gate: ruleset }', oOut?.merged === 23 && oOut?.gate === 'ruleset', o.stdout);
+const oMerges = o.log.trim().split('\n').filter((l) => l.startsWith('pr merge'));
+check('already-merged: exactly one merge call (--auto), no retry needed', oMerges.length === 1 && oMerges[0] === 'pr merge 23 --squash --auto', o.log);
 
 finish();

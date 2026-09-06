@@ -39,9 +39,22 @@
 // with no such rule, where `--auto` alone would queue an ungated merge.
 //
 // On success: `gh pr merge <pr> --squash --auto` (never --delete-branch,
-// never --admin); prints { queued: pr, gate }. If that fails (e.g.
-// auto-merge disabled), prints { error } with gh's message, exit 1. No
-// polling, no relabel, no worktree removal either way.
+// never --admin). `gh` decides between enabling auto-merge and merging
+// immediately from a mergeStateStatus it read moments earlier; when
+// something else (e.g. a label re-triggering `agentic-checks`) makes it
+// choose "enable auto-merge" but GitHub already considers the PR clean by
+// the time the mutation lands, the call refuses with "is in clean status"
+// even though the exact same command run again a moment later simply
+// merges (#78's incident). On that one message, and only that one, land.mts
+// retries once with a plain `gh pr merge <pr> --squash` (no --auto); any
+// other failure is reported as before, with no retry. Whichever call
+// actually succeeded, the outcome is read back with a fresh
+// `gh pr view <pr> --json state` rather than inferred from which call ran:
+// state MERGED prints { merged: pr, gate }; anything else -- still OPEN and
+// queued for auto-merge, or the state read itself failing -- prints
+// { queued: pr, gate }. A merge call that still fails
+// (the initial one, or the clean-status retry) prints { error } with gh's
+// message, exit 1. No polling, no relabel, no worktree removal either way.
 import { spawnSync } from 'node:child_process';
 
 type Label = { name: string };
@@ -91,9 +104,19 @@ if (gate === 'client-checks' && gh(['pr', 'checks', String(pr), '--required']).s
   fail({ refused: `PR #${pr}: required checks are not green.`, pr, missing: ['checks:required'], gate });
 }
 
-const mergeResult = gh(['pr', 'merge', String(pr), '--squash', '--auto']);
-if (mergeResult.status !== 0) {
-  fail({ error: (mergeResult.stderr || mergeResult.stdout || 'gh pr merge failed').trim() });
+const autoMergeResult = gh(['pr', 'merge', String(pr), '--squash', '--auto']);
+if (autoMergeResult.status !== 0) {
+  const message = (autoMergeResult.stderr || autoMergeResult.stdout || 'gh pr merge failed').trim();
+  if (!/is in clean status/.test(message)) fail({ error: message });
+  // #78: gh chose "enable auto-merge" off a stale mergeStateStatus, but
+  // GitHub now considers the PR clean and refuses that mutation. The exact
+  // same intent, minus --auto, merges it outright.
+  const retryResult = gh(['pr', 'merge', String(pr), '--squash']);
+  if (retryResult.status !== 0) {
+    fail({ error: (retryResult.stderr || retryResult.stdout || 'gh pr merge failed').trim() });
+  }
 }
 
-console.log(JSON.stringify({ queued: pr, gate }));
+const after = ghJson<{ state?: string } | null>(['pr', 'view', String(pr), '--json', 'state'], null);
+const outcome = after?.state === 'MERGED' ? 'merged' : 'queued';
+console.log(JSON.stringify({ [outcome]: pr, gate }));
