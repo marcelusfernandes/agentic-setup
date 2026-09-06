@@ -43,6 +43,10 @@ JSON
 {"number":14,"title":"feat: no files section","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      15) cat <<'JSON'
+{"number":15,"title":"feat: closed blocker","body":"## Dependencies\\nBlocked by: #98\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
       16) cat <<'JSON'
 {"number":16,"title":"feat: bad default branch","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
@@ -55,6 +59,11 @@ JSON
 {"number":19,"title":"no conventional prefix here","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      21) cat <<'JSON'
+{"number":21,"title":"feat: preexisting ref","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
+      98) echo '{"state":"CLOSED"}' ;;
       99) echo '{"state":"OPEN"}' ;;
       *) echo "fake-gh: unknown issue $n" >&2; exit 1 ;;
     esac
@@ -203,5 +212,34 @@ unlinkSync(join(remoteDir, 'hooks', 'pre-receive'));
 check('a pre-receive hook decline is an error, not held', hookDeclined.status === 1 && typeof hookDeclined.json?.error === 'string', JSON.stringify(hookDeclined));
 check('a pre-receive hook decline does not touch labels', !hookDeclined.log.includes('issue edit'), hookDeclined.log);
 check('a pre-receive hook decline does not create a branch', !remoteBranches().includes('feat/16-y'), JSON.stringify(remoteBranches()));
+
+// --- AC1: a closed blocker gates nothing — parseBlockedBy must allow, ------
+// not just block.
+const closedBlocker = claim(['15', '--slug', 'x']);
+check('a closed blocker does not refuse the claim, exit 0', closedBlocker.status === 0, `${closedBlocker.stdout}\n${closedBlocker.stderr}`);
+check('a closed blocker still creates the branch on origin', remoteBranches().includes('feat/15-x'), JSON.stringify(remoteBranches()));
+
+// --- AC3: a ref that already exists at the exact commit claim.mts would ----
+// push (the "Everything up-to-date" case) is held via the porcelain "="
+// line, not silently reported as a successful claim. A *separate* clone
+// (standing in for another agent/process) creates the branch directly on
+// the shared bare origin — `repo` itself never pushes it, so its own
+// tracking ref for it is never opportunistically created. `repo`'s fetch
+// refspec is then narrowed to `main` only, so the `git fetch origin` that
+// claim.mts runs itself cannot discover the branch either — a local
+// pre-check keyed on refs/remotes/origin/<branch> would miss it entirely,
+// exactly like the real race (two claims of the same issue landing before
+// either has committed anything beyond the shared base). Only the push's
+// own protocol exchange with the remote — which --porcelain surfaces as
+// "=" (up to date) — catches it.
+const pusherDir = mkdtempSync(join(tmpdir(), 'agentic-claim-pusher-'));
+cleanup(() => rmSync(pusherDir, { recursive: true, force: true }));
+git(['clone', '-q', remoteDir, pusherDir], repo);
+const preexistingSha = git(['rev-parse', 'origin/main'], repo);
+git(['push', 'origin', `${preexistingSha}:refs/heads/feat/21-preclaimed`], pusherDir);
+git(['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], repo);
+const upToDate = claim(['21', '--slug', 'preclaimed']);
+check('an up-to-date push is held, exit 2', upToDate.status === 2 && upToDate.json?.held === 'feat/21-preclaimed', JSON.stringify(upToDate));
+check('an up-to-date held claim does not touch labels', !upToDate.log.includes('issue edit'), upToDate.log);
 
 finish();
