@@ -2,7 +2,20 @@
 // Cases for hooks/stop-gate.mts: run the detected check/test commands before
 // an agent on a work branch stops. Spawns the real hook against a throwaway
 // git repo.
-import { check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { check, commit, finish, git, hook, ROOT, tempRepo } from './lib/harness.mts';
+
+const hooksJson = JSON.parse(readFileSync(join(ROOT, 'hooks', 'hooks.json'), 'utf8'));
+check('hooks.json registers stop-gate for SubagentStop too', Array.isArray(hooksJson.hooks?.SubagentStop));
+check(
+  'hooks.json Stop and SubagentStop run the same stop-gate command',
+  hooksJson.hooks?.Stop?.[0]?.hooks?.[0]?.command === hooksJson.hooks?.SubagentStop?.[0]?.hooks?.[0]?.command,
+);
+check(
+  'hooks.json Stop and SubagentStop share the same timeout',
+  hooksJson.hooks?.Stop?.[0]?.hooks?.[0]?.timeout === hooksJson.hooks?.SubagentStop?.[0]?.hooks?.[0]?.timeout,
+);
 
 const repo = tempRepo();
 commit(repo, { 'a.txt': 'a' }, 'init');
@@ -24,5 +37,26 @@ commit(repo, { 'package.json': JSON.stringify({ scripts: { test: 'exit 3' } }) }
 check('stop-gate detects npm test from package.json', stop().status === 2);
 git(['checkout', '-q', '-b', 'wip'], repo);
 check('stop-gate skips a branch outside <type>/<n>-<slug>', stop({ AGENTIC_TEST_CMD: 'exit 1' }).status === 0);
+
+// SubagentStop: an implementer subagent stopping in its worktree is gated
+// the same way as the main session's Stop.
+git(['checkout', '-q', '-b', 'fix/3-z'], repo);
+check(
+  'stop-gate blocks a SubagentStop on a work branch when the test command fails',
+  stop({ AGENTIC_TEST_CMD: 'exit 1' }, { hook_event_name: 'SubagentStop', agent_id: 'agent-1', agent_type: 'implementer' }).status === 2,
+);
+git(['checkout', '-q', 'main'], repo);
+check(
+  'stop-gate skips a SubagentStop on main',
+  stop({ AGENTIC_TEST_CMD: 'exit 1' }, { hook_event_name: 'SubagentStop', agent_id: 'agent-1', agent_type: 'implementer' }).status === 0,
+);
+git(['checkout', '-q', 'fix/3-z'], repo);
+check(
+  'stop-gate skips a SubagentStop when stop_hook_active',
+  stop(
+    { AGENTIC_TEST_CMD: 'exit 1' },
+    { hook_event_name: 'SubagentStop', agent_id: 'agent-1', agent_type: 'implementer', stop_hook_active: true },
+  ).status === 0,
+);
 
 finish();

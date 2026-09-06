@@ -17,7 +17,8 @@ One Claude Code session at the repository root (not in a worktree), running
 0. `scripts/reconcile.mts` prints the loop's state as one JSON document (`milestone`,
    `ready`, `inProgress`, `inReview`, `stale`, `orphanWorktrees` — see
    `skills/orchestrate/SKILL.md` step 0 for the invocation and what each field means),
-   instead of reconciling from memory:
+   instead of reconciling from memory. It fetches `origin` with prune itself first
+   (`--no-fetch` reads the local refs left by the last fetch, for an offline check):
    in-progress with no PR and no remote branch → ready (`stale`)
    in-review with green CI and review:approved → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)

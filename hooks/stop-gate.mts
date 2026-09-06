@@ -1,10 +1,14 @@
 #!/usr/bin/env node
-// stop-gate — Stop.
+// stop-gate — Stop, SubagentStop.
 //
 // Before an agent on a work branch is allowed to stop, run the project's
 // check and test commands (ci/lib/detect.mts; AGENTIC_CHECK_CMD /
 // AGENTIC_TEST_CMD override). Red output goes to stderr and the stop is
 // blocked (exit 2), so the agent reads the failure and keeps working.
+// Registered under both events: Stop fires for the main session, and
+// SubagentStop fires for an implementer subagent stopping in its own
+// worktree (`cwd` is the subagent's worktree in that payload); both are
+// handled identically here — same skip rules, same crash policy.
 //
 // Skips, with a note on stderr, when:
 //   - Claude Code says a stop hook is already active (no loops);
@@ -33,9 +37,13 @@ function sh(command: string, cwd: string) {
 
 async function main() {
   const payload = parsePayload(await readStdin()) ?? {};
+  const eventName = typeof payload.hook_event_name === 'string' ? payload.hook_event_name : 'Stop';
+  const agentSuffix = typeof payload.agent_type === 'string' ? `, agent_type "${payload.agent_type}"` : '';
+  const evNote = (message: string) => note(HOOK, `[${eventName}${agentSuffix}] ${message}`);
+
   if (payload.stop_hook_active) return;
   if (process.env[REENTRY] === '1') {
-    note(HOOK, 'already running further up the process tree; not recursing.');
+    evNote('already running further up the process tree; not recursing.');
     return;
   }
   const cwd = payload.cwd || process.cwd();
@@ -43,17 +51,17 @@ async function main() {
   const branch = currentBranch(root);
 
   if (PROTECTED.test(branch) || !WORK_BRANCH.test(branch)) {
-    note(HOOK, `branch "${branch || '(none)'}" is not a work branch; skipping.`);
+    evNote(`branch "${branch || '(none)'}" is not a work branch; skipping.`);
     return;
   }
   if (lastCommitSubject(root).startsWith('test(red):')) {
-    note(HOOK, 'last commit is `test(red):` — that is the negative control; skipping.');
+    evNote('last commit is `test(red):` — that is the negative control; skipping.');
     return;
   }
 
   const commands = detectCommands(root);
   if (!commands.test && !commands.check) {
-    note(HOOK, 'no check or test command detected (set AGENTIC_TEST_CMD to declare one); skipping — CI is the gate.');
+    evNote('no check or test command detected (set AGENTIC_TEST_CMD to declare one); skipping — CI is the gate.');
     return;
   }
 

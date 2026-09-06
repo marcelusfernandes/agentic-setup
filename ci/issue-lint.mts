@@ -179,6 +179,17 @@ function isLiteralPath(glob: string): boolean {
   return !glob.includes('*');
 }
 
+/** For a wildcard glob, the directory its fixed prefix (the part before the
+ * first `*`) is rooted in — e.g. `src/newmod/**` → `src/newmod/`,
+ * `src/**\/*.zig` → `src/`. Empty when the glob has no fixed directory
+ * prefix at all (e.g. `**\/*.foo`, which starts with `*`). */
+function fixedDirPrefix(glob: string): string {
+  const starIndex = glob.indexOf('*');
+  const prefix = starIndex === -1 ? glob : glob.slice(0, starIndex);
+  const slash = prefix.lastIndexOf('/');
+  return slash === -1 ? '' : prefix.slice(0, slash + 1);
+}
+
 /** globs that fail to parse are excluded here (already a failure of their
  * own); a malformed glob from this issue, or from another issue's body,
  * must never crash `matchesAny` downstream (AC3/AC4). */
@@ -212,7 +223,18 @@ for (const glob of issueGlobs) {
     // matches nothing is treated as a mistake.
     globs.push({ glob, status: 'new', matches: 0 });
   } else {
-    failures.push(`wildcard glob matches no tracked file: ${glob}`);
+    // A wildcard that matches nothing is "new" too, but only when its fixed
+    // prefix names a directory that does not exist anywhere in the tracked
+    // tree — the natural way to declare a whole new directory (#41). A
+    // wildcard whose prefix directory does exist, or that has no fixed
+    // directory prefix at all, matching nothing is still a mistake.
+    const dirPrefix = fixedDirPrefix(glob);
+    const dirExists = dirPrefix !== '' && trackedFiles.some((f) => f.startsWith(dirPrefix));
+    if (dirPrefix !== '' && !dirExists) {
+      globs.push({ glob, status: 'new', matches: 0 });
+    } else {
+      failures.push(`wildcard glob matches no tracked file: ${glob}`);
+    }
   }
 }
 const validSelfGlobs = validGlobsOnly(issueGlobs);
@@ -225,21 +247,65 @@ function newLiteralPaths(list: string[]): string[] {
   return list.filter((g) => isLiteralPath(g) && !trackedFiles.includes(g));
 }
 
+/** The directory-level counterpart of `newLiteralPaths`: each wildcard
+ * glob's fixed directory prefix, kept only when that directory has no
+ * tracked file anywhere (the same "new" test the per-glob AC2 check above
+ * makes). A literal-path-vs-full-glob comparison (`newLiteralPaths` against
+ * `matchesAny`) already catches a literal new path landing inside another
+ * issue's wildcard, because the regex for e.g. `newmod/**` matches any path
+ * under it — but it has nothing to compare when *both* sides are wildcards
+ * over the same brand-new directory, since neither side declares a literal
+ * path and `newLiteralPaths` collects only those. Comparing fixed prefixes
+ * closes that hole (round 2 of #41). */
+function newWildcardPrefixes(list: string[]): string[] {
+  const prefixes = list
+    .filter((g) => !isLiteralPath(g))
+    .map(fixedDirPrefix)
+    .filter((p) => p !== '' && !trackedFiles.some((f) => f.startsWith(p)));
+  return [...new Set(prefixes)];
+}
+
+/** Whether two new (untracked) paths — a literal path or a wildcard's fixed
+ * directory prefix — claim overlapping territory: the same path, or one a
+ * directory prefix of the other (`newmod/` and `newmod/sub/`, in either
+ * order). */
+function newPathsOverlap(a: string, b: string): boolean {
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
 // --- AC3: disjointness against issues in flight in the same milestone -----
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, validSelfGlobs));
 const selfNewPaths = newLiteralPaths(validSelfGlobs);
+const selfNewPrefixes = newWildcardPrefixes(validSelfGlobs);
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
   const otherGlobs = validGlobsOnly(parseIssueGlobs(other.body));
   if (otherGlobs.length === 0) continue;
   const otherNewPaths = newLiteralPaths(otherGlobs);
+  const otherNewPrefixes = newWildcardPrefixes(otherGlobs);
   const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
   const overlapNewPaths = [
     ...selfNewPaths.filter((p) => matchesAny(p, otherGlobs)),
     ...otherNewPaths.filter((p) => matchesAny(p, validSelfGlobs)),
   ];
-  const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths])];
+  // Wildcard-vs-wildcard (and literal-vs-wildcard-prefix) new-directory
+  // overlap: the fixed-prefix comparison the regex-based check above can't
+  // make, since neither wildcard's pattern necessarily matches the other's
+  // literal shape. Mirrors both legs `newLiteralPaths` gets above: a new
+  // prefix against the other side's own new prefixes/paths (`newPathsOverlap`),
+  // *and* a new prefix against the other side's full glob list (`matchesAny`)
+  // — the second leg is what catches a brand-new directory nested under an
+  // *existing* tracked directory the other issue's wildcard already covers
+  // (`tests/newsub/**`, new, under `tests/**`, matched — `tests/**` never
+  // lands in `otherNewPrefixes` since `tests/` is tracked).
+  const overlapNewPrefixes = [
+    ...selfNewPrefixes.filter((p) => matchesAny(p, otherGlobs)),
+    ...otherNewPrefixes.filter((p) => matchesAny(p, validSelfGlobs)),
+    ...selfNewPrefixes.filter((p) => [...otherNewPrefixes, ...otherNewPaths].some((q) => newPathsOverlap(p, q))),
+    ...otherNewPrefixes.filter((p) => [...selfNewPrefixes, ...selfNewPaths].some((q) => newPathsOverlap(p, q))),
+  ];
+  const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths, ...overlapNewPrefixes])];
   if (overlapFiles.length === 0) continue;
   const otherBlockedBy = blockedBy(other.body) ?? [];
   const isSequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
