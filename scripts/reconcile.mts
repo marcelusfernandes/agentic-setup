@@ -26,7 +26,7 @@
 // stdout and exits 1.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
-import { extractSection } from '../ci/lib/scope.mts';
+import { parseBlockedBy } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
@@ -74,16 +74,6 @@ function git(args: string[]): string {
 
 function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
-}
-
-/** "Blocked by: #3, #4" (or "none") from the issue body's Dependencies section. */
-function parseBlockedBy(body: string): number[] {
-  const section = extractSection(body, 'Dependencies') ?? body;
-  const line = section.split(/\r?\n/).map((l) => l.trim()).find((l) => /^blocked by:/i.test(l));
-  if (!line) return [];
-  const rest = line.replace(/^blocked by:/i, '').trim();
-  if (/^none\b/i.test(rest)) return [];
-  return [...rest.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
 }
 
 /**
