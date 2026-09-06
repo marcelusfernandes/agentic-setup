@@ -30,7 +30,15 @@ import { extractSection } from '../ci/lib/scope.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
-type CheckEntry = { state?: string; conclusion?: string };
+type CheckEntry = {
+  name?: string;
+  context?: string;
+  status?: string;
+  state?: string;
+  conclusion?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
 type PR = { number: number; headRefName: string; labels: Label[]; statusCheckRollup: CheckEntry[] | null; reviewDecision: string | null };
 type Milestone = { number: number; title: string; state: string };
 
@@ -78,8 +86,34 @@ function parseBlockedBy(body: string): number[] {
   return [...rest.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
 }
 
+/**
+ * `gh pr list --json statusCheckRollup` returns every check run ever attached
+ * to the head commit, including runs `concurrency.cancel-in-progress`
+ * cancelled when the PR was pushed to again. Keep only the latest entry per
+ * check name (check runs) / context (status contexts), the way `gh pr
+ * checks` deduplicates, before classifying.
+ */
+function latestChecksByName(entries: CheckEntry[]): CheckEntry[] {
+  const latest = new Map<string, CheckEntry>();
+  for (const entry of entries) {
+    const key = entry.name ?? entry.context ?? '';
+    const existing = latest.get(key);
+    if (!existing) {
+      latest.set(key, entry);
+      continue;
+    }
+    const existingTime = existing.completedAt ?? existing.startedAt;
+    const time = entry.completedAt ?? entry.startedAt;
+    // Both entries carry a timestamp: the later ISO string wins. Otherwise
+    // (either side missing one) the later array position wins — this loop
+    // runs in array order, so the incoming entry always wins that case.
+    if (existingTime && time ? time >= existingTime : true) latest.set(key, entry);
+  }
+  return [...latest.values()];
+}
+
 function checksState(rollup: CheckEntry[] | null): 'green' | 'red' | 'pending' {
-  const entries = rollup ?? [];
+  const entries = latestChecksByName(rollup ?? []);
   if (entries.length === 0) return 'pending';
   const status = (c: CheckEntry) => String(c.conclusion ?? c.state ?? '').toUpperCase();
   if (entries.some((c) => RED.has(status(c)))) return 'red';
