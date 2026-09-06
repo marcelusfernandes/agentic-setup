@@ -8,14 +8,19 @@
 //   2. starts with `git push` and targets main/master: a token equal to
 //      main/master, one ending in :main/:master, or no refspec at all while
 //      the current branch is main/master
-//   3. starts with `gh pr merge` and passes `--admin`
+//   3. starts with `git push` and deletes main/master: a refspec starting
+//      with `:` whose remote side is main/master (`:main`, `:refs/heads/main`),
+//      or a --delete/-d flag with main/master among the refspecs — denied
+//      regardless of the valve
+//   4. starts with `gh pr merge` and passes `--admin`
 // The ruleset and `hooks/git-pre-push` (every push from this machine, in or
 // out of Claude Code) are the layers that count; this one saves a round
 // trip. No quotes, backticks or `$()` are parsed, so a commit message that
 // quotes one of the forms above may be denied too — write it differently.
 //
 // Valve, for bootstrapping a repo with no ruleset yet:
-//   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2 (never 1 or 3)
+//   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2 (never 1, 3 or 4 — it never
+//                               covers deleting main/master)
 //
 // Crash policy: ALLOW. Node missing, an unreadable payload, or a throw here
 // all let the call through — the ruleset and git-pre-push remain.
@@ -30,7 +35,12 @@ function checkPush(segment: string, cwd: string, command: string): void {
   if (tokens.some((t) => t.startsWith('--force') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t) || (t.startsWith('+') && t.length > 1))) {
     deny(HOOK, 'force-push is forbidden on every branch.');
   }
+  const hasDeleteFlag = tokens.some((t) => t === '--delete' || /^-[A-Za-z]*d[A-Za-z]*$/.test(t));
   const refspecs = tokens.filter((t) => !t.startsWith('-')).slice(1); // [0] is the remote
+  const deletesMain = refspecs.some((r) => (r.startsWith(':') ? PROTECTED.test(r.slice(1)) : hasDeleteFlag && PROTECTED.test(r)));
+  if (deletesMain) {
+    deny(HOOK, 'deleting main/master is forbidden. (AGENTIC_ALLOW_PUSH_MAIN=1 lifts pushing to main for bootstrap only; it never covers deletion.)');
+  }
   const targetsMain =
     refspecs.some((r) => PROTECTED.test(r) || /:(?:main|master)$/.test(r)) ||
     (refspecs.length === 0 && PROTECTED.test(currentBranch(cwd)));
