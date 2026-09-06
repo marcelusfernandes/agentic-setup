@@ -45,20 +45,23 @@ One Claude Code session at the repository root is the **orchestrator**. It never
 implements; it plans and dispatches.
 
 ```
-0. RECONCILE from GitHub, never from memory
+0. RECONCILE (scripts/reconcile.mts) from GitHub, never from memory
    in-progress with no PR and no remote branch → ready
    in-review with green CI and review:approved → merge
    local worktree with no remote branch → delete
-1. read state:ready issues of the current milestone with no open dependency
+1. LINT (ci/issue-lint.mts) every state:ready issue with no open dependency;
+   dispatch only what it reports ok
 2. pick up to 4 whose file globs do not overlap
-3. for each: push the remote branch <type>/<n>-<slug> (the push IS the lock;
-   if it already exists, skip), assign, label in-progress, launch an
-   implementer in its own worktree with the whole issue in the prompt
+3. CLAIM (scripts/claim.mts) for each: pushes the remote branch <type>/<n>-<slug>
+   as the lock (skip if it already exists), assigns, labels in-progress, then
+   launch an implementer in its own worktree with the whole issue in the prompt
 4. PR opened → launch a reviewer (read-only) and wait for CI
-5. green checks + review:approved → squash merge → label done → back to 1
+5. green checks + review:approved → LAND (scripts/land.mts) re-reads the PR live
+   and merges only if the server will accept it, labels done and removes the
+   worktree only once GitHub reports it merged → back to 1
    rejected (CI or reviewer) → back to the implementer with the summary (round 2)
    second rejection → state:blocked + human, comment with the summary, move on
-6. docs-only PR → merge on green CI, no reviewer
+6. docs-only PR → LAND merges on green CI, no reviewer
 7. nothing left to do → post a summary of what is blocked on the milestone issue;
    milestone with no open issue → open the next milestone's parent issue
 ```
@@ -75,7 +78,8 @@ the PR added actually fail without the change.
 | `agents/` | `implementer` (one issue → one PR, test first, own worktree), `reviewer` (read-only, JSON verdict, sets the label), `docs-writer` (docs equal to code, `type:docs` PRs) |
 | `skills/` | `orchestrate` (one pass of the loop, for the main session), `init` (set a repository up), `safe-worktree` (how not to lose work), `issue-and-pr` (the exact `gh` contract) |
 | `hooks/` | `protect-main.mts` (no push to main, no merge without green checks and the review label), `protect-worktree.mts` (a subagent may not write into the main checkout), `stop-gate.mts` (run the detected check and test commands before an agent on a work branch stops), and the git `pre-push` the init installs |
-| `ci/` | `scope-check.mts` (diff ⊆ the issue's globs), `negative-control.mts` (the PR's tests must fail on the base), `lib/detect.mts` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
+| `scripts/` | `init.mts` (the installer), `reconcile.mts` (the loop's state as one JSON document), `claim.mts` (locks an issue: push-as-lock, then assign and relabel, or refuse), `land.mts` (the only way the orchestrator merges: refuses unless the server will accept it, relabels and removes the worktree only after GitHub reports the PR merged) |
+| `ci/` | `scope-check.mts` (diff ⊆ the issue's globs), `negative-control.mts` (the PR's tests must fail on the base), `issue-lint.mts` (an issue's contract — sections, globs, disjointness against issues in flight, entry-point references — checked before it is dispatched, locally and by its own workflow), `lib/detect.mts` (the test-command detection both the hook and CI share). Copied into the target repository by `init`. |
 | `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
 | `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
 | `tests/run.mts` | discovers and runs every `tests/*.test.mts` file (split by area) — cases against real throwaway repositories, nothing mocked; `npm test` or `npm run test:bun` |
