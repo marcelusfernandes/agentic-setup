@@ -68,6 +68,11 @@ type PRView = {
   statusCheckRollup: CheckEntry[] | null;
 };
 type MergeView = { state: string; mergeCommit?: { oid?: string } | null };
+// `GET /repos/{owner}/{repo}/rulesets` (the list) returns only id/name/target
+// summaries — verified live against this repository's own ruleset, not
+// documentation: `conditions` and `rules` are absent. The full object,
+// `conditions` and `rules` included, needs one more call per id.
+type RulesetSummary = { id?: number };
 type Ruleset = {
   conditions?: { ref_name?: { include?: string[] } };
   rules?: Array<{ type?: string; parameters?: { required_status_checks?: Array<{ context?: string }> } }>;
@@ -168,8 +173,10 @@ function checkStatus(c: CheckEntry): string {
 function requiredCheckNames(cwd: string): string[] | null {
   const repoInfo = ghJson<{ defaultBranchRef?: { name?: string } }>(cwd, ['repo', 'view', '--json', 'defaultBranchRef'], {});
   const defaultBranch = repoInfo.defaultBranchRef?.name ?? 'main';
-  const rulesets = ghJson<Ruleset[]>(cwd, ['api', 'repos/{owner}/{repo}/rulesets'], []);
-  for (const rs of rulesets) {
+  const summaries = ghJson<RulesetSummary[]>(cwd, ['api', 'repos/{owner}/{repo}/rulesets'], []);
+  for (const summary of summaries) {
+    if (typeof summary.id !== 'number') continue;
+    const rs = ghJson<Ruleset>(cwd, ['api', `repos/{owner}/{repo}/rulesets/${summary.id}`], {});
     const refs = rs.conditions?.ref_name?.include ?? [];
     const targetsDefault = refs.includes('~DEFAULT_BRANCH') || refs.includes(`refs/heads/${defaultBranch}`) || refs.includes(defaultBranch);
     if (!targetsDefault) continue;
@@ -266,7 +273,20 @@ async function main() {
 
   const mergeResult = gh(cwd, ['pr', 'merge', String(pr), '--squash', '--delete-branch']);
   if (mergeResult.status !== 0) {
-    fail({ error: (mergeResult.stderr || mergeResult.stdout || 'gh pr merge failed').trim() });
+    // `--delete-branch` also runs `git branch -D <head>` locally after the
+    // remote merge succeeds, and git refuses to delete a branch checked out
+    // in any worktree — the orchestrator's normal shape, since the PR's
+    // head branch lives in the implementer's linked worktree while this
+    // script runs from the root. That local-delete failure makes `gh pr
+    // merge` exit non-zero even though the server already merged the PR;
+    // treating that as outright failure would repeat the #28 inconsistency
+    // this script exists to close (labelled done without checking, here
+    // inverted to refused/errored despite already merged). One `pr view`
+    // tells them apart before deciding.
+    const check = ghJson<MergeView | null>(cwd, ['pr', 'view', String(pr), '--json', 'state,mergeCommit'], null);
+    if (!check || check.state !== 'MERGED') {
+      fail({ error: (mergeResult.stderr || mergeResult.stdout || 'gh pr merge failed').trim() });
+    }
   }
 
   // AC4: only once `gh pr view` reports state MERGED do we touch labels or worktrees.

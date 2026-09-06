@@ -27,20 +27,25 @@ case "\${1:-} \${2:-}" in
     echo '{"defaultBranchRef":{"name":"main"}}'
     ;;
   "api repos/{owner}/{repo}/rulesets")
+    # The real list endpoint (verified live) returns only id/name/target
+    # summaries -- no conditions, no rules. land.mts must fetch each
+    # ruleset's full object separately (below) to read its rules.
     if [ "\${FAKE_GH_NO_RULESET:-}" = "1" ]; then
       echo '[]'
     else
-      cat <<'JSON'
-[
-  {
-    "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}},
-    "rules": [
-      {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "test (node)"}, {"context": "test (bun)"}]}}
-    ]
-  }
-]
-JSON
+      echo '[{"id":1,"name":"main","target":"branch"}]'
     fi
+    ;;
+  "api repos/{owner}/{repo}/rulesets/1")
+    cat <<'JSON'
+{
+  "id": 1,
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}},
+  "rules": [
+    {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "test (node)"}, {"context": "test (bun)"}]}}
+  ]
+}
+JSON
     ;;
   "pr view")
     pr="$3"
@@ -89,6 +94,15 @@ JSON
           81)
             echo '{"number":81,"state":"OPEN","headRefName":"feat/81-fallback-red","body":"Closes #981","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"lint","conclusion":"FAILURE"}]}'
             ;;
+          51)
+            echo '{"number":51,"state":"OPEN","headRefName":"feat/51-mergefail-but-merged","body":"Closes #951","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS"},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
+            ;;
+          90)
+            echo '{"number":90,"state":"OPEN","headRefName":"feat/90-dedupe-green","body":"Closes #990","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"CANCELLED","startedAt":"2026-01-01T00:00:00Z"},{"name":"test (node)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:05:00Z"},{"name":"test (bun)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"}]}'
+            ;;
+          91)
+            echo '{"number":91,"state":"OPEN","headRefName":"feat/91-dedupe-red","body":"Closes #991","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"},{"name":"test (node)","conclusion":"FAILURE","startedAt":"2026-01-01T00:05:00Z"},{"name":"test (bun)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"}]}'
+            ;;
           *)
             echo "fake-gh: unknown pr $pr" >&2
             exit 1
@@ -101,6 +115,14 @@ JSON
     pr="$3"
     if [ "$pr" = "50" ]; then
       echo "fake-gh: merge blocked by branch protection, add the --admin flag" >&2
+      exit 1
+    fi
+    if [ "$pr" = "51" ]; then
+      # The server-side squash merge succeeded, but --delete-branch's local
+      # "git branch -D" failed (branch checked out in a worktree) -- gh
+      # still exits non-zero.
+      touch "$state/merged-$pr"
+      echo "fake-gh: failed to delete local branch feat/51-mergefail-but-merged" >&2
       exit 1
     fi
     if [ "$pr" != "60" ]; then
@@ -131,13 +153,11 @@ const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 const repo = tempRepo();
 git(['commit', '-q', '--allow-empty', '-m', 'init'], repo);
 
-const worktreeDirs: string[] = [];
-function addWorktree(branch: string): string {
+function addWorktree(branch: string): { dir: string; real: string } {
   const dir = join(mkdtempSync(join(tmpdir(), 'agentic-land-wt-')), 'wt');
   cleanup(() => rmSync(dir, { recursive: true, force: true }));
   git(['worktree', 'add', '-q', '-b', branch, dir, 'main'], repo);
-  worktreeDirs.push(dir);
-  return dir;
+  return { dir, real: realpathSync(dir) };
 }
 
 const wt10 = addWorktree('feat/10-happy');
@@ -145,11 +165,13 @@ const wt20 = addWorktree('feat/20-poll');
 const wt21 = addWorktree('feat/21-stuck');
 const wt50 = addWorktree('feat/50-mergefail');
 const wt60 = addWorktree('feat/60-nevermerged');
+const wt51 = addWorktree('feat/51-mergefail-but-merged');
 git(['checkout', '-q', 'main'], repo);
 
-function worktreeExists(dir: string): boolean {
+function worktreeExists(wt: { dir: string; real: string }): boolean {
+  if (!existsSync(wt.dir)) return false;
   const list = git(['worktree', 'list', '--porcelain'], repo);
-  return list.includes(realpathSync(dir)) || list.includes(dir);
+  return list.includes(wt.real) || list.includes(wt.dir);
 }
 
 // --- runner ------------------------------------------------------------------
@@ -179,7 +201,7 @@ const a = land(10);
 check('happy path exits 0', a.status === 0, `${a.stdout}\n${a.stderr}`);
 const aOut = parse(a.stdout);
 check('happy path prints the merge sha, pr and linked issue', aOut?.merged === 'sha-10' && aOut?.pr === 10 && JSON.stringify(aOut?.issues) === '[910]', a.stdout);
-check('happy path reports the removed worktree path', typeof aOut?.worktreeRemoved === 'string' && realpathSync(aOut.worktreeRemoved) === realpathSync(wt10), JSON.stringify(aOut));
+check('happy path reports the removed worktree path', typeof aOut?.worktreeRemoved === 'string' && (aOut.worktreeRemoved === wt10.dir || aOut.worktreeRemoved === wt10.real), JSON.stringify(aOut));
 check('happy path invoked gh pr merge --squash --delete-branch, never --admin/--auto', /pr merge 10 --squash --delete-branch/.test(a.log) && !/--admin/.test(a.log) && !/--auto/.test(a.log), a.log);
 check('happy path relabelled the linked issue state:done and removed its other state: label', /issue edit 910 --add-label state:done --remove-label state:in-review/.test(a.log), a.log);
 check('happy path removed the worktree', !worktreeExists(wt10));
@@ -238,5 +260,32 @@ const hOut = parse(h.stdout);
 check('fallback reports rulesetChecks: null', hOut?.rulesetChecks === null, JSON.stringify(hOut));
 check('fallback names the red check in missing[]', (hOut?.missing ?? []).some((m: string) => m.includes('lint')), JSON.stringify(hOut));
 check('fallback never invoked gh pr merge', !/pr merge 81/.test(h.log), h.log);
+
+// --- I: dedupe by startedAt (AC1/reconcile's rule) -- a superseded
+// CANCELLED run must not block the merge once the newer run of the same
+// check is green ----------------------------------------------------------
+const i = land(90);
+check('dedupe: a superseded CANCELLED run does not block a merge the newer run is green for', i.status === 0, `${i.stdout}\n${i.stderr}`);
+const iOut = parse(i.stdout);
+check('dedupe green merges', iOut?.merged === 'sha-90' && iOut?.pr === 90, i.stdout);
+
+// --- J: dedupe by startedAt, the other direction -- the latest run of a
+// check is what counts, even though an older run of the same check
+// succeeded ------------------------------------------------------------
+const j = land(91);
+check('dedupe: the latest run of a check decides, not an earlier successful one (exit 1)', j.status === 1, `${j.stdout}\n${j.stderr}`);
+const jOut = parse(j.stdout);
+check('dedupe red is refused with the latest (FAILURE) status named', (jOut?.missing ?? []).some((m: string) => m === 'checks:test (node)=FAILURE'), JSON.stringify(jOut));
+check('dedupe red never invoked gh pr merge', !/pr merge 91/.test(j.log), j.log);
+
+// --- K: gh pr merge exits non-zero because --delete-branch's local
+// `git branch -D` failed (branch checked out in a worktree), even though
+// the server-side squash merge already succeeded -- must not be reported
+// as refused/errored once `pr view` confirms MERGED --------------------
+const k = land(51);
+check('merge exiting non-zero but already MERGED still succeeds (exit 0)', k.status === 0, `${k.stdout}\n${k.stderr}`);
+const kOut = parse(k.stdout);
+check('already-merged-despite-nonzero-exit reports the merge and relabels the linked issue', kOut?.merged === 'sha-51' && kOut?.pr === 51 && JSON.stringify(kOut?.issues) === '[951]', k.stdout);
+check('already-merged-despite-nonzero-exit removed its worktree', !worktreeExists(wt51));
 
 finish();
