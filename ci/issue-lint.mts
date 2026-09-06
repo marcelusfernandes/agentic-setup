@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // issue-lint — validates an issue's contract before it is dispatched:
-// sections present, globs that parse and match something, globs disjoint
-// from the issues already in flight in the same milestone, and every file
-// the issue's globs cover checked for other tracked files that reference it
+// sections present, globs that match something, globs disjoint from the
+// issues already in flight in the same milestone, and every file the
+// issue's globs cover checked for other tracked files that reference it
 // by path or basename (the check that would have caught #3: an issue that
 // renames an entry point without naming the file that references it).
 //
@@ -199,29 +199,12 @@ function fixedDirPrefix(glob: string): string {
   return slash === -1 ? '' : prefix.slice(0, slash + 1);
 }
 
-/** globs that fail to parse are excluded here (already a failure of their
- * own); a malformed glob from this issue, or from another issue's body,
- * must never crash `matchesAny` downstream (AC3/AC4). */
-function validGlobsOnly(list: string[]): string[] {
-  return list.filter((g) => {
-    try {
-      globToRegExp(g);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-}
-
 const globs: GlobReport[] = [];
 for (const glob of issueGlobs) {
-  let regex: RegExp;
-  try {
-    regex = globToRegExp(glob);
-  } catch {
-    failures.push(`glob does not parse: ${glob}`);
-    continue;
-  }
+  // globToRegExp never throws (ci/lib/globs.mts): every character it sees is
+  // either one of its wildcard tokens (`**`, `*`, `?`) or gets escaped before
+  // reaching `new RegExp` (#42), so there is no "glob does not parse" case.
+  const regex = globToRegExp(glob);
   const matches = trackedFiles.filter((f) => regex.test(f));
   if (matches.length > 0) {
     globs.push({ glob, status: 'matched', matches: matches.length });
@@ -246,7 +229,6 @@ for (const glob of issueGlobs) {
     }
   }
 }
-const validSelfGlobs = validGlobsOnly(issueGlobs);
 
 /** Literal (non-wildcard) globs from `list` that name no tracked file — the
  * "new" paths an issue declares. Comparing these (in addition to matched
@@ -283,20 +265,20 @@ function newPathsOverlap(a: string, b: string): boolean {
 }
 
 // --- AC3: disjointness against issues in flight in the same milestone -----
-const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, validSelfGlobs));
-const selfNewPaths = newLiteralPaths(validSelfGlobs);
-const selfNewPrefixes = newWildcardPrefixes(validSelfGlobs);
+const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, issueGlobs));
+const selfNewPaths = newLiteralPaths(issueGlobs);
+const selfNewPrefixes = newWildcardPrefixes(issueGlobs);
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
-  const otherGlobs = validGlobsOnly(parseIssueGlobs(other.body));
+  const otherGlobs = parseIssueGlobs(other.body);
   if (otherGlobs.length === 0) continue;
   const otherNewPaths = newLiteralPaths(otherGlobs);
   const otherNewPrefixes = newWildcardPrefixes(otherGlobs);
   const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
   const overlapNewPaths = [
     ...selfNewPaths.filter((p) => matchesAny(p, otherGlobs)),
-    ...otherNewPaths.filter((p) => matchesAny(p, validSelfGlobs)),
+    ...otherNewPaths.filter((p) => matchesAny(p, issueGlobs)),
   ];
   // Wildcard-vs-wildcard (and literal-vs-wildcard-prefix) new-directory
   // overlap: the fixed-prefix comparison the regex-based check above can't
@@ -310,7 +292,7 @@ for (const other of others) {
   // lands in `otherNewPrefixes` since `tests/` is tracked).
   const overlapNewPrefixes = [
     ...selfNewPrefixes.filter((p) => matchesAny(p, otherGlobs)),
-    ...otherNewPrefixes.filter((p) => matchesAny(p, validSelfGlobs)),
+    ...otherNewPrefixes.filter((p) => matchesAny(p, issueGlobs)),
     ...selfNewPrefixes.filter((p) => [...otherNewPrefixes, ...otherNewPaths].some((q) => newPathsOverlap(p, q))),
     ...otherNewPrefixes.filter((p) => [...selfNewPrefixes, ...selfNewPaths].some((q) => newPathsOverlap(p, q))),
   ];
