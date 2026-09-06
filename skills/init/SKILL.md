@@ -12,12 +12,19 @@ processes but not for the Bash tool, so locate the script first:
 INIT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/init.mts}"
 [ -f "$INIT" ] || INIT="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/init.mts' 2>/dev/null | head -1)"
 [ -f "$INIT" ] || { echo "agentic-setup: init.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$INIT" --dry-run --milestone "M1 <name>"
 node "$INIT" --milestone "M1 <name>"
 ```
 
-Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--milestone "<title>"` creates
-the first milestone (optional); `--no-gh` skips labels and milestone (offline, or no `gh`
-auth); `--force` overwrites files you edited before (it never overwrites silently).
+Run with `--dry-run` first: it prints the exact report a real run would (same `+`/`=`/`!`
+lines, headed `dry run — nothing written`) and changes nothing on disk or on GitHub — no
+file is written, the pre-push hook is untouched, and labels/milestone are only reported,
+never created. Drop the flag to apply once the preview looks right.
+
+Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--dry-run` previews without
+writing anything; `--milestone "<title>"` creates the first milestone (optional); `--no-gh`
+skips labels and milestone (offline, or no `gh` auth); `--force` overwrites files you
+edited before (it never overwrites silently).
 
 The script is idempotent. It:
 

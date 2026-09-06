@@ -2,7 +2,16 @@
 // init — sets a repository up for the agent loop. Run from the repository
 // root; idempotent; never overwrites a file you edited unless --force.
 //
-//   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force]
+//   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force] [--dry-run]
+//
+// --dry-run prints the same report a real run would, changes nothing on disk
+// or on GitHub. Every filesystem write is routed through the write() gate
+// below, so its report line comes from the same code path in both modes. gh
+// writes (label create, milestone POST) are instead skipped by an explicit
+// `if (dryRun)` and their report line names the outcome a fully successful
+// write would reach (e.g. "N/N labels present") — reading gh state (auth
+// status, milestone listing) still happens so the report can say "="
+// (exists) vs "+" (would be created).
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -34,9 +43,20 @@ const milestoneIdx = process.argv.indexOf('--milestone');
 const milestone = milestoneIdx !== -1 ? process.argv[milestoneIdx + 1] : null;
 const force = flags.has('--force');
 const useGh = !flags.has('--no-gh');
+const dryRun = flags.has('--dry-run');
 
 const report: string[] = [];
 const say = (line: string): number => report.push(line);
+if (dryRun) say('dry run — nothing written');
+
+/**
+ * The single gate every filesystem write goes through: performs the action,
+ * or no-ops under --dry-run. Report lines are produced by the caller
+ * regardless of mode, so the report is identical either way.
+ */
+function write(action: () => void): void {
+  if (!dryRun) action();
+}
 
 function run(cmd: string, args: string[], cwd?: string) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
@@ -73,8 +93,10 @@ function copyOne(src: string, dst: string, overwrite: boolean): void {
     else say(`  ! ${shown} exists and differs; left alone (--force to overwrite)`);
     return;
   }
-  mkdirSync(dirname(dst), { recursive: true });
-  cpSync(src, dst);
+  write(() => {
+    mkdirSync(dirname(dst), { recursive: true });
+    cpSync(src, dst);
+  });
   say(`  + ${shown}`);
 }
 
@@ -108,8 +130,10 @@ if (settings) {
   const current = new Set(settings.permissions?.deny ?? []);
   const added = wanted.permissions.deny.filter((rule: string) => !current.has(rule));
   const merged = { ...settings, permissions: { ...(settings.permissions ?? {}), deny: [...current, ...added] } };
-  mkdirSync(dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, `${JSON.stringify(merged, null, 2)}\n`);
+  write(() => {
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, `${JSON.stringify(merged, null, 2)}\n`);
+  });
   say(added.length ? `  + ${added.length} deny rule(s) added` : '  = deny list already complete');
 }
 
@@ -121,9 +145,11 @@ const ours = readFileSync(join(PLUGIN, 'hooks', 'git-pre-push'), 'utf8');
 if (existsSync(prePush) && readFileSync(prePush, 'utf8') !== ours && !/agentic-setup/.test(readFileSync(prePush, 'utf8')) && !force) {
   say(`  ! ${relative(root, prePush)} exists and is not ours; left alone (--force to replace)`);
 } else {
-  mkdirSync(dirname(prePush), { recursive: true });
-  writeFileSync(prePush, ours);
-  chmodSync(prePush, 0o755);
+  write(() => {
+    mkdirSync(dirname(prePush), { recursive: true });
+    writeFileSync(prePush, ours);
+    chmodSync(prePush, 0o755);
+  });
   say(`  + ${relative(root, prePush)}`);
 }
 
@@ -134,16 +160,24 @@ if (useGh) {
   if (!auth.ok) {
     say('  ! gh is not authenticated; skipped labels and milestone (run again, or --no-gh)');
   } else {
-    let created = 0;
-    for (const [name, color, description] of LABELS) {
-      const r = run('gh', ['label', 'create', name, '--color', color, '--description', description, '--force'], root);
-      if (r.ok) created++;
-      else say(`  ! label ${name}: ${r.err.split('\n')[0]}`);
+    if (dryRun) {
+      say(`  + ${LABELS.length}/${LABELS.length} labels present`);
+    } else {
+      let created = 0;
+      for (const [name, color, description] of LABELS) {
+        const r = run('gh', ['label', 'create', name, '--color', color, '--description', description, '--force'], root);
+        if (r.ok) created++;
+        else say(`  ! label ${name}: ${r.err.split('\n')[0]}`);
+      }
+      say(`  + ${created}/${LABELS.length} labels present`);
     }
-    say(`  + ${created}/${LABELS.length} labels present`);
     if (milestone) {
+      // reading is allowed even in dry-run: it decides whether the report
+      // says "=" (exists) or "+" (would be created), without writing.
       const list = run('gh', ['api', 'repos/{owner}/{repo}/milestones', '--jq', '.[].title'], root);
-      if (list.ok && list.out.split('\n').includes(milestone)) say(`  = milestone "${milestone}" exists`);
+      const exists = list.ok && list.out.split('\n').includes(milestone);
+      if (exists) say(`  = milestone "${milestone}" exists`);
+      else if (dryRun) say(`  + milestone "${milestone}"`);
       else {
         const r = run('gh', ['api', '-X', 'POST', 'repos/{owner}/{repo}/milestones', '-f', `title=${milestone}`], root);
         say(r.ok ? `  + milestone "${milestone}"` : `  ! milestone: ${r.err.split('\n')[0]}`);

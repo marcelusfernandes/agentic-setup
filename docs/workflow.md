@@ -96,7 +96,10 @@ Globs touched (must match the issue).
 ```
 
 `Closes #N` in plain text — no bold, no link — because the `scope` job reads it to find
-the issue whose globs apply.
+the issue whose globs apply. `Fixes #N` and `Resolves #N` are also accepted (and their
+close/closed, fix/fixed, resolve/resolved forms, an optional colon before the `#N`), and
+a PR may link several issues this way — `scope` checks the diff against the union of
+every linked issue's globs.
 
 **`authorised:` is written only by the orchestrator, and the glob stands alone on the
 line.** It grants a file outside the issue's globs. The parser splits everything after
@@ -117,7 +120,7 @@ the PR's labels and body, never the issue's.
 | check | what it does |
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
-| `scope` | `git diff --name-only base...head` ⊆ globs of the issue linked by `Closes #N`, plus whatever an `authorised:` line grants |
+| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants |
 | `negative-control` | checkout of the PR base + **only the test files from the diff** + the test command **must fail**. Outcomes: the command fails = pass; the command passes = fail (vacuous tests); no test files in the diff = fail. Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
 
 The exemption is by label, not by hand: the job reads the PR's `type:` label. Without a
