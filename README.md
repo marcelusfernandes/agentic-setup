@@ -20,8 +20,12 @@ small TypeScript scripts with no dependencies and no build step — Node 22.18+ 
 Then, in the repository you want to run this way:
 
 ```
+/agentic-setup:init --dry-run --milestone "M1 foundation"
 /agentic-setup:init --milestone "M1 foundation"
 ```
+
+Run with `--dry-run` first: it prints the exact report a real run would (writes nothing
+to disk or to GitHub); drop the flag to apply once the preview looks right.
 
 It copies the GitHub templates and the two CI checks, writes the permission deny list,
 installs the git `pre-push` hook and seeds the labels — and prints the few steps only a
