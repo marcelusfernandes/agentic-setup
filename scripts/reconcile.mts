@@ -23,8 +23,10 @@
 //     inProgress: [{ number, branch, hasRemoteBranch, pr }],  // pr: number | null
 //     resumable: [{ number, branch, commitsAheadOfMain }],    // in-progress, remote
 //                                                              // branch, no open PR, not
-//                                                              // checked out in any local
-//                                                              // worktree of this checkout
+//                                                              // checked out in any *live*
+//                                                              // local worktree of this
+//                                                              // checkout (dead-locked ones
+//                                                              // don't count)
 //     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved }],
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
@@ -301,8 +303,9 @@ const inProgressAll = issues
     return { number: i.number, branch, hasRemoteBranch: branch !== null, pr: pr ? pr.number : null };
   });
 
-// Resumable: a remote branch, no open PR, not checked out in any local
-// worktree of this checkout — see the header comment for the classification
+// Resumable: a remote branch, no open PR, not checked out in any *live*
+// local worktree of this checkout (checkedOutBranches already excludes
+// dead-locked worktrees) — see the header comment for the classification
 // order and rationale.
 const resumable = inProgressAll
   .filter((i) => i.pr === null && i.branch !== null && !checkedOutBranches.has(i.branch))

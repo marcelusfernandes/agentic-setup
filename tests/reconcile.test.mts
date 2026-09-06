@@ -302,8 +302,8 @@ check(
 // --- AC1/AC2/AC4 (#56): a dead-pid lock does not count as a live agent -----
 const resumable72 = (out?.resumable ?? []).find((i: any) => i.number === 72);
 check(
-  'a worktree locked by a dead pid does not count as checked out: its issue is resumable (AC1/AC2)',
-  resumable72?.branch === 'feat/72-dead-locked-worktree',
+  'a worktree locked by a dead pid does not count as checked out: its issue is resumable, with commitsAheadOfMain (AC1/AC2)',
+  resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0,
   JSON.stringify(resumable72),
 );
 check(
@@ -314,9 +314,10 @@ check(
 
 const deadWorktrees: any[] = out?.deadWorktrees ?? [];
 const deadWorktree72 = deadWorktrees.find((w) => w.branch === 'feat/72-dead-locked-worktree');
+const deadLockedRealpath = realpathSync(deadLockedWorktreeDir);
 check(
   'deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)',
-  deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && typeof deadWorktree72.path === 'string' && deadWorktree72.path.length > 0,
+  deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath,
   JSON.stringify(deadWorktree72),
 );
 
