@@ -8,10 +8,10 @@
 // Without --milestone, picks the open milestone with the lowest number.
 //
 // Without --no-fetch, runs `git fetch --prune origin` once before reading
-// remote branches — the same fetch step 0 of skills/orchestrate/SKILL.md
-// already asks the orchestrator to run, so a pass makes one network call for
-// git, not two. Remote branches then come from the local refs
-// (`git for-each-ref refs/remotes/origin`), not a second network round trip.
+// remote branches, so step 0 of skills/orchestrate/SKILL.md no longer runs
+// its own fetch and a pass makes one network call for git, not two. Remote
+// branches then come from the local refs (`git for-each-ref
+// refs/remotes/origin`), not a second network round trip.
 // --no-fetch skips the fetch and reads whatever those local refs already
 // hold, so a pass can run offline against the state of the last fetch — at
 // the cost of not seeing a branch deleted on the remote since then.

@@ -4,8 +4,8 @@
 // GitHub data comes from a fake `gh` put first on PATH (a bash script that
 // dispatches on the subcommand and prints canned JSON); worktree data comes
 // from a real temporary git repository with a real linked worktree and a
-// real (bare, local) "origin" remote, so `git ls-remote` and
-// `git worktree list --porcelain` are exercised for real.
+// real (bare, local) "origin" remote, so `git fetch --prune`, `git
+// for-each-ref` and `git worktree list --porcelain` are exercised for real.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
