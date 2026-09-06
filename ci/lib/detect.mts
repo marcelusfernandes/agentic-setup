@@ -1,6 +1,7 @@
 // Detects the project's check and test commands from what the repository
-// contains. The stop-gate hook and the negative-control CI job both use
-// this file, so "the tests" means the same thing in both places.
+// contains. The negative-control CI job (ci/negative-control.mts) uses this
+// file, and the implementer agent reads it to find the same commands, so
+// "the tests" means the same thing in both places.
 //
 // Detection is a default, not a contract: AGENTIC_TEST_CMD and
 // AGENTIC_CHECK_CMD override each field. Node built-ins only.
