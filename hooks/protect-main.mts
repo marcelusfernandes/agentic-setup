@@ -5,12 +5,12 @@
 // Denies, before the command runs, a segment (split on &&, ||, ;, |,
 // newlines — no quote parsing) that:
 //   1. starts with `git push` and force-pushes (--force, -f, +refspec)
-//   2. starts with `git push` and targets main/master: a token equal to
-//      main/master, one ending in :main/:master, or no refspec at all while
-//      the current branch is main/master — or deletes them: a refspec
-//      starting with `:` whose remote side is main/master (`:main`,
-//      `:refs/heads/main`), or a --delete/-d flag with main/master among
-//      the refspecs
+//   2. starts with `git push` and targets main/master: a refspec whose
+//      remote side is main/master (short or `refs/heads/` form), or no
+//      refspec at all while the current branch is main/master — or deletes
+//      them: a refspec starting with `:` whose remote side is main/master
+//      (`:main`, `:refs/heads/main`), or a --delete/-d flag with
+//      main/master among the refspecs
 //   3. starts with `gh pr merge` and passes `--admin`
 // The ruleset and `hooks/git-pre-push` (every push from this machine, in or
 // out of Claude Code) are the layers that count; this one saves a round
@@ -41,7 +41,7 @@ function checkPush(segment: string, cwd: string, command: string): void {
     deny(HOOK, 'deleting main/master is forbidden. (AGENTIC_ALLOW_PUSH_MAIN=1 lifts pushing to main for bootstrap only; it never covers deletion.)');
   }
   const targetsMain =
-    refspecs.some((r) => PROTECTED.test(r) || /:(?:main|master)$/.test(r)) ||
+    refspecs.some((r) => PROTECTED.test(r.includes(':') ? r.slice(r.lastIndexOf(':') + 1) : r)) ||
     (refspecs.length === 0 && PROTECTED.test(currentBranch(cwd)));
   if (targetsMain && !valve('AGENTIC_ALLOW_PUSH_MAIN', command)) {
     deny(HOOK, 'direct push to main/master is forbidden; open a PR. (AGENTIC_ALLOW_PUSH_MAIN=1 is for bootstrap only.)');
