@@ -63,6 +63,10 @@ JSON
 {"number":21,"title":"feat: preexisting ref","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      22) cat <<'JSON'
+{"number":22,"title":"feat: ancestor branch","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
       98) echo '{"state":"CLOSED"}' ;;
       99) echo '{"state":"OPEN"}' ;;
       *) echo "fake-gh: unknown issue $n" >&2; exit 1 ;;
@@ -241,5 +245,26 @@ git(['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main
 const upToDate = claim(['21', '--slug', 'preclaimed']);
 check('an up-to-date push is held, exit 2', upToDate.status === 2 && upToDate.json?.held === 'feat/21-preclaimed', JSON.stringify(upToDate));
 check('an up-to-date held claim does not touch labels', !upToDate.log.includes('issue edit'), upToDate.log);
+
+// --- AC3: a branch that already exists at an ANCESTOR of the current base --
+// (claimed earlier; the default branch has advanced since, the loop's
+// normal state) must not be moved by the lock's own push. Without a
+// create-only push this is a fast-forward — porcelain flag " ", `old..new`,
+// exit 0 — so the script correctly reports { held } (the flag isn't "*"),
+// but the push itself already re-based the other agent's branch, staling
+// the { base } their own claim reported. Reusing pusherDir: it pushes the
+// ancestor branch directly onto the shared bare origin, then `repo`
+// advances the default branch past it.
+git(['push', 'origin', `${preexistingSha}:refs/heads/feat/22-anc`], pusherDir);
+git(['commit', '-q', '--allow-empty', '-m', 'advance main'], repo);
+git(['push', '-q', 'origin', 'main'], repo);
+const ancestorHeld = claim(['22', '--slug', 'anc']);
+check('a branch at an ancestor of the base is held, exit 2', ancestorHeld.status === 2 && ancestorHeld.json?.held === 'feat/22-anc', JSON.stringify(ancestorHeld));
+check('a branch at an ancestor of the base is held without touching labels', !ancestorHeld.log.includes('issue edit'), ancestorHeld.log);
+check(
+  'a branch at an ancestor of the base is NOT moved by the lock push (create-only)',
+  git(['rev-parse', 'refs/heads/feat/22-anc'], remoteDir) === preexistingSha,
+  `${git(['rev-parse', 'refs/heads/feat/22-anc'], remoteDir)} !== ${preexistingSha}`,
+);
 
 finish();
