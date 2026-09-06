@@ -57,19 +57,37 @@ left by the last one, for an offline check against the last fetch. Fields:
 - `stale` — `{ number, reason }`: in-progress issues with no open PR **and** no remote
   branch → back to `state:ready`.
 - `orphanWorktrees` — paths of linked worktrees whose branch no longer exists on the
-  remote → remove them (stop any local service they started first).
-- `deadWorktrees` — `{ path, branch, pid }`: linked worktrees locked by a pid that no
-  longer exists. Claude Code locks an agent's worktree only while that agent runs
-  (`claude agent agent-<id> (pid <N> ...)`) and removes the lock on a clean exit — the
+  remote → remove them (stop any local service they started first). A path that also
+  appears in `deadWorktrees` follows that bullet's recovery (patch, push) before removal;
+  this bullet's plain removal is for worktrees with nothing left to save.
+- `deadWorktrees` — `{ path, branch, pid, dirty, unpushed }`: linked worktrees locked by a
+  pid that no longer exists. Claude Code locks an agent's worktree only while that agent
+  runs (`claude agent agent-<id> (pid <N> ...)`) and removes the lock on a clean exit — the
   worktree stays, unlocked; a killed session leaves the lock behind, still naming the
   now-dead pid. When `process.kill(N, 0)` throws `ESRCH`, the worktree does not count as
   a live agent's checkout, so its issue is already reported `resumable` above, not
-  `inProgress` — this list is only for cleanup. For each entry, before step 3: `git
-  worktree unlock <path> && git worktree remove --force <path>`; then treat its issue as
-  `resumable`. This narrows, but does not close, the restart gap (`docs/orchestration.md`,
-  Known limits): an unlocked
-  leftover worktree (its agent finished without a PR, in a session since dead) still
-  reads `inProgress` and needs a person, or a future liveness signal, to resolve.
+  `inProgress` — this list is only for cleanup, but a dead worktree can still hold work an
+  implementer never got to commit or push (#88: four implementers died mid-work in M4, one
+  with a local commit never pushed). `dirty` is `true` when `git -C <path> status
+  --porcelain` prints anything; `unpushed` is the count of commits on the worktree's `HEAD`
+  not on `origin/<branch>`, or `null` when there is no such remote branch. `dirty` itself
+  reads `null` when the `git` call behind it fails (a broken or missing worktree) — skip
+  step 1 for that entry, but still remove it in step 3; there is nothing to trust a
+  status read from. Recover before removing, for each entry:
+  1. If `dirty`: `git -C <path> add -N . && git -C <path> diff HEAD > <patch>` — the
+     `add -N` (intent-to-add) makes untracked files show up in the diff without staging
+     their content, and `diff HEAD` (rather than a bare `diff`, which drops staged
+     content) captures staged, unstaged and intent-to-added changes together. Save the
+     patch path; it is handed to the round N+1 implementer as a draft to verify, test
+     committed first, not applied as-is.
+  2. If `unpushed > 0`: `git push origin <branch>` (fast-forward, never force).
+  3. `git worktree unlock <path> && git worktree remove --force <path>`; then treat its
+     issue as `resumable`.
+
+  This narrows, but does not close, the restart gap (`docs/orchestration.md`, Known
+  limits): an unlocked leftover worktree (its agent finished without a PR, in a session
+  since dead) still reads `inProgress` and needs a person, or a future liveness signal, to
+  resolve.
 
 A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
 rather than guessing the state.

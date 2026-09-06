@@ -34,7 +34,22 @@
 //                                                              // list-call's rollup
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
-//     deadWorktrees: [{ path, branch, pid }],                  // locked by a pid that no longer exists
+//     deadWorktrees: [{ path, branch, pid, dirty, unpushed }], // locked by a pid that no
+//                                                              // longer exists. dirty: true
+//                                                              // when `git -C <path> status
+//                                                              // --porcelain` prints
+//                                                              // anything, else false, else
+//                                                              // (a broken worktree) null.
+//                                                              // unpushed: commits in the
+//                                                              // worktree's HEAD not on
+//                                                              // `origin/<branch>`, or null
+//                                                              // when there is no such
+//                                                              // remote branch (or no
+//                                                              // `branch` at all, or the
+//                                                              // worktree is broken). These
+//                                                              // two `git` calls run only
+//                                                              // for dead worktrees, never
+//                                                              // for live ones.
 //   }
 //
 // A fresh orchestrator session has no live agents by definition, so an
@@ -64,6 +79,21 @@
 // from a live session's paused agent — that residual still reads
 // `inProgress` and needs a person, or a future liveness signal, to resolve.
 //
+// A dead worktree can still hold work the orchestrator would otherwise throw
+// away by following its own advice (`git worktree remove --force`): an
+// uncommitted change, or a local commit never pushed (#88, four implementers
+// died mid-work in M4). Each `deadWorktrees[]` entry therefore also reports
+// `dirty` (`git -C <path> status --porcelain` printed anything) and
+// `unpushed` (commits on the worktree's `HEAD` not on `origin/<branch>`, via
+// `git -C <path> rev-list --count refs/remotes/origin/<branch>..HEAD` — fully
+// qualified, same #48 reason as `commitsAhead` below: a local branch literally
+// named `origin/<branch>` would otherwise shadow the remote-tracking ref —
+// gated by `git -C <path> rev-parse --verify --quiet
+// refs/remotes/origin/<branch>` so a branch never pushed reads `unpushed:
+// null` rather than a nonsensical count). Both `git` calls run only for
+// entries already in `deadWorktrees` — never for a live worktree, whether or
+// not it turns out to be dirty or ahead.
+//
 // GitHub data comes only from `gh` (issue list, pr list, api, pr checks);
 // worktree and branch data from `git worktree list --porcelain` and (after
 // `git fetch --prune origin`, unless --no-fetch) `git for-each-ref
@@ -83,7 +113,11 @@
 // Crash policy: never a stack trace. A failing `gh` or `git` call (auth,
 // rate limit, an unknown milestone, no remote) prints { "error": "..." } to
 // stdout and exits 1 — except `gh pr checks`, whose failure degrades that
-// one PR's `checks` to 'pending' instead (see above).
+// one PR's `checks` to 'pending' instead (see above), and the `git status`
+// call behind `deadWorktrees[].dirty`, whose failure (a broken or removed
+// worktree) degrades that one entry's `dirty` (and `unpushed`, since a
+// worktree whose status cannot be read cannot be trusted for a commit range
+// either) to `null` instead of failing the whole pass.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
 import { parseBlockedBy } from './lib/issues.mts';
@@ -255,6 +289,30 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Whether a dead worktree still holds work worth saving (#88): `dirty` when
+ * `git -C <path> status --porcelain` prints anything, `unpushed` the count of
+ * commits on its `HEAD` not on `origin/<branch>` (`null` when `branch` is
+ * absent, or names no remote-tracking ref — a branch never pushed at all). A
+ * `git status` failure (a broken or removed worktree) reports `dirty: null`
+ * rather than throwing; `unpushed` degrades to `null` alongside it, since a
+ * worktree whose status cannot be trusted cannot be trusted for a commit
+ * range either. Called only for entries already known to be dead.
+ */
+function deadWorktreeWork(path: string, branch: string | null): { dirty: boolean | null; unpushed: number | null } {
+  const status = spawnSync('git', ['-C', path, 'status', '--porcelain'], { encoding: 'utf8' });
+  if (status.status !== 0) return { dirty: null, unpushed: null };
+  const dirty = status.stdout.trim().length > 0;
+
+  if (!branch) return { dirty, unpushed: null };
+  const verify = spawnSync('git', ['-C', path, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { encoding: 'utf8' });
+  if (verify.status !== 0) return { dirty, unpushed: null };
+
+  const count = spawnSync('git', ['-C', path, 'rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], { encoding: 'utf8' });
+  const unpushed = count.status === 0 ? Number.parseInt(count.stdout.trim(), 10) || 0 : null;
+  return { dirty, unpushed };
+}
+
 // 6. worktrees; the first block from `git worktree list` is always the main
 // one. A `locked` line with no reason on it, or a reason with no `pid <N>` in
 // it, is treated as alive: no evidence the process is gone.
@@ -276,7 +334,7 @@ const worktrees = git(['worktree', 'list', '--porcelain'])
 const linkedWorktrees = worktrees.slice(1);
 const deadWorktrees = linkedWorktrees
   .filter((w) => w.dead)
-  .map((w) => ({ path: w.path, branch: w.branch, pid: w.pid as number }));
+  .map((w) => ({ path: w.path, branch: w.branch, pid: w.pid as number, ...deadWorktreeWork(w.path, w.branch) }));
 
 function branchFor(number: number): string | null {
   const re = new RegExp(`^[a-z]+/${number}-`);
