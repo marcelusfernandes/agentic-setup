@@ -247,21 +247,57 @@ function newLiteralPaths(list: string[]): string[] {
   return list.filter((g) => isLiteralPath(g) && !trackedFiles.includes(g));
 }
 
+/** The directory-level counterpart of `newLiteralPaths`: each wildcard
+ * glob's fixed directory prefix, kept only when that directory has no
+ * tracked file anywhere (the same "new" test the per-glob AC2 check above
+ * makes). A literal-path-vs-full-glob comparison (`newLiteralPaths` against
+ * `matchesAny`) already catches a literal new path landing inside another
+ * issue's wildcard, because the regex for e.g. `newmod/**` matches any path
+ * under it — but it has nothing to compare when *both* sides are wildcards
+ * over the same brand-new directory, since neither side declares a literal
+ * path and `newLiteralPaths` collects only those. Comparing fixed prefixes
+ * closes that hole (round 2 of #41). */
+function newWildcardPrefixes(list: string[]): string[] {
+  const prefixes = list
+    .filter((g) => !isLiteralPath(g))
+    .map(fixedDirPrefix)
+    .filter((p) => p !== '' && !trackedFiles.some((f) => f.startsWith(p)));
+  return [...new Set(prefixes)];
+}
+
+/** Whether two new (untracked) paths — a literal path or a wildcard's fixed
+ * directory prefix — claim overlapping territory: the same path, or one a
+ * directory prefix of the other (`newmod/` and `newmod/sub/`, in either
+ * order). */
+function newPathsOverlap(a: string, b: string): boolean {
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
 // --- AC3: disjointness against issues in flight in the same milestone -----
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, validSelfGlobs));
 const selfNewPaths = newLiteralPaths(validSelfGlobs);
+const selfNewPrefixes = newWildcardPrefixes(validSelfGlobs);
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
   const otherGlobs = validGlobsOnly(parseIssueGlobs(other.body));
   if (otherGlobs.length === 0) continue;
   const otherNewPaths = newLiteralPaths(otherGlobs);
+  const otherNewPrefixes = newWildcardPrefixes(otherGlobs);
   const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
   const overlapNewPaths = [
     ...selfNewPaths.filter((p) => matchesAny(p, otherGlobs)),
     ...otherNewPaths.filter((p) => matchesAny(p, validSelfGlobs)),
   ];
-  const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths])];
+  // Wildcard-vs-wildcard (and literal-vs-wildcard-prefix) new-directory
+  // overlap: the fixed-prefix comparison the regex-based check above can't
+  // make, since neither wildcard's pattern necessarily matches the other's
+  // literal shape.
+  const overlapNewPrefixes = [
+    ...selfNewPrefixes.filter((p) => [...otherNewPrefixes, ...otherNewPaths].some((q) => newPathsOverlap(p, q))),
+    ...otherNewPrefixes.filter((p) => [...selfNewPrefixes, ...selfNewPaths].some((q) => newPathsOverlap(p, q))),
+  ];
+  const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths, ...overlapNewPrefixes])];
   if (overlapFiles.length === 0) continue;
   const otherBlockedBy = blockedBy(other.body) ?? [];
   const isSequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
