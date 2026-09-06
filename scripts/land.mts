@@ -27,11 +27,17 @@
 //
 // On success: `gh pr merge <pr> --squash --delete-branch` (gh's own default
 // squash subject, "<title> (#<pr>)"; never --admin, never --auto, no force
-// of any kind; AGENTIC_ALLOW_MERGE is protect-main's valve, not read here —
-// the hook still runs on this call). Only once `gh pr view` reports state
-// MERGED: every issue the PR body links via a closing keyword gets
-// state:done (its other state:* labels removed), and the local worktree
-// checked out on the PR's head branch, if any, is removed.
+// of any kind). protect-main's PreToolUse hook matches `gh pr merge` in the
+// Bash *command string*; it never sees this call, since land.mts spawns gh
+// from node, not from a shell command Claude Code runs. This script does
+// not rely on that hook firing — it replaces it, enforcing the same
+// criteria (CLEAN, approval-or-docs, every required check green on its
+// latest run) itself, plus the MERGED confirmation below. AGENTIC_ALLOW_MERGE
+// is protect-main's valve for that hook; it has no effect here, by design —
+// there is no bypass for this script's own checks. Only once `gh pr view`
+// reports state MERGED: every issue the PR body links via a closing keyword
+// gets state:done (its other state:* labels removed), and the local
+// worktree checked out on the PR's head branch, if any, is removed.
 //
 // If the merge command fails, or the PR never reaches MERGED, prints
 // { error } to stdout, exits 1, and changes no label and no worktree.
@@ -89,6 +95,27 @@ const AC4_MAX_ATTEMPTS = 12; // 12 * 5000ms default = 60s, per AC4
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
+}
+
+/**
+ * The argv tokens parseArgs (ci/lib/args.mts) does not consume as a flag or
+ * a flag's value, in order -- i.e. the positional arguments, wherever they
+ * fall relative to a `--flag value` pair. `--wait 30 36` and `36 --wait 30`
+ * must both yield `['36']`: a flag with a value ahead of the PR number is
+ * not itself the PR number.
+ */
+function positionalArgs(argv: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--')) {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) i++; // consumed as this flag's value, same rule as parseArgs
+      continue;
+    }
+    positionals.push(arg);
+  }
+  return positionals;
 }
 
 function fail(shape: Record<string, unknown>): never {
@@ -155,13 +182,17 @@ function latestChecksByName(entries: CheckEntry[]): CheckEntry[] {
  * A check run's outcome lives in `conclusion` once `status` is COMPLETED,
  * and in `status` itself (IN_PROGRESS, QUEUED) while it is not; a status
  * context instead carries its outcome in `state` (SUCCESS, FAILURE, ERROR,
- * PENDING). reconcile.mts's equivalent reads only conclusion/state, which
- * is enough there (anything not green falls into "pending" by elimination);
- * land.mts needs to positively recognise IN_PROGRESS/QUEUED to drive the
- * AC2 wait, so it also reads `status`.
+ * PENDING). reconcile.mts's equivalent reads only conclusion/state with
+ * `??`, which is enough there (anything not green falls into "pending" by
+ * elimination). land.mts needs to positively recognise IN_PROGRESS/QUEUED
+ * to drive the AC2 wait, so it also reads `status` -- and it must fall
+ * through with `||`, not `??`: the real `gh pr view --json
+ * statusCheckRollup` sends `"conclusion": ""` (empty string, not null) for
+ * an incomplete CheckRun, and `??` only falls through on null/undefined, so
+ * it would keep that empty string and never see `status` at all.
  */
 function checkStatus(c: CheckEntry): string {
-  return String(c.conclusion ?? c.state ?? c.status ?? '').toUpperCase();
+  return String(c.conclusion || c.state || c.status || '').toUpperCase();
 }
 
 /**
@@ -242,7 +273,7 @@ function listWorktrees(cwd: string): WorktreeEntry[] {
 
 async function main() {
   const rawArgs = process.argv.slice(2);
-  const prArg = rawArgs.find((a) => !a.startsWith('--'));
+  const prArg = positionalArgs(rawArgs)[0];
   const flags = parseArgs(rawArgs);
   const pr = Number(prArg);
   if (!prArg || !Number.isInteger(pr) || pr <= 0) {
