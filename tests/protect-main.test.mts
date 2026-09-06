@@ -25,6 +25,14 @@ const denied = [
   'git commit -m "x" && git push origin main', // a cleanly closed string still lets a real operator split after it
   "git status  # let's see\ngit push origin main", // a # comment must not let its apostrophe swallow the newline
   "echo $'it\\'s' && git push origin main", // $'...' ANSI-C quoting: backslash escapes even in single quotes
+  'git push origin "main"', // double-quoted refspec token
+  "git push origin mai'n'", // single quotes spliced inside a bare word
+  'git push origin ma"in"', // double quotes spliced inside a bare word
+  'git branch -D "main"', // quoted branch name in a delete
+  'echo `git push origin main`', // backtick command substitution, outside quotes
+  'echo "`git push origin main`"', // backtick command substitution, inside double quotes
+  'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
+  'git push origin main 2>&1', // a redirect after the refspec must not hide the push
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -40,6 +48,9 @@ const allowed = [
   'echo "a && git push origin main"', // one segment, starting with echo
   "git commit -m 'x; git push --force'", // one segment, starting with git commit
   'echo "a \\" && git push origin main && b"', // escaped quote doesn't end the string; still one segment
+  "echo '`git push origin main`'", // backtick inside single quotes is literal text
+  'echo x >&2 && git push origin feat/1-x', // >& is a redirection, not a lone &, and doesn't hide the real &&
+  'git commit -m "a & b"', // & inside a double-quoted string is not the background operator
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
