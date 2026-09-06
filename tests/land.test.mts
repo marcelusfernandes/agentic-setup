@@ -20,7 +20,10 @@
 // polls, relabels and removes worktrees -- it does not print { queued } and
 // it calls `gh pr merge` without --auto, so every case below that checks
 // for `queued` or `--auto` fails against the old script rather than passing
-// vacuously.
+// vacuously. Case J below is the negative control for #66 specifically: the
+// base always accepts a `review:approved` label as approval, so it queues a
+// label-only PR even with AGENTIC_REVIEWER_TOKEN set -- this test fails on
+// that base and passes only once the label alone stops being sufficient.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -63,6 +66,8 @@ case "\${1:-} \${2:-}" in
       16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
       17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
       18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      19) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      20) echo '{"state":"OPEN","labels":[],"reviewDecision":"APPROVED","baseRefName":"main"}' ;;
       *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
     esac
     ;;
@@ -96,13 +101,18 @@ chmodSync(join(fakeGhDir, 'gh'), 0o755);
 const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 
 // --- runner ------------------------------------------------------------------
+// AGENTIC_REVIEWER_TOKEN is stripped from the inherited environment by
+// default: this repository dogfoods itself, so the orchestrator's own shell
+// (running this very suite) may have it set for real, and every label-only
+// case below (13-19) must see it unset unless a case opts in via `env`.
+const { AGENTIC_REVIEWER_TOKEN: _ambientReviewerToken, ...BASE_ENV } = process.env;
 function land(pr: number, env: Record<string, string> = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'agentic-land-state-'));
   cleanup(() => rmSync(stateDir, { recursive: true, force: true }));
   writeFileSync(join(stateDir, 'gh-argv.log'), '');
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'land.mts'), String(pr)], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
+    env: { ...BASE_ENV, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
   });
   const log = existsSync(join(stateDir, 'gh-argv.log')) ? readFileSync(join(stateDir, 'gh-argv.log'), 'utf8') : '';
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, log };
@@ -158,10 +168,10 @@ const f = land(15, { FAKE_GH_RULES: 'required' });
 check('required_status_checks present queues (exit 0)', f.status === 0, `${f.stdout}\n${f.stderr}`);
 const fOut = parse(f.stdout);
 check('required_status_checks present reports { queued, gate: ruleset }', fOut?.queued === 15 && fOut?.gate === 'ruleset', f.stdout);
-check('required_status_checks present invoked gh pr merge --squash --delete-branch --auto, never --admin', /pr merge 15 --squash --delete-branch --auto/.test(f.log) && !/--admin/.test(f.log), f.log);
+check('required_status_checks present invoked gh pr merge --squash --auto, never --delete-branch or --admin', /pr merge 15 --squash --auto/.test(f.log) && !/--delete-branch/.test(f.log) && !/--admin/.test(f.log), f.log);
 check('required_status_checks present never called gh pr checks', !/pr checks/.test(f.log), f.log);
 const fLines = f.log.trim().split('\n').filter(Boolean);
-check('required_status_checks present did nothing after gh pr merge --auto', fLines[fLines.length - 1] === 'pr merge 15 --squash --delete-branch --auto', f.log);
+check('required_status_checks present did nothing after gh pr merge --auto', fLines[fLines.length - 1] === 'pr merge 15 --squash --auto', f.log);
 
 // --- G: preconditions and gate pass, but auto-merge is disabled on the repo -
 const g = land(16, { FAKE_GH_RULES: 'required' });
@@ -187,5 +197,29 @@ const i = land(18, { FAKE_GH_RULES: 'deletion-only' });
 check('deletion-only ruleset + green checks queues via client-checks (exit 0)', i.status === 0, `${i.stdout}\n${i.stderr}`);
 const iOut = parse(i.stdout);
 check('deletion-only ruleset + green checks reports { queued, gate: client-checks }', iOut?.queued === 18 && iOut?.gate === 'client-checks', i.stdout);
+
+// --- J: AGENTIC_REVIEWER_TOKEN is set in the orchestrator's environment ->
+// the review:approved label alone no longer satisfies approval; a real
+// review (reviewDecision) is required. This is #66's negative control: the
+// base queues PR 19 regardless of the env var. ------------------------------
+const j = land(19, { FAKE_GH_RULES: 'required', AGENTIC_REVIEWER_TOKEN: 'fake-reviewer-token' });
+check('reviewer identity configured: label-only refuses (exit 1)', j.status === 1, `${j.stdout}\n${j.stderr}`);
+const jOut = parse(j.stdout);
+check('reviewer identity configured: label-only names review:not-approved in missing[]', (jOut?.missing ?? []).includes('review:not-approved'), JSON.stringify(jOut));
+check('reviewer identity configured: label-only never invoked gh pr merge', !/pr merge/.test(j.log), j.log);
+
+// --- K: AGENTIC_REVIEWER_TOKEN is set and the PR carries a real APPROVED
+// review (no label needed) -> queued as usual --------------------------------
+const k = land(20, { FAKE_GH_RULES: 'required', AGENTIC_REVIEWER_TOKEN: 'fake-reviewer-token' });
+check('reviewer identity configured: reviewDecision APPROVED queues (exit 0)', k.status === 0, `${k.stdout}\n${k.stderr}`);
+const kOut = parse(k.stdout);
+check('reviewer identity configured: reviewDecision APPROVED reports { queued, gate: ruleset }', kOut?.queued === 20 && kOut?.gate === 'ruleset', k.stdout);
+
+// --- L: without AGENTIC_REVIEWER_TOKEN, the label alone still queues as
+// today (AC4: nothing changes for adopters that never set it) --------------
+const l = land(15, { FAKE_GH_RULES: 'required' });
+check('no reviewer identity: label-only still queues (exit 0)', l.status === 0, `${l.stdout}\n${l.stderr}`);
+const lOut = parse(l.stdout);
+check('no reviewer identity: label-only reports { queued, gate: ruleset }', lOut?.queued === 15 && lOut?.gate === 'ruleset', l.stdout);
 
 finish();
