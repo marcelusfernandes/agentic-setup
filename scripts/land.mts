@@ -6,26 +6,42 @@
 // being taken and the merge happening (#25's incident by construction).
 // `Closes #N` closes the linked issue when the PR merges — closed is done,
 // nothing left here to relabel. The worktree becomes an orphan once GitHub
-// deletes the branch on merge (delete_branch_on_merge, init-enabled;
-// --delete-branch below is inert under --auto until then); the next claim
-// already removes orphaned worktrees.
+// deletes the branch on merge (delete_branch_on_merge, init-enabled); the
+// next claim already removes orphaned worktrees. `--delete-branch` is not
+// passed to `gh pr merge` (#66 AC0): under `--auto` gh does not delete
+// anything itself, but when the PR is *already* mergeable gh merges at once
+// and then tries a local `git branch -D`, which fails whenever that branch
+// is checked out in a worktree — printing { error } here even though the
+// merge already succeeded on the server.
 //
 //   node scripts/land.mts <pr>
 //
 // Refuses (exit 1, { refused, pr, missing }) unless OPEN and approved (or
-// type:docs). Then gate='ruleset' iff the PR base branch's *effective*
-// rules (`gh api repos/{owner}/{repo}/rules/branches/<baseRefName>`,
-// flattened and enforcement-aware -- unlike the ruleset *list*, summaries
-// only, which cannot tell a required_status_checks ruleset from a
-// deletion-only one) include a required_status_checks rule. Otherwise runs
-// `gh pr checks <pr> --required`, refusing if it is red/pending: the
-// fallback for a branch with no such rule, where `--auto` alone would
-// queue an ungated merge.
+// type:docs). "Approved" is `reviewDecision === 'APPROVED'`, or — only when
+// the orchestrator's environment has no AGENTIC_REVIEWER_TOKEN set — the
+// `review:approved` label as a fallback. When that variable is set, the
+// reviewer agent authenticates as a separate identity (`agents/reviewer.md`)
+// and its GitHub review is the only thing that satisfies approval: the same
+// token that runs this script can no longer write itself an approval by
+// mistake or via a prompt injection in the issue (#66, audit finding 6).
+// Without the variable, behaviour is unchanged (#66 AC4). Setting the
+// variable without also setting the base branch ruleset's
+// required_approving_review_count (`scripts/init.mts`'s "by hand" list)
+// leaves `reviewDecision` null forever on a repository with no review
+// policy — every PR would then refuse here with no way to satisfy it.
 //
-// On success: `gh pr merge <pr> --squash --delete-branch --auto` (never
-// --admin); prints { queued: pr, gate }. If that fails (e.g. auto-merge
-// disabled), prints { error } with gh's message, exit 1. No polling, no
-// relabel, no worktree removal either way.
+// Then gate='ruleset' iff the PR base branch's *effective* rules (`gh api
+// repos/{owner}/{repo}/rules/branches/<baseRefName>`, flattened and
+// enforcement-aware -- unlike the ruleset *list*, summaries only, which
+// cannot tell a required_status_checks ruleset from a deletion-only one)
+// include a required_status_checks rule. Otherwise runs `gh pr checks <pr>
+// --required`, refusing if it is red/pending: the fallback for a branch
+// with no such rule, where `--auto` alone would queue an ungated merge.
+//
+// On success: `gh pr merge <pr> --squash --auto` (never --delete-branch,
+// never --admin); prints { queued: pr, gate }. If that fails (e.g.
+// auto-merge disabled), prints { error } with gh's message, exit 1. No
+// polling, no relabel, no worktree removal either way.
 import { spawnSync } from 'node:child_process';
 
 type Label = { name: string };
@@ -61,7 +77,10 @@ if (!view) fail({ refused: `could not read PR #${pr} from gh.`, pr, missing: ['g
 const missing: string[] = [];
 if (view.state !== 'OPEN') missing.push(`state=${view.state}`);
 const isDocs = hasLabel(view.labels, 'type:docs');
-const approved = hasLabel(view.labels, 'review:approved') || view.reviewDecision === 'APPROVED';
+// A reviewer identity configured means the label alone is a convenience,
+// never the gate: only a real review from that identity counts (#66 AC2).
+const reviewerIdentityConfigured = Boolean(process.env.AGENTIC_REVIEWER_TOKEN);
+const approved = view.reviewDecision === 'APPROVED' || (!reviewerIdentityConfigured && hasLabel(view.labels, 'review:approved'));
 if (!isDocs && !approved) missing.push('review:not-approved');
 if (missing.length) fail({ refused: `PR #${pr} is not ready to merge: ${missing.join(', ')}.`, pr, missing });
 
@@ -72,7 +91,7 @@ if (gate === 'client-checks' && gh(['pr', 'checks', String(pr), '--required']).s
   fail({ refused: `PR #${pr}: required checks are not green.`, pr, missing: ['checks:required'], gate });
 }
 
-const mergeResult = gh(['pr', 'merge', String(pr), '--squash', '--delete-branch', '--auto']);
+const mergeResult = gh(['pr', 'merge', String(pr), '--squash', '--auto']);
 if (mergeResult.status !== 0) {
   fail({ error: (mergeResult.stderr || mergeResult.stdout || 'gh pr merge failed').trim() });
 }

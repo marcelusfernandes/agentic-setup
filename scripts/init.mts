@@ -174,9 +174,10 @@ if (useGh) {
       say(r.ok ? '  + auto-merge enabled' : `  ! auto-merge: ${r.err.split('\n')[0]}`);
     }
 
-    // `--delete-branch` in land.mts's `gh pr merge --auto` is a no-op under
-    // auto-merge (gh skips deletion until the merge actually happens); only
-    // this repository setting deletes the branch once GitHub merges.
+    // land.mts's `gh pr merge --auto` does not pass --delete-branch (#66
+    // AC0: it fails a local `git branch -D` whenever the branch is checked
+    // out in a worktree); only this repository setting deletes the branch
+    // once GitHub merges.
     const deleteBranchOnMerge = ghBool('.delete_branch_on_merge');
     if (deleteBranchOnMerge) say('  = delete-branch-on-merge already enabled');
     else if (dryRun) say('  + delete-branch-on-merge enabled');
@@ -218,4 +219,9 @@ next, by hand:
   - make scope, negative-control and your test workflow required checks on main
   - add a ruleset if your plan allows one (PR required, no force-push, no deletion)
   - add scope: labels for your repository; set AGENTIC_TEST_CMD in agentic-checks.yml if needed
-  - name the invariants in CLAUDE.md — the reviewer checks what it names`);
+  - name the invariants in CLAUDE.md — the reviewer checks what it names
+  - for a review gate the merging identity cannot satisfy itself: create a machine user or
+    a GitHub App installation with pull-request write, store its token as
+    AGENTIC_REVIEWER_TOKEN wherever the orchestrator runs (never in this repository), and
+    set the branch ruleset's required_approving_review_count to 1 — init does not edit
+    rulesets`);
