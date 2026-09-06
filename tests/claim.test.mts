@@ -6,13 +6,29 @@
 // not happen (a refusal must not touch labels; a held claim must not
 // either). Branch creation is exercised for real against a temporary git
 // repository with a real (bare, local) "origin" remote.
+//
+// claim.mts now runs ci/issue-lint.mts (for real, not mocked — it is
+// resolved relative to claim.mts's own file location) as the last refusal
+// check before the push, so every issue body used below to reach the push
+// step carries the full set of sections issue-lint requires (Context,
+// Goal, Acceptance criteria, Proof, Files, Dependencies), and the repo has
+// two real tracked files the AC4 entry-point-reference check can see. The
+// fake `gh` also answers `issue list --milestone …` (a canned empty list —
+// none of these issues set a milestone, so it is never actually called)
+// and `issue view <blocker>` for the numbers already exercised above.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, cleanup, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
+import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
 
 // --- a fake `gh` on PATH, logging its argv to $GH_LOG -----------------------
+// Every issue that is meant to reach the push step now carries the full
+// set of sections ci/issue-lint.mts requires (Context, Goal, Acceptance
+// criteria, Proof, Files, Dependencies) — claim.mts runs that lint for real
+// (as a child process, not mocked) before the push. `issue list` answers
+// the lint's milestone lookup with a canned empty list; none of these
+// issues sets a milestone, so it is never actually called.
 const FAKE_GH = `#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$1 $2" in
@@ -20,11 +36,14 @@ case "$1 $2" in
     name="\${DEFAULT_BRANCH:-main}"
     echo "{\\"defaultBranchRef\\":{\\"name\\":\\"$name\\"}}"
     ;;
+  "issue list")
+    echo '[]'
+    ;;
   "issue view")
     n="$3"
     case "$n" in
       10) cat <<'JSON'
-{"number":10,"title":"feat(ci): add claim script","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`scripts/claim.mts\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":10,"title":"feat(ci): add claim script","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`scripts/claim.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       11) cat <<'JSON'
@@ -44,15 +63,15 @@ JSON
 JSON
         ;;
       15) cat <<'JSON'
-{"number":15,"title":"feat: closed blocker","body":"## Dependencies\\nBlocked by: #98\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":15,"title":"feat: closed blocker","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: #98\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       16) cat <<'JSON'
-{"number":16,"title":"feat: bad default branch","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":16,"title":"feat: bad default branch","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       18) cat <<'JSON'
-{"number":18,"title":"feat: type override target","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":18,"title":"feat: type override target","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       19) cat <<'JSON'
@@ -60,11 +79,23 @@ JSON
 JSON
         ;;
       21) cat <<'JSON'
-{"number":21,"title":"feat: preexisting ref","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":21,"title":"feat: preexisting ref","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       22) cat <<'JSON'
-{"number":22,"title":"feat: ancestor branch","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+{"number":22,"title":"feat: ancestor branch","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
+      23) cat <<'JSON'
+{"number":23,"title":"feat: fails issue-lint","body":"## Context\\nSome context.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
+      24) cat <<'JSON'
+{"number":24,"title":"feat: no-lint bypass","body":"## Dependencies\\nBlocked by: none\\n\\n## Files\\n- \`x\`\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
+      25) cat <<'JSON'
+{"number":25,"title":"feat: warnings only","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`covered.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
       98) echo '{"state":"CLOSED"}' ;;
@@ -185,6 +216,12 @@ check(
   /issue edit 10 --add-assignee @me --add-label state:in-progress --remove-label state:ready/.test(claimed10.log),
   claimed10.log,
 );
+// AC4: a passing issue's success JSON carries the lint's own ok/warnings.
+check(
+  'a passing issue-lint run reports { ok: true, warnings: <n> } on the success JSON',
+  claimed10.json?.lint?.ok === true && typeof claimed10.json?.lint?.warnings === 'number',
+  JSON.stringify(claimed10.json),
+);
 
 // --- AC3: a second claim of the same issue is held, no label change --------
 const heldAgain = claim(['10', '--slug', 'script']);
@@ -266,5 +303,56 @@ check(
   git(['rev-parse', 'refs/heads/feat/22-anc'], remoteDir) === preexistingSha,
   `${git(['rev-parse', 'refs/heads/feat/22-anc'], remoteDir)} !== ${preexistingSha}`,
 );
+
+// --- AC1/AC3: claim.mts runs ci/issue-lint.mts as the last refusal check ---
+// before the push. Issue #23's body is missing "## Goal" — it clears
+// claim.mts's own pre-lint checks (state:ready, no open blocker, a ## Files
+// bullet) but issue-lint refuses it. This is also the negative control: on
+// the base (before this PR), claim.mts never runs the lint at all, so this
+// same case claims the issue instead of refusing it.
+const failsLint = claim(['23', '--slug', 'x']);
+check('an issue that fails issue-lint is refused, exit 1', failsLint.status === 1 && failsLint.json?.refused === 'issue-lint failed', JSON.stringify(failsLint));
+check('the refusal carries the lint result', failsLint.json?.lint && failsLint.json.lint.ok === false, JSON.stringify(failsLint));
+check('a lint refusal does not push a branch', !remoteBranches().includes('feat/23-x'), JSON.stringify(remoteBranches()));
+check('a lint refusal does not touch labels', !failsLint.log.includes('issue edit'), failsLint.log);
+
+// --- AC2: --no-lint skips the lint entirely, even for a body that would ----
+// otherwise fail it (issue #24's body has no ## Context/## Goal/etc.).
+const noLint = claim(['24', '--slug', 'x', '--no-lint']);
+check('--no-lint claims an issue that would otherwise fail the lint, exit 0', noLint.status === 0, `${noLint.stdout}\n${noLint.stderr}`);
+check('--no-lint reports lint: "skipped"', noLint.json?.lint === 'skipped', JSON.stringify(noLint));
+check('--no-lint still creates the branch on origin', remoteBranches().includes('feat/24-x'), JSON.stringify(remoteBranches()));
+check(
+  '--no-lint still assigns and relabels normally',
+  /issue edit 24 --add-assignee @me --add-label state:in-progress --remove-label state:ready/.test(noLint.log),
+  noLint.log,
+);
+
+// --- AC2: --strict turns an otherwise-passing warnings-only lint result ----
+// into a refusal. Issue #25's ## Files names `covered.mts` — a "new"
+// literal path issue-lint has not seen tracked yet — and a real tracked
+// file (added below) references that path outside the issue's own globs,
+// which is exactly an AC4 warning, not a failure. Added only now, after
+// every push-mechanics case above has already run, so it cannot add noise
+// to their own (unrelated) lint runs.
+commit(repo, { 'caller.mts': "// see covered.mts\nexport {};\n" }, 'chore: a file that references covered.mts');
+
+const warningsOnly = claim(['25', '--slug', 'warn']);
+check('a warnings-only issue claims normally without --strict, exit 0', warningsOnly.status === 0, `${warningsOnly.stdout}\n${warningsOnly.stderr}`);
+check(
+  'the success JSON reports the warning count',
+  warningsOnly.json?.lint?.ok === true && warningsOnly.json?.lint?.warnings > 0,
+  JSON.stringify(warningsOnly),
+);
+
+const warningsStrict = claim(['25', '--slug', 'warn-strict', '--strict']);
+check('--strict refuses the same warnings-only issue, exit 1', warningsStrict.status === 1 && warningsStrict.json?.refused === 'issue-lint failed', JSON.stringify(warningsStrict));
+check(
+  '--strict refusal carries the lint result with the warning and no failures',
+  warningsStrict.json?.lint?.ok === false && Array.isArray(warningsStrict.json?.lint?.warnings) && warningsStrict.json.lint.warnings.length > 0,
+  JSON.stringify(warningsStrict),
+);
+check('--strict refusal does not push a branch', !remoteBranches().includes('feat/25-warn-strict'), JSON.stringify(remoteBranches()));
+check('--strict refusal does not touch labels', !warningsStrict.log.includes('issue edit'), warningsStrict.log);
 
 finish();
