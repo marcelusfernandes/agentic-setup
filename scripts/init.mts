@@ -26,7 +26,6 @@ const LABELS: [string, string, string][] = [
   ['state:in-review', '1d76db', 'PR open, waiting for CI and the reviewer'],
   ['state:qa-failed', 'd93f0b', 'Sent back by CI or the reviewer'],
   ['state:blocked', 'b60205', 'Two failed rounds; needs a person'],
-  ['state:done', 'cccccc', 'Merged'],
   ['type:feature', 'a2eeef', ''],
   ['type:bug', 'd73a4a', ''],
   ['type:refactor', 'c5def5', ''],
@@ -160,6 +159,21 @@ if (useGh) {
   if (!auth.ok) {
     say('  ! gh is not authenticated; skipped labels and milestone (run again, or --no-gh)');
   } else {
+    // auto-merge: reading is allowed even in dry-run (it decides "=" vs
+    // "+"); the write itself is skipped under --dry-run, same gate as the
+    // milestone below.
+    const repoView = run('gh', ['repo', 'view', '--json', 'autoMergeAllowed'], root);
+    let autoMergeAllowed = false;
+    try {
+      autoMergeAllowed = JSON.parse(repoView.out || '{}').autoMergeAllowed === true;
+    } catch {}
+    if (autoMergeAllowed) say('  = auto-merge already enabled');
+    else if (dryRun) say('  + auto-merge enabled');
+    else {
+      const r = run('gh', ['repo', 'edit', '--enable-auto-merge'], root);
+      say(r.ok ? '  + auto-merge enabled' : `  ! auto-merge: ${r.err.split('\n')[0]}`);
+    }
+
     if (dryRun) {
       say(`  + ${LABELS.length}/${LABELS.length} labels present`);
     } else {
