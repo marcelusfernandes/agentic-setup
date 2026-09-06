@@ -38,11 +38,10 @@
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
 // answer for the issue/milestone lookups themselves (not for a single
 // missing `Blocked by:` number, which is a normal failure entry). Any flag
-// this script does not know — including `--strict` from a caller not yet
-// migrated (`scripts/claim.mts`'s own `--strict` passthrough is retired in
-// a later issue of this milestone) — is ignored, with a one-line note on
-// stderr; it never changes stdout or the exit code, so an old caller keeps
-// working.
+// this script does not know is ignored, with a one-line note on stderr —
+// `scripts/claim.mts` no longer passes `--strict` (removed with this
+// change), but any other caller's unknown flag never changes stdout or the
+// exit code either, so it keeps working.
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
