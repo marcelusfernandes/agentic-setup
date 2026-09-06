@@ -44,7 +44,8 @@ case "\${1:-} \${2:-}" in
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":72,"title":"In progress worktree locked by a dead pid","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -210,6 +211,23 @@ git(
   repo,
 );
 
+// Regression guard: `pid 0` in a lock reason is not evidence of death. Signal
+// `0` is a pure existence check (`process.kill(0, 0)` delivers nothing to any
+// process and does not throw), so this already passes on the current code —
+// this case guards against a future change to `isPidAlive` treating `pid <=
+// 0` as a real, signalable pid.
+git(['checkout', '-q', '-b', 'feat/74-pid-zero-worktree', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/74-pid-zero-worktree'], repo);
+git(['checkout', '-q', 'main'], repo);
+
+const pidZeroWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-pid-zero-worktree-')), 'wt');
+cleanup(() => rmSync(pidZeroWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', pidZeroWorktreeDir, 'feat/74-pid-zero-worktree'], repo);
+git(
+  ['worktree', 'lock', pidZeroWorktreeDir, '--reason', 'claude agent agent-zero (pid 0 start Sat Sep  5 19:34:36 2026)'],
+  repo,
+);
+
 // A local branch literally named "origin/main" shadows the remote-tracking
 // ref "origin/main" one level down, the same way "origin/feat/60-shadowed"
 // does above (#48) — except here it targets `commitsAheadOfMain`'s own
@@ -335,6 +353,25 @@ check(
 check(
   'deadWorktrees does not list a worktree locked by a live pid',
   !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'),
+  JSON.stringify(deadWorktrees),
+);
+
+// --- regression guard (#56 round 2): pid 0 in a lock reason is not evidence
+// of death — treated as alive, same as no pid at all -----------------------
+const inProgress74 = (out?.inProgress ?? []).find((i: any) => i.number === 74);
+check(
+  'a worktree locked with pid 0 in the reason is not dead: its issue stays inProgress',
+  inProgress74?.branch === 'feat/74-pid-zero-worktree' && inProgress74?.pr === null,
+  JSON.stringify(inProgress74),
+);
+check(
+  'a pid-0-locked issue is never reported as resumable',
+  (out?.resumable ?? []).every((i: any) => i.number !== 74),
+  JSON.stringify(out?.resumable),
+);
+check(
+  'deadWorktrees does not list a worktree locked with pid 0 in the reason',
+  !deadWorktrees.some((w) => w.branch === 'feat/74-pid-zero-worktree'),
   JSON.stringify(deadWorktrees),
 );
 
