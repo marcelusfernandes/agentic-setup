@@ -38,6 +38,7 @@ commit(repo, {
   'package.json': '{"name":"x"}\n',
   'tests/smoke.mts': 'export {};\n',
   'tests/other.test.mts': 'export {};\n',
+  'scripts/reconcile.mts': 'export {};\n',
   '.github/workflows/test.yml': 'name: test\non: push\njobs:\n  test:\n    steps:\n      - run: node tests/smoke.mts\n',
 }, 'chore: base');
 
@@ -145,17 +146,42 @@ check(
   matchedGlob.out,
 );
 
-const noParent = lint(108, issueBody({ files: '## Files\n- `nonexistent-dir/file.ts`\n' }));
-const noParentOut = parse(noParent.out);
+// AC1: a literal path (no `*`/`**`) in a directory that does not exist yet
+// on disk is still "new", not a failure — the issue creates the directory.
+const literalNewDir = lint(108, issueBody({ files: '## Files\n- `nonexistent-dir/file.ts`\n' }));
+const literalNewDirOut = parse(literalNewDir.out);
 check(
-  'a glob matching no tracked file and with no existing parent dir fails with ok: false',
-  noParent.status === 1 && noParentOut?.ok === false,
-  noParent.out,
+  'a literal path with no existing parent directory passes ("new"), not a failure',
+  literalNewDir.status === 0 && literalNewDirOut?.ok === true,
+  literalNewDir.out,
 );
 check(
-  'the no-parent failure names the glob in failures[]',
-  Array.isArray(noParentOut?.failures) && noParentOut.failures.some((f: any) => typeof f === 'string' && f.includes('nonexistent-dir/file.ts')),
-  noParent.out,
+  'the literal new path is reported in globs: [{ glob, status: "new" }]',
+  Array.isArray(literalNewDirOut?.globs) &&
+    literalNewDirOut.globs.some((g: any) => g.glob === 'nonexistent-dir/file.ts' && g.status === 'new'),
+  literalNewDir.out,
+);
+
+// AC2: a *wildcard* glob that matches no tracked file is still a failure —
+// only a literal path gets the "new" pass. The "no existing parent
+// directory" wording is gone; the message names the glob as a wildcard.
+const wildcardNoMatch = lint(1081, issueBody({ files: '## Files\n- `nonexistent-dir/*.ts`\n' }));
+const wildcardNoMatchOut = parse(wildcardNoMatch.out);
+check(
+  'a wildcard glob matching no tracked file fails with ok: false',
+  wildcardNoMatch.status === 1 && wildcardNoMatchOut?.ok === false,
+  wildcardNoMatch.out,
+);
+check(
+  'the wildcard failure uses the "wildcard glob matches no tracked file" wording and names the glob',
+  Array.isArray(wildcardNoMatchOut?.failures) &&
+    wildcardNoMatchOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: nonexistent-dir/*.ts'),
+  wildcardNoMatch.out,
+);
+check(
+  'the old "no existing parent directory" wording is gone',
+  !/no existing parent directory/.test(wildcardNoMatch.out),
+  wildcardNoMatch.out,
 );
 
 // AC2: a glob that does not parse (a leading unescaped `?` has nothing to
@@ -217,6 +243,24 @@ const otherLabelIrrelevant = milestoneFile([{ number: 203, labels: ['state:done'
 const doneOverlap = lint(112, issueBody(), { milestone: otherLabelIrrelevant });
 check('an overlapping issue labelled state:done (not in flight) is ignored', doneOverlap.status === 0, doneOverlap.out);
 
+// AC3: two issues that both declare the same *new* literal path (neither
+// matches a tracked file) still overlap — comparing only matched tracked
+// files would miss this, since the path is not tracked by either.
+const sameNewPathMilestone = milestoneFile([{ number: 205, labels: ['state:ready'], body: '## Files\n- `scripts/lib/issues.mts`\n' }]);
+const sameNewPathOverlap = lint(1120, issueBody({ files: '## Files\n- `scripts/lib/issues.mts`\n' }), { milestone: sameNewPathMilestone });
+const sameNewPathOverlapOut = parse(sameNewPathOverlap.out);
+check(
+  'two issues declaring the same new literal path overlap, with ok: false',
+  sameNewPathOverlap.status === 1 && sameNewPathOverlapOut?.ok === false,
+  sameNewPathOverlap.out,
+);
+check(
+  'the same-new-path overlap carries { issue, files } naming the other issue and the shared new path',
+  Array.isArray(sameNewPathOverlapOut?.failures) &&
+    sameNewPathOverlapOut.failures.some((f: any) => f?.issue === 205 && Array.isArray(f?.files) && f.files.includes('scripts/lib/issues.mts')),
+  sameNewPathOverlap.out,
+);
+
 // --- AC4: entry-point references (the #3 shape) -----------------------------
 // tests/** covers tests/smoke.mts, which .github/workflows/test.yml
 // references by path — the check that would have caught #3.
@@ -228,6 +272,25 @@ check(
   Array.isArray(withReferenceOut?.warnings) &&
     withReferenceOut.warnings.some((w: any) => w.file === 'tests/smoke.mts' && w.referencedBy === '.github/workflows/test.yml'),
   withReference.out,
+);
+
+// AC3/AC4 (of #37): a *new* literal path is checked for entry-point
+// references too, the same as a matched tracked file — its basename
+// ("smoke.mts") is already referenced (as a substring of "tests/smoke.mts")
+// by .github/workflows/test.yml, so declaring a new file with that same
+// basename still produces a warning, not a failure.
+const newPathReference = lint(1130, issueBody({ files: '## Files\n- `other/smoke.mts`\n' }));
+const newPathReferenceOut = parse(newPathReference.out);
+check(
+  'a new literal path referenced (by basename) by an uncovered file passes with ok: true',
+  newPathReference.status === 0 && newPathReferenceOut?.ok === true,
+  newPathReference.out,
+);
+check(
+  'the warning names the new path and the file that references its basename',
+  Array.isArray(newPathReferenceOut?.warnings) &&
+    newPathReferenceOut.warnings.some((w: any) => w.file === 'other/smoke.mts' && w.referencedBy === '.github/workflows/test.yml'),
+  newPathReference.out,
 );
 
 const strictReference = lint(114, issueBody(), { strict: true });
@@ -323,6 +386,52 @@ check(
   'the { error } path still starts with the marker under --markdown',
   badMilestoneMd.status === 1 && badMilestoneMd.out.startsWith('<!-- agentic-issue-lint -->'),
   badMilestoneMd.out,
+);
+
+// AC4 (of #37): the real body of issue #31 (`gh issue view 31 --json body -q
+// .body`), pasted verbatim, as it was when this issue was opened — "Blocked
+// by: none" needs no `gh` call. Its four globs: scripts/claim.mts (new),
+// scripts/lib/issues.mts (new, in a directory that does not exist in this
+// temp repo), scripts/reconcile.mts (tracked, added to the base commit
+// above), tests/claim.test.mts (new).
+const ISSUE_31_BODY = `## Context
+Step 3 of \`skills/orchestrate/SKILL.md\` is three commands the orchestrator types by hand for every issue: \`git push origin origin/main:refs/heads/<type>/<n>-<slug>\`, \`gh issue edit --add-assignee\`, \`gh issue edit\` for the labels. In M1 that was done fourteen times without error, but there is no reason to keep relying on that: the order matters (the push is the lock; labels only after it succeeds), the branch type must match the title, and a blocked or non-ready issue must not be claimed at all.
+
+## Goal
+\`node scripts/claim.mts <n> --slug <slug>\` is the only way an issue is claimed, and it refuses when the issue is not claimable.
+
+## Acceptance criteria
+- [ ] AC1 Reads the issue (\`gh issue view <n> --json number,title,body,labels,state,milestone\`) and refuses — \`{ "refused": "<reason>" }\`, exit 1, nothing changed — when: the issue is closed; it lacks \`state:ready\`; any \`Blocked by: #N\` issue is still open (reuse the parser \`scripts/reconcile.mts\` uses — extract it to \`scripts/lib/issues.mts\` if it is not already shared, and make \`reconcile.mts\` import it from there); it has no \`## Files\` bullet.
+- [ ] AC2 \`<type>\` comes from the title prefix (\`feat(ci): …\` → \`feat\`, \`fix: …\` → \`fix\`; the set is \`feat|fix|refactor|chore|docs|test|ci|deps\`) or \`--type\`; \`--slug\` is required and must match \`/^[a-z0-9-]+$/\`. Branch = \`<type>/<n>-<slug>\`.
+- [ ] AC3 \`git fetch origin\`, then \`git push origin origin/<default-branch>:refs/heads/<branch>\`. If the push fails because the ref already exists → \`{ "held": "<branch>" }\`, exit 2, no label change (another orchestrator holds it). Any other push failure → \`{ "error": "<git output>" }\`, exit 1.
+- [ ] AC4 On success: \`gh issue edit <n> --add-assignee @me --add-label state:in-progress --remove-label state:ready\`; print \`{ "issue": <n>, "branch": "<branch>", "base": "<sha>" }\`, exit 0.
+- [ ] AC5 The default branch is read from \`gh repo view --json defaultBranchRef\`, not assumed to be \`main\`.
+
+## Proof
+\`npm test\` — \`tests/claim.test.mts\` with a fake \`gh\` and a real temp repository with a bare \`origin\` (ref creation is real: assert the remote branch exists after a successful claim and that a second claim of the same issue exits 2 without touching labels — the fake \`gh\` logs its argv).
+Negative control: every case fails on the base (the script does not exist).
+
+## Files
+- \`scripts/claim.mts\`
+- \`scripts/lib/issues.mts\`
+- \`scripts/reconcile.mts\`
+- \`tests/claim.test.mts\`
+
+## Dependencies
+Blocked by: none
+`;
+const issue31 = lint(31, ISSUE_31_BODY);
+const issue31Out = parse(issue31.out);
+check("issue #31's real body lints ok: true", issue31.status === 0 && issue31Out?.ok === true, issue31.out);
+check(
+  'scripts/lib/issues.mts (new directory, no tracked file) is reported as new',
+  Array.isArray(issue31Out?.globs) && issue31Out.globs.some((g: any) => g.glob === 'scripts/lib/issues.mts' && g.status === 'new'),
+  issue31.out,
+);
+check(
+  'scripts/reconcile.mts (tracked) is reported as matched',
+  Array.isArray(issue31Out?.globs) && issue31Out.globs.some((g: any) => g.glob === 'scripts/reconcile.mts' && g.status === 'matched'),
+  issue31.out,
 );
 
 finish();

@@ -32,9 +32,9 @@
 // otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot answer
 // for the issue/milestone lookups themselves (not for a single missing
 // `Blocked by:` number, which is a normal failure entry).
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { basename, dirname, join } from 'node:path';
+import { basename } from 'node:path';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
 import { parseIssueGlobs } from './lib/scope.mts';
@@ -174,23 +174,9 @@ const lsFiles = git(['ls-files']);
 if (lsFiles.status !== 0) fail(`git ls-files failed: ${lsFiles.stderr.trim()}`);
 const trackedFiles = lsFiles.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 
-/** The literal (non-wildcard) path segment a glob names, wildcard stripped. */
-function globNamedPath(glob: string): string {
-  const idx = glob.indexOf('*');
-  const literal = idx === -1 ? glob : glob.slice(0, idx);
-  return literal.endsWith('/') ? literal.slice(0, -1) : literal;
-}
-
-/** Whether the directory *above* the path a glob names exists on disk. */
-function parentExists(glob: string): boolean {
-  const named = globNamedPath(glob);
-  const parent = dirname(named);
-  if (parent === '.' || parent === '') return true;
-  try {
-    return statSync(join(root, parent)).isDirectory();
-  } catch {
-    return false;
-  }
+/** Whether a glob is a literal path — no `*` (which also rules out `**`). */
+function isLiteralPath(glob: string): boolean {
+  return !glob.includes('*');
 }
 
 /** globs that fail to parse are excluded here (already a failure of their
@@ -219,22 +205,41 @@ for (const glob of issueGlobs) {
   const matches = trackedFiles.filter((f) => regex.test(f));
   if (matches.length > 0) {
     globs.push({ glob, status: 'matched', matches: matches.length });
-  } else if (parentExists(glob)) {
+  } else if (isLiteralPath(glob)) {
+    // A literal path names a file the issue creates. Its parent directory
+    // may not exist yet on disk — that is exactly what "new" means when the
+    // issue also introduces a new directory (#37) — so only a wildcard that
+    // matches nothing is treated as a mistake.
     globs.push({ glob, status: 'new', matches: 0 });
   } else {
-    failures.push(`glob matches no tracked file and has no existing parent directory: ${glob}`);
+    failures.push(`wildcard glob matches no tracked file: ${glob}`);
   }
 }
 const validSelfGlobs = validGlobsOnly(issueGlobs);
 
+/** Literal (non-wildcard) globs from `list` that name no tracked file — the
+ * "new" paths an issue declares. Comparing these (in addition to matched
+ * tracked files) is what lets two issues both declaring the same new path
+ * overlap, even though neither path is tracked yet. */
+function newLiteralPaths(list: string[]): string[] {
+  return list.filter((g) => isLiteralPath(g) && !trackedFiles.includes(g));
+}
+
 // --- AC3: disjointness against issues in flight in the same milestone -----
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, validSelfGlobs));
+const selfNewPaths = newLiteralPaths(validSelfGlobs);
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
   const otherGlobs = validGlobsOnly(parseIssueGlobs(other.body));
   if (otherGlobs.length === 0) continue;
-  const overlapFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
+  const otherNewPaths = newLiteralPaths(otherGlobs);
+  const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
+  const overlapNewPaths = [
+    ...selfNewPaths.filter((p) => matchesAny(p, otherGlobs)),
+    ...otherNewPaths.filter((p) => matchesAny(p, validSelfGlobs)),
+  ];
+  const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths])];
   if (overlapFiles.length === 0) continue;
   const otherBlockedBy = blockedBy(other.body) ?? [];
   const isSequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
@@ -246,11 +251,13 @@ for (const other of others) {
 // mention a covered file's path or basename. `git grep` runs with no
 // pathspec (it only ever searches tracked files) so the argument list stays
 // small even in a large repository; the outside/exclude filtering happens
-// here in Node against the hit list instead. -------------------------------
+// here in Node against the hit list instead. A "new" literal path (not
+// tracked yet) is checked the same way: a tracked file that already
+// references its basename is still a warning. -------------------------------
 const coveredSet = new Set(selfMatchedFiles);
 const outsideFiles = new Set(trackedFiles.filter((f) => !coveredSet.has(f) && !matchesAny(f, EXCLUDE_GLOBS)));
 if (outsideFiles.size > 0) {
-  for (const covered of selfMatchedFiles) {
+  for (const covered of [...selfMatchedFiles, ...selfNewPaths]) {
     const base = basename(covered);
     const patterns = ['-e', covered];
     if (!(base.length < 4 || /^index\./i.test(base) || base === 'README.md')) {
@@ -304,7 +311,7 @@ function renderMarkdown(result: Result): string {
   }
   const newGlobs = result.globs.filter((g) => g.status === 'new');
   if (newGlobs.length > 0) {
-    lines.push('**New** (glob names no tracked file yet, but its parent directory exists):', '');
+    lines.push('**New** (literal path the issue creates; no tracked file matches it yet):', '');
     for (const g of newGlobs) lines.push(`- \`${g.glob}\``);
     lines.push('');
   }
