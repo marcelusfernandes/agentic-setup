@@ -141,3 +141,11 @@ production-affecting decision; a product decision the docs do not cover; **an is
   relabelled an issue `state:done` on read state the server no longer agreed with
   (`docs/decisions.md` item 11).
 - Agent Teams do not isolate in worktrees; the loop does not use them.
+- **A restarted orchestrator session cannot tell a live implementer from an abandoned
+  one by label state alone.** If the orchestrator process dies (an OS kill, low memory)
+  mid-pass, every issue it had claimed stays `state:in-progress` with a pushed lock
+  branch and no PR — indistinguishable, from labels alone, from an implementer still
+  working. `reconcile.mts`'s `resumable` list closes this gap: a fresh session has no
+  live agents by definition, so an in-progress issue whose branch is not checked out in
+  any local worktree of this checkout is resumed as round N+1 from `origin/<branch>`,
+  not reclaimed.
