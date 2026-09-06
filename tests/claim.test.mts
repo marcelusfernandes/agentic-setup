@@ -11,11 +11,14 @@
 // resolved relative to claim.mts's own file location) as the last refusal
 // check before the push, so every issue body used below to reach the push
 // step carries the full set of sections issue-lint requires (Context,
-// Goal, Acceptance criteria, Proof, Files, Dependencies), and the repo has
-// two real tracked files the AC4 entry-point-reference check can see. The
-// fake `gh` also answers `issue list --milestone …` (a canned empty list —
-// none of these issues set a milestone, so it is never actually called)
-// and `issue view <blocker>` for the numbers already exercised above.
+// Goal, Acceptance criteria, Proof, Files, Dependencies). A single real
+// tracked file (`caller.mts`, added late, once the earlier push-mechanics
+// cases no longer need a lint-noise-free repo) lets the AC4
+// entry-point-reference check produce a genuine warning. The fake `gh`
+// also answers `issue list --milestone …` (a canned empty list by default,
+// or an error when `GH_LIST_FAILS` is set) for the one issue below that
+// sets a milestone, and `issue view <blocker>` for the numbers already
+// exercised above.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,6 +40,10 @@ case "$1 $2" in
     echo "{\\"defaultBranchRef\\":{\\"name\\":\\"$name\\"}}"
     ;;
   "issue list")
+    if [ -n "\${GH_LIST_FAILS:-}" ]; then
+      echo "gh: HTTP 500 (simulated)" >&2
+      exit 1
+    fi
     echo '[]'
     ;;
   "issue view")
@@ -96,6 +103,10 @@ JSON
         ;;
       25) cat <<'JSON'
 {"number":25,"title":"feat: warnings only","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`covered.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
+      26) cat <<'JSON'
+{"number":26,"title":"feat: milestone lookup fails","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`scripts/claim.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN","milestone":{"title":"M2"}}
 JSON
         ;;
       98) echo '{"state":"CLOSED"}' ;;
@@ -217,9 +228,10 @@ check(
   claimed10.log,
 );
 // AC4: a passing issue's success JSON carries the lint's own ok/warnings.
+// The repo has no other tracked files yet, so the warning count is 0.
 check(
-  'a passing issue-lint run reports { ok: true, warnings: <n> } on the success JSON',
-  claimed10.json?.lint?.ok === true && typeof claimed10.json?.lint?.warnings === 'number',
+  'a passing issue-lint run reports { ok: true, warnings: 0 } on the success JSON',
+  claimed10.json?.lint?.ok === true && claimed10.json?.lint?.warnings === 0,
   JSON.stringify(claimed10.json),
 );
 
@@ -328,6 +340,27 @@ check(
   noLint.log,
 );
 
+// --- AC3: the lint's own milestone lookup ("gh issue list --milestone …") --
+// is a real gh call, not always dead code: issue #26 sets a milestone, so
+// issue-lint's `gh issue view 26 --json body,milestone` sees it and calls
+// `gh issue list --milestone M2 --state open …` to gather the other issues
+// in flight. When that lookup itself fails, issue-lint can't run at all —
+// it reports `{ error }`, and claim.mts refuses closed rather than let an
+// unreadable lint result through.
+const milestoneLookupFails = claim(['26', '--slug', 'x'], { GH_LIST_FAILS: '1' });
+check(
+  'a failed milestone lookup refuses the claim, exit 1',
+  milestoneLookupFails.status === 1 && milestoneLookupFails.json?.refused === 'issue-lint failed',
+  JSON.stringify(milestoneLookupFails),
+);
+check('the refusal carries the lint\'s own { error }', typeof milestoneLookupFails.json?.lint?.error === 'string', JSON.stringify(milestoneLookupFails));
+check('a failed milestone lookup does not push a branch', !remoteBranches().includes('feat/26-x'), JSON.stringify(remoteBranches()));
+check('a failed milestone lookup does not touch labels', !milestoneLookupFails.log.includes('issue edit'), milestoneLookupFails.log);
+
+const milestoneLookupOk = claim(['26', '--slug', 'y']);
+check('the same issue claims normally once the milestone lookup succeeds, exit 0', milestoneLookupOk.status === 0, `${milestoneLookupOk.stdout}\n${milestoneLookupOk.stderr}`);
+check('the milestone lookup really ran (not skipped as milestone-less)', /issue list --milestone M2/.test(milestoneLookupOk.log), milestoneLookupOk.log);
+
 // --- AC2: --strict turns an otherwise-passing warnings-only lint result ----
 // into a refusal. Issue #25's ## Files names `covered.mts` — a "new"
 // literal path issue-lint has not seen tracked yet — and a real tracked
@@ -349,7 +382,11 @@ const warningsStrict = claim(['25', '--slug', 'warn-strict', '--strict']);
 check('--strict refuses the same warnings-only issue, exit 1', warningsStrict.status === 1 && warningsStrict.json?.refused === 'issue-lint failed', JSON.stringify(warningsStrict));
 check(
   '--strict refusal carries the lint result with the warning and no failures',
-  warningsStrict.json?.lint?.ok === false && Array.isArray(warningsStrict.json?.lint?.warnings) && warningsStrict.json.lint.warnings.length > 0,
+  warningsStrict.json?.lint?.ok === false &&
+    Array.isArray(warningsStrict.json?.lint?.warnings) &&
+    warningsStrict.json.lint.warnings.length > 0 &&
+    Array.isArray(warningsStrict.json?.lint?.failures) &&
+    warningsStrict.json.lint.failures.length === 0,
   JSON.stringify(warningsStrict),
 );
 check('--strict refusal does not push a branch', !remoteBranches().includes('feat/25-warn-strict'), JSON.stringify(remoteBranches()));
