@@ -7,18 +7,21 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 
 - `npm test` — `tests/run.mts` discovers and runs every `tests/*.test.mts` file (per area:
   hooks, CI scripts, the installer), real throwaway git repositories, no mocks.
-- `npm run test:bun` — the same suite under Bun; both must pass.
 - `npm run check` — `tsc` over the `.mts` sources (`erasableSyntaxOnly`, `verbatimModuleSyntax`).
 
 ## Map
 
-- `hooks/` — the three hooks and `lib/common.mts`; `hooks.json` wires them.
+- `hooks/` — the two `PreToolUse` hooks (`protect-main.mts`, `protect-worktree.mts`) and
+  `lib/common.mts`; `hooks.json` wires them.
 - `ci/` — `scope-check.mts`, `negative-control.mts`, `issue-lint.mts` (an issue's contract,
-  checked before dispatch), `lib/detect.mts` (shared with the stop-gate hook). Copied into
-  adopting repositories by `init`; **this** repository's workflows point at `ci/` directly.
+  checked before dispatch), `lib/detect.mts` (the test-command detection `negative-control.mts`
+  uses). Copied into adopting repositories by `init`; **this** repository's workflows point
+  at `ci/` directly.
 - `scripts/` — `init.mts` (the installer: `agents/`, `skills/`, `templates/`, `docs/`),
   `reconcile.mts` (the loop's state as JSON), `claim.mts` (locks an issue or refuses),
-  `land.mts` (the only way the orchestrator merges a PR).
+  `land.mts` (the only way the orchestrator merges a PR: queues `gh pr merge --squash
+  --auto`, gated by the base branch's ruleset when it has one, else by `gh pr checks
+  --required`).
 
 ## Invariants (the reviewer holds every PR to these)
 
@@ -26,9 +29,9 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
    only. `package.json` devDependencies are for `tsc` alone.
 2. **`.mts` only, erasable TypeScript only** — no `enum`, no parameter properties, no
    namespaces, no decorators. Node ≥ 22.18 runs the files directly; there is no build step.
-3. **Every hook states its crash policy in its header and honours it.** `protect-*` and
-   `stop-gate` fail open on their own errors; the merge gate in `protect-main` fails closed
-   when `gh` cannot answer.
+3. **Every hook states its crash policy in its header and honours it.** `protect-*` hooks
+   fail open on their own errors; `land.mts` fails closed (refuses) when `gh` cannot
+   answer.
 4. **Detection is a default, never a contract.** New stacks go in `ci/lib/detect.mts` with an
    env override path; no config file.
 5. **The parsers stay strict.** `## Files` reads bullets only; `authorised:` is one glob per
@@ -46,5 +49,7 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 
 `docs/workflow.md` and `docs/orchestration.md` are the contract; `skills/issue-and-pr` is
 the operating card. Branch `<type>/<n>-<slug>`; commit `test(red):` first; PR with
-`Closes`/`Fixes`/`Resolves #N` (several issues may be linked, globs unioned); the
-orchestrator merges on green checks + `review:approved`.
+`Closes`/`Fixes`/`Resolves #N` (several issues may be linked, globs unioned); once green
+checks and an approved review (or the `type:docs` label) are in place, `scripts/land.mts`
+queues `gh pr merge --squash --auto` and the server merges when its own rules are
+satisfied.
