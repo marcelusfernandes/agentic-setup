@@ -142,11 +142,16 @@ export function unquote(token: string): string {
 
 /**
  * Split a shell command into the segments that sit in command position:
- * the start, and after `;` `&&` `||` `|` `(` `)` a backtick and newlines —
- * a `)` closes a subshell segment the same way `(` opens one, so
- * `$(git push ...)` still yields a clean `git push ...` segment, and a pair
- * of backticks (a legacy subshell, `` `git push ...` ``) is split the same
- * naive way. A lone `&` (the background operator) also splits, but `&&`
+ * the start, and after `;` `&&` `||` `|` `(` `)` a backtick pair and
+ * newlines — a `)` closes a subshell segment the same way `(` opens one, so
+ * `$(git push ...)` still yields a clean `git push ...` segment. Backticks
+ * do not nest: the first backtick opens a subshell and sets aside whatever
+ * came before it in the current segment, the matching backtick closes it —
+ * emitting the enclosed text as its own segment — and the command resumes
+ * from where it left off, so `` git push origin `echo` main `` still yields
+ * a clean `git push origin  main` segment (the outer command stays
+ * contiguous) alongside the inner `echo`. A lone `&` (the background
+ * operator) also splits, but `&&`
  * stays one operator and `&>` / `>&` (as in `2>&1`) are left alone so a
  * redirection next to a real push never gets mistaken for one. Splitting
  * happens only outside quotes and outside comments: single quotes escape
@@ -173,6 +178,10 @@ export function commandSegments(command: string): string[] {
   let inSingle = false;
   let inDouble = false;
   let inAnsiC = false;
+  // Backticks do not nest: null outside a backtick pair; otherwise the
+  // segment text that was accumulating before the opening backtick, so the
+  // outer command can resume once the matching backtick closes.
+  let backtickOuter: string | null = null;
 
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
@@ -202,8 +211,14 @@ export function commandSegments(command: string): string[] {
       }
       if (ch === '`') {
         // Bash still runs command substitution inside double quotes.
-        segments.push(current);
-        current = '';
+        if (backtickOuter === null) {
+          backtickOuter = current;
+          current = '';
+        } else {
+          segments.push(current);
+          current = backtickOuter;
+          backtickOuter = null;
+        }
         continue;
       }
       current += ch;
@@ -258,7 +273,18 @@ export function commandSegments(command: string): string[] {
       current += ch;
       continue;
     }
-    if (ch === ';' || ch === '|' || ch === '(' || ch === ')' || ch === '`' || ch === '\n') {
+    if (ch === '`') {
+      if (backtickOuter === null) {
+        backtickOuter = current;
+        current = '';
+      } else {
+        segments.push(current);
+        current = backtickOuter;
+        backtickOuter = null;
+      }
+      continue;
+    }
+    if (ch === ';' || ch === '|' || ch === '(' || ch === ')' || ch === '\n') {
       segments.push(current);
       current = '';
       continue;
