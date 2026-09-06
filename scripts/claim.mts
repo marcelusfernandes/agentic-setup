@@ -26,10 +26,17 @@
 // tracking ref can report `held` for a branch that is actually free. The
 // porcelain summary line is authoritative either way: `*` (new branch) is
 // success, `=` (up to date) is `held`; on a non-zero exit, `[rejected]` /
-// "already exists" / "cannot lock ref" also mean `held` (a diverged
-// branch — the implementer already committed — is rejected as
-// non-fast-forward, not "already exists"; that literal wording is git's
-// for tags, not branches); anything else is a real `{ error }`.
+// "already exists" / "cannot lock ref" also mean `held`; anything else is
+// a real `{ error }`. The push itself is create-only
+// (`--force-with-lease=refs/heads/<branch>:`, an empty expected value):
+// without it, a branch that already exists at an ancestor of `base`
+// (claimed earlier; the default branch has since advanced) would
+// fast-forward — { held } would still be reported correctly, but the push
+// would have already moved the other agent's ref. With the lease, any
+// existing branch other than an exact match (`=`) is instead rejected as
+// `(stale info)` — the lease check runs before git would otherwise decide
+// non-fast-forward, so that wording never appears here — still caught by
+// the `[rejected]` fallback.
 //
 // Crash policy: never a stack trace. Refusal checks (closed, not
 // state:ready, an open blocker, no ## Files bullet) run before any push, so
@@ -138,7 +145,21 @@ git(['fetch', 'origin']);
 
 const base = git(['rev-parse', `origin/${defaultBranch}`]).trim();
 
-const push = spawnSync('git', ['push', '--porcelain', 'origin', `origin/${defaultBranch}:refs/heads/${branch}`], { encoding: 'utf8' });
+// --force-with-lease=<ref>: (empty expected value) means the named ref
+// must not already exist — the create-only form (git-push(1)). Without it,
+// a branch that already exists at an ancestor of `base` (claimed earlier;
+// the default branch has since advanced — the loop's normal state) would
+// fast-forward: exit 0, so { held } is still reported correctly (the
+// porcelain flag isn't "*"), but the push would have already moved the
+// other agent's ref. With the lease, that case is instead rejected as
+// "(stale info)", caught by the `[rejected]` fallback below. It does not
+// cover the up-to-date case: git no-ops a same-commit push client-side
+// before any lease is checked, so the "=" branch above stays load-bearing.
+const push = spawnSync(
+  'git',
+  ['push', '--porcelain', `--force-with-lease=refs/heads/${branch}:`, 'origin', `origin/${defaultBranch}:refs/heads/${branch}`],
+  { encoding: 'utf8' },
+);
 const dataLine = (push.stdout || '').split(/\r?\n/).find((l) => /^[*=!+\- ]\t/.test(l)) ?? '';
 
 if (push.status === 0) {
@@ -149,11 +170,15 @@ if (push.status === 0) {
   if (!dataLine.startsWith('*')) held(branch);
 } else {
   const output = `${push.stdout || ''}${push.stderr || ''}`;
-  // A diverged remote branch (the implementer already committed) is
-  // rejected as non-fast-forward, not "already exists" — either message
-  // (or a ref-locking race) means someone else holds the ref; anything
-  // else is a real error. Build the message from the "!" data line, not
-  // the porcelain output's first line ("To <url>").
+  // Any pre-existing branch other than an exact match (the "=" success
+  // branch above) is rejected by the lease as "(stale info)" — an
+  // ancestor, a diverged branch with real commits, or a locking race all
+  // land here, never as "non-fast-forward" (the lease is checked first)
+  // or "already exists" (that literal wording is git's for tags, not
+  // branches; kept as a fallback regardless). Any of these means someone
+  // else holds the ref; anything else is a real error. Build the message
+  // from the "!" data line, not the porcelain output's first line
+  // ("To <url>").
   if (/\[rejected\]/.test(output) || /already exists/i.test(output) || /cannot lock ref/i.test(output)) held(branch);
   errorOut(dataLine ? dataLine.replace(/\t/g, ' ').trim() : firstLine(push.stderr || push.stdout || 'push failed'));
 }
