@@ -174,7 +174,11 @@ appendSummary(
   [
     '## scope',
     '',
-    result.ok ? `${files.length} file(s), all inside the linked issues' globs.` : '**FAILED** — outside the linked issues\' globs:',
+    result.ok
+      ? ok
+        ? `${files.length} file(s), all inside the linked issues' globs.`
+        : `**FAILED** — ${dangling.length} dangling reference(s); every changed file is inside the linked issues' globs.`
+      : '**FAILED** — outside the linked issues\' globs:',
     ...(result.ok ? [] : result.violations.map((f) => `- \`${f}\``)),
     ...(misplacedAuthorised.length
       ? [
