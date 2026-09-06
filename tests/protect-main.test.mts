@@ -62,6 +62,23 @@ for (const command of allowed) {
 }
 git(['checkout', '-q', '-b', 'feat/1-x'], repo);
 check('protect-main allows bare push from a work branch', bash('git push', repo).status === 0);
+
+// From a non-main branch, a bare "git push origin" with no refspec is allowed
+// (the earlier "bare push" case above never proves this: on branch main a
+// severed head segment is *also* denied by the bare-push-from-main fallback,
+// masking a broken split). These prove a backtick pair inside the push does
+// not sever the refspec from the command that carries it.
+const deniedFromWorkBranch = [
+  'git push origin `echo` main', // a backtick pair inside the command must not sever the outer push
+  'git push origin `echo x` main', // same, with content in the backtick pair
+  'git push origin ` ` main', // same, with only whitespace in the backtick pair
+  'git push --delete origin `x` main', // same, on a --delete push
+];
+for (const command of deniedFromWorkBranch) {
+  const r = bash(command, repo);
+  check(`protect-main denies from a work branch: ${command}`, r.status === 2 && /permissionDecision":"deny/.test(r.stdout), r.stderr);
+}
+
 check('protect-main fails CLOSED on merge when gh cannot read the PR', bash('gh pr merge 1 --squash', repo).status === 2);
 check('protect-main ignores non-Bash tools', hook('protect-main.mts', { tool_name: 'Edit', tool_input: { command: 'git push origin main' } }).status === 0);
 check('protect-main allows on unreadable payload', hook('protect-main.mts', '{not json').status === 0);
