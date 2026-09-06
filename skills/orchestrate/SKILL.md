@@ -14,24 +14,43 @@ run another.
 
 ## 0. Reconcile from GitHub — never from memory
 
+`scripts/reconcile.mts` prints the loop's current state as one JSON document,
+instead of running `gh issue list`, `gh pr list` and `git worktree list` and
+cross-referencing them by hand. Locate it the way `skills/init` locates
+`init.mts` — `CLAUDE_PLUGIN_ROOT` is set for hook processes but not for the
+Bash tool:
+
 ```bash
-gh issue list --label state:in-progress --json number,title
-gh pr list --state open --json number,headRefName,labels,statusCheckRollup,reviewDecision
-git fetch --prune origin && git worktree list
+RECONCILE="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/reconcile.mts}"
+[ -f "$RECONCILE" ] || RECONCILE="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/reconcile.mts' 2>/dev/null | head -1)"
+[ -f "$RECONCILE" ] || { echo "agentic-setup: reconcile.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+git fetch --prune origin
+node "$RECONCILE" --milestone "<current>"
 ```
 
-- `state:in-progress` with no open PR **and** no remote branch → back to `state:ready`.
-- `state:in-review` with every check green and `review:approved` → merge (step 5).
-- Local worktree whose branch no longer exists on the remote → remove it (stop any local
-  service it started first).
+Without `--milestone`, it picks the open milestone with the lowest number. Fields:
+
+- `milestone` — the title it reconciled against.
+- `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose
+  `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
+  step 1's candidate list — no separate query needed.
+- `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues.
+  `pr` is the open PR's number on that branch, or `null`.
+- `inReview` — `{ number, pr, checks, reviewApproved }`: `state:in-review` issues.
+  `checks` is `'green'`, `'red'` or `'pending'` from the PR's status rollup;
+  `reviewApproved` is the `review:approved` label or an `APPROVED` review. Checks green
+  and `reviewApproved` → merge (step 5).
+- `stale` — `{ number, reason }`: in-progress issues with no open PR **and** no remote
+  branch → back to `state:ready`.
+- `orphanWorktrees` — paths of linked worktrees whose branch no longer exists on the
+  remote → remove them (stop any local service they started first).
+
+A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
+rather than guessing the state.
 
 ## 1. Candidates
 
-```bash
-gh issue list --milestone "<current>" --label state:ready --json number,title,body
-```
-
-Drop any whose `Blocked by: #N` points at an issue that is still open.
+Use `ready` from the JSON above — it already excludes issues with an open blocker.
 
 ## 2. Pick up to 4 with disjoint globs
 
