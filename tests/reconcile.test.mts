@@ -165,6 +165,15 @@ const resumableWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-resumable-
 cleanup(() => rmSync(resumableWorktreeDir, { recursive: true, force: true }));
 git(['worktree', 'add', '-q', resumableWorktreeDir, 'feat/71-resumable-worktree'], repo);
 
+// A local branch literally named "origin/main" shadows the remote-tracking
+// ref "origin/main" one level down, the same way "origin/feat/60-shadowed"
+// does above (#48) — except here it targets `commitsAheadOfMain`'s own
+// `origin/<default>..origin/<branch>` computation. Point it at #70's tip
+// (not main's), so a resolution that picks this local branch instead of the
+// real `refs/remotes/origin/main` shows up as a wrong count (0, since the
+// range would run from #70's tip to itself), not a coincidentally right one.
+git(['branch', 'origin/main', 'feat/70-resumable-ahead'], repo);
+
 function reconcile(...args: string[]) {
   return spawnSync(RUNTIME, [join(ROOT, 'scripts', 'reconcile.mts'), ...args], {
     cwd: repo,
@@ -298,8 +307,8 @@ check('orphanWorktrees does not list the main worktree', !orphans.some((p) => re
 // out `resumable` (AC1), not `inProgress` — see the negative control below.
 const resumable50 = (out?.resumable ?? []).find((i: any) => i.number === 50);
 check(
-  'resumable prune target starts with a remote branch (no PR, no worktree checkout)',
-  resumable50?.branch === 'feat/50-prune-target',
+  'resumable prune target starts with a remote branch (no PR, no worktree checkout), no commits pushed beyond main',
+  resumable50?.branch === 'feat/50-prune-target' && resumable50?.commitsAheadOfMain === 0,
   JSON.stringify(resumable50),
 );
 
