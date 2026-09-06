@@ -50,7 +50,7 @@ type Outcome = 'skipped' | 'pass' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inc
 
 // A structural failure (missing module, missing export, syntax error) reads
 // as red for the wrong reason: it says the file could not run at all, not
-// that an assertion caught the PR's change. See AC3 / safe-worktree §B7.
+// that an assertion caught the PR's change. See safe-worktree §B7.
 const STRUCTURAL_SIGNATURE = /Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|does not provide an export named/;
 const STRUCTURAL_WARNING =
   'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
