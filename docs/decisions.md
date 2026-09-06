@@ -206,7 +206,7 @@ separate reviewer identity.
 | `ci/scope-check.mts` | 98 | 190 | +92 | #76 (the mechanical, PR-time replacement: dangling-reference check) |
 | `scripts/reconcile.mts` | 350 | 356 | +6 | #77 (checks via `gh pr checks`, not its own rollup dedupe) |
 | `scripts/init.mts` | 196 | 227 | +31 | #69, #74 (auto-merge, delete_branch_on_merge, reviewer-token setup printed) |
-| `hooks/git-pre-push` | 45 | 52 | +7 | #73, #79 (deletion valve never lifts, even under the bootstrap valve) |
+| `hooks/git-pre-push` | 45 | 52 | +7 | #73 (deletion valve never lifts, even under the bootstrap valve) |
 
 Also named in the audit and fixed the same pass: #68 collapsed the test workflow to a
 single `test` job on Node (the Bun leg is gone — nothing in this repository's history
@@ -229,9 +229,12 @@ free-plan private repository has no ruleset; nothing server-side stops a local `
 *The reviewer-identity gap and its fix* (#66, `agents/reviewer.md`, `scripts/land.mts`):
 before this pass, the same token that ran `land.mts` could also write the
 `review:approved` label, so the review it gated on was not independent of the identity
-doing the merging. Fix: when `AGENTIC_REVIEWER_TOKEN` is set in the reviewer's own
-environment, the reviewer authenticates as that separate identity and casts a real
-`gh pr review --approve`/`--request-changes`; `land.mts` then requires
+doing the merging. Fix, two sides of the same variable read separately: when
+`AGENTIC_REVIEWER_TOKEN` is set in the reviewer agent's own environment, the reviewer
+authenticates as that separate identity and casts a real `gh pr review
+--approve`/`--request-changes` (`agents/reviewer.md`); when it is set in the
+orchestrator's own environment — `land.mts:95` reads `process.env.AGENTIC_REVIEWER_TOKEN`
+from the process running `land.mts` itself, not from the reviewer — `land.mts` requires
 `reviewDecision === 'APPROVED'` from GitHub itself, and the label becomes a convenience
 that `reconcile.mts` still reads but that no longer gates anything. Setup is by hand
 (printed by `scripts/init.mts`, mirrored in `skills/init/SKILL.md`): create a machine

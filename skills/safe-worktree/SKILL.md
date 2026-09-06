@@ -32,8 +32,9 @@ of it. What is left is below.
    copy of uncommitted work is this tree.
 7. **A red test compiles.** A test that imports a missing symbol is a compile error and
    jams the gate. Export a stub that throws (`throw new Error('not implemented')`) so the red
-   is a runtime red. Commit as `test(red): …`; that is the commit the `negative-control`
-   check reads to prove the test fails on the base.
+   is a runtime red. Commit as `test(red): …` — a convention with no mechanical consumer
+   since the Stop hook was cut; `negative-control` reads the PR's diff, not any commit, and
+   copies the changed test files onto the base to prove they fail there.
 8. **Check with the exact gate command**, not a partial one. A type-check on one package
    gives a false green; so does running a single test file when the gate runs the suite.
    There is no Stop hook to run it for you — CI is the only gate, so run it yourself

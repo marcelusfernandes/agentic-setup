@@ -31,8 +31,8 @@ Run with `--dry-run` first: it prints the exact report a real run would (writes 
 to disk or to GitHub); drop the flag to apply once the preview looks right.
 
 It copies the GitHub templates and the two CI checks, writes the permission deny list,
-installs the git `pre-push` hook, seeds the labels, and turns on the repository's
-`allow_auto_merge` and `delete_branch_on_merge` settings — then prints the steps only a
+installs the git `pre-push` hook, turns on the repository's `allow_auto_merge` and
+`delete_branch_on_merge` settings, and seeds the labels — then prints the steps only a
 person can do (required checks, a ruleset if your plan allows one, and the separate
 reviewer identity below). From then on, one pass of the loop is:
 

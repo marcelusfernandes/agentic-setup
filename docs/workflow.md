@@ -12,8 +12,9 @@ written in English; the language you talk to the agents in is your business.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
-  committed as `test(red): …` — that is the commit the `negative-control` check reads: it
-  proves the PR's tests fail on the base before the change.
+  committed as `test(red): …` — a convention with no mechanical consumer since the Stop
+  hook was cut. `negative-control` reads the PR's diff, not any commit: it copies the
+  changed test files onto a checkout of the base and requires the suite to fail there.
 
 ## Milestones
 
