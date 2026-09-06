@@ -28,9 +28,11 @@ One Claude Code session at the repository root (not in a worktree), running
    local worktree locked by a pid that no longer exists → unlock, remove --force, then
    treat its issue as `resumable` before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
-   dispatch only `ok: true` (`--strict` folds its `warnings` into `ok` for
-   type:feature/type:bug); a `failures` entry drops the candidate, a `sequenced`
-   overlap does not
+   dispatch only `ok: true` (`--strict` folds `warnings` into `ok` but is opt-in, never
+   applied by issue type — read every warning, widen `## Files` on a rename/removal, else
+   log a one-line classification when dispatching); a `failures` entry drops the candidate
+   (a wildcard glob whose fixed prefix has no tracked file is `new`, like a literal new
+   path, not a failure), a `sequenced` overlap does not
 2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
    already checked this against the milestone's other in-flight issues)
 3. for each: `scripts/claim.mts <n> --slug <slug>` pushes the remote branch

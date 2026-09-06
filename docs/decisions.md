@@ -123,3 +123,24 @@ verifying anything.
 
 *Cost accepted:* one more script to maintain per mutating step, each with its own test
 file and its own refusal shapes to keep in sync with the skills that call it.
+
+## 12. Issue-time entry-point warnings are advisory, not a gate
+
+`ci/issue-lint.mts`'s AC4 warns when a tracked file outside an issue's `## Files` names a
+path the issue's globs cover — the check #3's shape needed (item 11 above). But the same
+`git grep` fires on every reference, not only the ones a diff would break: at issue time,
+before the diff exists, it cannot tell a rename or removal from an in-place edit. Folding
+the warning into `ok` by default (`--strict` for `type:feature`/`type:bug`, the original
+plan) blocks every bug or feature that touches an already-documented or already-imported
+file. In the 2026-09-06 pass, #41 (nine warnings: workflows, docs, skills, `ci/lib/issue.mts`
+naming `ci/issue-lint.mts`) and #42 (three warnings: imports of `ci/lib/globs.mts`) both
+edit in place and rename nothing, so no widening of `## Files` short of listing every file
+in the repository that references them could have reached `ok: true` under `--strict` —
+and that widening would have overlapped every other issue in the milestone's globs.
+
+*Decision (2026-09-06, by the person running the loop):* `--strict` stays an opt-in flag
+on `ci/issue-lint.mts` and `scripts/claim.mts`, never applied by issue type. The
+orchestrator reads every `warnings` entry itself: a path the issue renames or removes gets
+`## Files` widened before dispatch; any other warning — an in-place edit or import, like
+#41 and #42 — is logged as a one-line classification on the issue when it is dispatched,
+and it is `ok: true` without `--strict` that gets dispatched.

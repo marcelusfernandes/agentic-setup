@@ -98,8 +98,11 @@ invocation and what `--strict` does. What CI, and now `issue-lint`, will hold th
   `.github/workflows/test.yml` referenced the old path by name from outside `## Files` —
   fixed inside the same PR under an `authorised:` grant on the workflow file, not caught by
   any check before dispatch. A warning alone does not fail the lint unless `--strict` was
-  passed (the orchestrator's default for `type:feature`/`type:bug`); either way, widen
-  `## Files` to cover the referencing file up front rather than needing the grant.
+  passed — an opt-in flag, never something the orchestrator applies by issue type: the
+  same `git grep` fires on an in-place edit or import, not only a rename or removal, and
+  folding it into `ok` by default would block every such change (`docs/decisions.md` item
+  12). Either way, widen `## Files` to cover the referencing file up front rather than
+  needing the grant.
 
 ## Labels
 

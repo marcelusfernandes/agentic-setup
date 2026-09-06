@@ -85,18 +85,25 @@ LINT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/ci/issue-lint.mts}"
 node "$LINT" <n> [--strict]
 ```
 
-Pass `--strict` when the candidate carries `type:feature` or `type:bug` — its `warnings`
-then count toward `ok`/exit code. For any other type, omit it. Prints
-`{ issue, ok, failures, warnings, globs, sequenced }`; only `ok: true` is dispatchable. A
+Prints `{ issue, ok, failures, warnings, globs, sequenced }`; dispatch only `ok: true`. A
 `failures` entry (a missing section, a wildcard glob that matches no tracked file, a
 `Blocked by:` number `gh` cannot find, or a `{ issue, files }` overlap with another issue
-in flight) drops the candidate from this pass — a literal path with no `*`/`**` that
-matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
-expected to create it), and a `sequenced` overlap is not a failure either, it means the two
-issues are already ordered by a `Blocked by:` relation. Read every `warnings` entry
-yourself even on an issue that passes without `--strict` (an entry-point reference outside
-`## Files` — the `#3` shape: a file the issue's globs cover is named by a tracked file the
-issue does not list) before deciding whether to widen `## Files` first.
+in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
+that matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
+expected to create it), and so is a wildcard glob whose fixed prefix (the part before its
+first `*` or `?`) names a directory with no tracked file anywhere — the way an issue
+declares a whole new directory. A `sequenced` overlap is not a failure either, it means the
+two issues are already ordered by a `Blocked by:` relation.
+
+`--strict` folds `warnings` into `ok`/exit code; it is an opt-in flag, never something this
+step passes by issue type — a warning fires on every in-place reference to a covered file,
+not only a rename, so folding it into `ok` by default would block a bug fixing an
+already-referenced file (`docs/decisions.md` item 12). Read every `warnings` entry
+yourself on every `ok: true` candidate: `{ file, referencedBy }` says a tracked file
+outside `## Files` names a path the candidate's globs cover (the `#3` shape). If that path
+is one the issue renames or removes, widen `## Files` to include the referencing file
+before dispatching. Otherwise, log a one-line classification of the warning as a comment
+on the issue when you dispatch it.
 
 ## 2. Pick up to 4 with disjoint globs
 
