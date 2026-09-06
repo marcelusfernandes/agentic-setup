@@ -36,6 +36,7 @@ case "\${1:-} \${2:-}" in
   {"number":31,"title":"In review red","body":"","labels":[{"name":"state:in-review"}]},
   {"number":40,"title":"In review pending checks","body":"","labels":[{"name":"state:in-review"}]},
   {"number":41,"title":"In review gh pr checks prints non-JSON","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":42,"title":"In review cancelled check reads red","body":"","labels":[{"name":"state:in-review"}]},
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
@@ -60,6 +61,7 @@ JSON
   {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null},
   {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
   {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
+  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
   {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null}
 ]
 JSON
@@ -67,18 +69,22 @@ JSON
   "pr checks")
     case "\${3:-}" in
       130)
-        echo '[{"name":"scope","state":"pass"},{"name":"test (node)","state":"pass"}]'
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pass"}]'
         ;;
       131)
-        echo '[{"name":"scope","state":"pass"},{"name":"test (node)","state":"fail"}]'
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"fail"}]'
         exit 1
         ;;
       140)
-        echo '[{"name":"scope","state":"pass"},{"name":"test (node)","state":"pending"}]'
-        exit 1
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pending"}]'
+        exit 8
         ;;
       141)
         echo "gh: 1 of 2 checks still pending"
+        exit 1
+        ;;
+      142)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel"}]'
         exit 1
         ;;
       *)
@@ -115,6 +121,7 @@ for (const branch of [
   'feat/31-z',
   'feat/40-pending-checks',
   'feat/41-nonjson-checks',
+  'feat/42-cancelled-check',
   'feat/50-prune-target',
   'feat/60-shadowed',
 ]) {
@@ -375,10 +382,15 @@ const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
 check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
 check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.checks === 'red' && inReview31?.reviewApproved === false, JSON.stringify(inReview31));
 
-// --- AC1: checks comes from `gh pr checks <pr> --json name,state`, not the
-// `gh pr list` rollup -------------------------------------------------------
+// --- AC1: checks comes from `gh pr checks <pr> --json name,bucket`, not the
+// `gh pr list` rollup. `bucket` is the five-way classification (pass, fail,
+// pending, skipping, cancel) `gh` itself computes from the raw per-check
+// state — reconcile reads that instead of re-deriving green/red/pending from
+// raw CheckConclusionState strings (SUCCESS, FAILURE, ...) the way the old
+// rollup code did. -----------------------------------------------------------
 const inReview40 = (out?.inReview ?? []).find((i: any) => i.number === 40);
 const inReview41 = (out?.inReview ?? []).find((i: any) => i.number === 41);
+const inReview42 = (out?.inReview ?? []).find((i: any) => i.number === 42);
 check(
   'in-review reads pending when gh pr checks reports a check still pending',
   inReview40?.pr === 140 && inReview40?.checks === 'pending',
@@ -388,6 +400,11 @@ check(
   'in-review reads pending when gh pr checks exits non-zero with non-JSON stdout, instead of erroring the whole pass',
   inReview41?.pr === 141 && inReview41?.checks === 'pending',
   JSON.stringify(inReview41),
+);
+check(
+  'in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")',
+  inReview42?.pr === 142 && inReview42?.checks === 'red',
+  JSON.stringify(inReview42),
 );
 
 const orphanRealpath = realpathSync(worktreeDir);
