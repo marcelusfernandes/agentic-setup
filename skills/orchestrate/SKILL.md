@@ -70,12 +70,16 @@ left by the last one, for an offline check against the last fetch. Fields:
   implementer never got to commit or push (#88: four implementers died mid-work in M4, one
   with a local commit never pushed). `dirty` is `true` when `git -C <path> status
   --porcelain` prints anything; `unpushed` is the count of commits on the worktree's `HEAD`
-  not on `origin/<branch>`, or `null` when there is no such remote branch. Recover before
-  removing, for each entry:
-  1. If `dirty`: `git -C <path> add -N . && git -C <path> diff > <patch>` — the `add -N`
-     (intent-to-add) makes untracked files show up in the diff without staging their
-     content. Save the patch path; it is handed to the round N+1 implementer as a draft to
-     verify, test committed first, not applied as-is.
+  not on `origin/<branch>`, or `null` when there is no such remote branch. `dirty` itself
+  reads `null` when the `git` call behind it fails (a broken or missing worktree) — skip
+  step 1 for that entry, but still remove it in step 3; there is nothing to trust a
+  status read from. Recover before removing, for each entry:
+  1. If `dirty`: `git -C <path> add -N . && git -C <path> diff HEAD > <patch>` — the
+     `add -N` (intent-to-add) makes untracked files show up in the diff without staging
+     their content, and `diff HEAD` (rather than a bare `diff`, which drops staged
+     content) captures staged, unstaged and intent-to-added changes together. Save the
+     patch path; it is handed to the round N+1 implementer as a draft to verify, test
+     committed first, not applied as-is.
   2. If `unpushed > 0`: `git push origin <branch>` (fast-forward, never force).
   3. `git worktree unlock <path> && git worktree remove --force <path>`; then treat its
      issue as `resumable`.

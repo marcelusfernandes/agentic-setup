@@ -27,8 +27,9 @@ One Claude Code session at the repository root (not in a worktree), running
    every bucket is pass/skipping, red on any fail/cancel, else pending), and an approved
    review → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
-   local worktree locked by a pid that no longer exists → unlock, remove --force, then
-   treat its issue as `resumable` before step 3 (`deadWorktrees`)
+   local worktree locked by a pid that no longer exists → save uncommitted/unpushed work
+   first (see the card), then unlock, remove --force, then treat its issue as `resumable`
+   before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
    dispatch only `ok: true`. issue-lint checks the contract only — sections present,
    globs that parse and match something (or are `new`), globs disjoint from the other
