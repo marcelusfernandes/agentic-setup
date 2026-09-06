@@ -38,7 +38,8 @@ case "\${1:-} \${2:-}" in
   {"number":41,"title":"In review dedupe red latest failure","body":"","labels":[{"name":"state:in-review"}]},
   {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]},
   {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]}
+  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -112,6 +113,7 @@ for (const branch of [
   'feat/42-dedupe-pending',
   'feat/43-running-not-red',
   'feat/44-running-completes-green',
+  'feat/50-prune-target',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
@@ -214,6 +216,38 @@ check(
   JSON.stringify(orphans),
 );
 check('orphanWorktrees does not list the main worktree', !orphans.some((p) => realpathSync(p) === realpathSync(repo)));
+
+const inProgress50 = (out?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  'in-progress prune target starts with a remote branch',
+  inProgress50?.branch === 'feat/50-prune-target' && inProgress50?.hasRemoteBranch === true,
+  JSON.stringify(inProgress50),
+);
+
+// --- AC1/AC2/AC3: default fetch (--prune) sees a branch deleted on the real
+// remote since the last fetch; --no-fetch does not, reading the stale local
+// ref instead. The deletion happens directly on the bare "origin" (not via a
+// push from `repo`), so `repo`'s own refs/remotes/origin/* stay stale until
+// something actually fetches. On the base (ls-remote queries the remote live,
+// every time) both calls would already report the branch gone, so this pair
+// only distinguishes the fixed behaviour from the base's. --------------------
+git(['branch', '-D', 'feat/50-prune-target'], remoteDir);
+
+const outNoFetch: any = JSON.parse(reconcile('--milestone', 'M1', '--no-fetch').stdout);
+const noFetch50 = (outNoFetch?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  '--no-fetch still reports the stale local ref as a remote branch (AC2)',
+  noFetch50?.hasRemoteBranch === true,
+  JSON.stringify(noFetch50),
+);
+
+const outFetched: any = JSON.parse(reconcile('--milestone', 'M1').stdout);
+const fetched50 = (outFetched?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  'the default run fetches with --prune first and no longer sees the deleted branch (AC1/AC3)',
+  fetched50?.hasRemoteBranch === false,
+  JSON.stringify(fetched50),
+);
 
 // --- default milestone: lowest-numbered open milestone, no --milestone -----
 const r2 = reconcile();
