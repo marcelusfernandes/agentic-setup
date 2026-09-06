@@ -162,26 +162,83 @@ check(
   literalNewDir.out,
 );
 
-// AC2: a *wildcard* glob that matches no tracked file is still a failure —
-// only a literal path gets the "new" pass. The "no existing parent
-// directory" wording is gone; the message names the glob as a wildcard.
-const wildcardNoMatch = lint(1081, issueBody({ files: '## Files\n- `nonexistent-dir/*.ts`\n' }));
+// AC2 (of #41): a wildcard glob whose *fixed prefix directory already
+// exists* in the tracked tree, but nothing under it matches, is still a
+// failure — `tests/` is tracked (tests/smoke.mts, tests/other.test.mts) but
+// nothing under it matches `*.zig`.
+const wildcardNoMatch = lint(1081, issueBody({ files: '## Files\n- `tests/*.zig`\n' }));
 const wildcardNoMatchOut = parse(wildcardNoMatch.out);
 check(
-  'a wildcard glob matching no tracked file fails with ok: false',
+  'a wildcard glob whose prefix directory exists but matches nothing fails with ok: false',
   wildcardNoMatch.status === 1 && wildcardNoMatchOut?.ok === false,
   wildcardNoMatch.out,
 );
 check(
   'the wildcard failure uses the "wildcard glob matches no tracked file" wording and names the glob',
   Array.isArray(wildcardNoMatchOut?.failures) &&
-    wildcardNoMatchOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: nonexistent-dir/*.ts'),
+    wildcardNoMatchOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: tests/*.zig'),
   wildcardNoMatch.out,
 );
 check(
   'the old "no existing parent directory" wording is gone',
   !/no existing parent directory/.test(wildcardNoMatch.out),
   wildcardNoMatch.out,
+);
+
+// AC1 (of #41): a wildcard glob whose fixed prefix (the part before the
+// first `*`) names a directory that does not exist anywhere in the tracked
+// tree is "new", not a failure — the natural way to declare a whole new
+// directory with more than one file (unlike a single literal new path,
+// already covered above).
+const newDirWildcard = lint(1082, issueBody({ files: '## Files\n- `newmod/**`\n' }));
+const newDirWildcardOut = parse(newDirWildcard.out);
+check(
+  'a wildcard glob whose prefix directory does not exist passes ("new"), not a failure',
+  newDirWildcard.status === 0 && newDirWildcardOut?.ok === true,
+  newDirWildcard.out,
+);
+check(
+  'the new-directory wildcard is reported in globs: [{ glob, status: "new" }]',
+  Array.isArray(newDirWildcardOut?.globs) && newDirWildcardOut.globs.some((g: any) => g.glob === 'newmod/**' && g.status === 'new'),
+  newDirWildcard.out,
+);
+
+// AC1 (of #41), the literal shape from the issue: a wildcard glob naming a
+// new subdirectory *under an existing tracked directory* — `tests/` is
+// tracked, `tests/newmod/` is not — is still "new", not a failure. This is
+// the actual discriminator against AC2 (`tests/*.zig`, where the prefix
+// directory `tests/` exists and the wildcard matches within it): here the
+// prefix directory `tests/newmod/` itself does not exist anywhere in the
+// tracked tree, even though its parent does.
+const newSubDirWildcard = lint(1084, issueBody({ files: '## Files\n- `tests/newmod/**`\n' }));
+const newSubDirWildcardOut = parse(newSubDirWildcard.out);
+check(
+  'a wildcard glob naming a new subdirectory under an existing tracked directory passes ("new")',
+  newSubDirWildcard.status === 0 && newSubDirWildcardOut?.ok === true,
+  newSubDirWildcard.out,
+);
+check(
+  'the new-subdirectory wildcard is reported in globs: [{ glob, status: "new" }]',
+  Array.isArray(newSubDirWildcardOut?.globs) &&
+    newSubDirWildcardOut.globs.some((g: any) => g.glob === 'tests/newmod/**' && g.status === 'new'),
+  newSubDirWildcard.out,
+);
+
+// AC3 (of #41): a wildcard glob with no fixed prefix at all (it starts with
+// `*`) that matches nothing is still a failure — there is no directory to
+// call "new".
+const noPrefixWildcard = lint(1083, issueBody({ files: '## Files\n- `**/*.foo`\n' }));
+const noPrefixWildcardOut = parse(noPrefixWildcard.out);
+check(
+  'a wildcard glob with no fixed prefix that matches nothing fails with ok: false',
+  noPrefixWildcard.status === 1 && noPrefixWildcardOut?.ok === false,
+  noPrefixWildcard.out,
+);
+check(
+  'the no-fixed-prefix failure uses the "wildcard glob matches no tracked file" wording',
+  Array.isArray(noPrefixWildcardOut?.failures) &&
+    noPrefixWildcardOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: **/*.foo'),
+  noPrefixWildcard.out,
 );
 
 // AC2: a glob that does not parse (a leading unescaped `?` has nothing to
@@ -259,6 +316,153 @@ check(
   Array.isArray(sameNewPathOverlapOut?.failures) &&
     sameNewPathOverlapOut.failures.some((f: any) => f?.issue === 205 && Array.isArray(f?.files) && f.files.includes('scripts/lib/issues.mts')),
   sameNewPathOverlap.out,
+);
+
+// AC4 (of #41): a "new" directory wildcard (`newmod/**`) is treated as
+// covering any path under it for disjointness — another issue declaring a
+// literal new file inside that same new directory overlaps.
+const newDirOverlapMilestone = milestoneFile([{ number: 206, labels: ['state:ready'], body: '## Files\n- `newmod/index.ts`\n' }]);
+const newDirOverlap = lint(1121, issueBody({ files: '## Files\n- `newmod/**`\n' }), { milestone: newDirOverlapMilestone });
+const newDirOverlapOut = parse(newDirOverlap.out);
+check(
+  'a new directory wildcard overlaps another issue declaring a new file inside it, with ok: false',
+  newDirOverlap.status === 1 && newDirOverlapOut?.ok === false,
+  newDirOverlap.out,
+);
+check(
+  'the new-directory overlap carries { issue, files } naming the other issue and the shared new path',
+  Array.isArray(newDirOverlapOut?.failures) &&
+    newDirOverlapOut.failures.some((f: any) => f?.issue === 206 && Array.isArray(f?.files) && f.files.includes('newmod/index.ts')),
+  newDirOverlap.out,
+);
+
+// AC4 (round 2 of #41): two issues each declaring a wildcard under the same
+// brand-new directory — neither glob matches a tracked file, and neither
+// declares a literal path, so comparing only matched tracked files and new
+// literal paths (as above) misses this entirely: both lint ok: true on the
+// unfixed branch. The fix compares each new wildcard's fixed directory
+// prefix too; two issues both declaring `newmod/**` share the same prefix
+// (`newmod/`), reported here (not the raw glob) as the overlapping path.
+const wildcardVsWildcardMilestone = milestoneFile([{ number: 207, labels: ['state:ready'], body: '## Files\n- `newmod/**`\n' }]);
+const wildcardVsWildcardOverlap = lint(1122, issueBody({ files: '## Files\n- `newmod/**`\n' }), { milestone: wildcardVsWildcardMilestone });
+const wildcardVsWildcardOverlapOut = parse(wildcardVsWildcardOverlap.out);
+check(
+  'two issues both declaring a wildcard over the same new directory overlap, with ok: false',
+  wildcardVsWildcardOverlap.status === 1 && wildcardVsWildcardOverlapOut?.ok === false,
+  wildcardVsWildcardOverlap.out,
+);
+check(
+  'the wildcard-vs-wildcard overlap carries { issue, files } naming the other issue and the shared new-directory prefix',
+  Array.isArray(wildcardVsWildcardOverlapOut?.failures) &&
+    wildcardVsWildcardOverlapOut.failures.some((f: any) => f?.issue === 207 && Array.isArray(f?.files) && f.files.includes('newmod/')),
+  wildcardVsWildcardOverlap.out,
+);
+
+// AC4 (round 2 of #41): the same hole, one directory level down — `newmod/**`
+// vs `newmod/sub/*.ts`. Neither glob matches a tracked file (both prefixes
+// are new), so this also lints ok: true on the unfixed branch. The narrower
+// prefix (`newmod/sub/`) is a subdirectory of the wider one (`newmod/`); the
+// fix's overlap rule is "one prefix startsWith the other", reporting both
+// prefixes.
+const wildcardVsNestedWildcardMilestone = milestoneFile([{ number: 208, labels: ['state:ready'], body: '## Files\n- `newmod/sub/*.ts`\n' }]);
+const wildcardVsNestedWildcardOverlap = lint(1123, issueBody({ files: '## Files\n- `newmod/**`\n' }), { milestone: wildcardVsNestedWildcardMilestone });
+const wildcardVsNestedWildcardOverlapOut = parse(wildcardVsNestedWildcardOverlap.out);
+check(
+  'a new-directory wildcard and a wildcard under one of its new subdirectories overlap, with ok: false',
+  wildcardVsNestedWildcardOverlap.status === 1 && wildcardVsNestedWildcardOverlapOut?.ok === false,
+  wildcardVsNestedWildcardOverlap.out,
+);
+check(
+  'the nested wildcard-vs-wildcard overlap carries { issue, files } naming the other issue and both new-directory prefixes',
+  Array.isArray(wildcardVsNestedWildcardOverlapOut?.failures) &&
+    wildcardVsNestedWildcardOverlapOut.failures.some(
+      (f: any) => f?.issue === 208 && Array.isArray(f?.files) && f.files.includes('newmod/') && f.files.includes('newmod/sub/'),
+    ),
+  wildcardVsNestedWildcardOverlap.out,
+);
+
+// AC3 (round 2 of #41): the same wildcard-vs-wildcard pair is not a failure
+// when one issue is blocked by the other — `sequenced` still applies to a
+// new-directory-prefix overlap, not just a matched-file or new-literal-path
+// one.
+const sequencedWildcardMilestone = milestoneFile([{ number: 209, labels: ['state:ready'], body: '## Files\n- `newmod/**`\n' }]);
+const sequencedWildcardOverlap = lint(
+  1124,
+  issueBody({ files: '## Files\n- `newmod/**`\n', deps: '## Dependencies\nBlocked by: #209\n' }),
+  { milestone: sequencedWildcardMilestone },
+);
+const sequencedWildcardOverlapOut = parse(sequencedWildcardOverlap.out);
+check(
+  'two wildcards over the same new directory are not a failure when one is blocked by the other (sequenced)',
+  sequencedWildcardOverlap.status === 0 && !(sequencedWildcardOverlapOut?.failures ?? []).some((f: any) => f?.issue === 209),
+  sequencedWildcardOverlap.out,
+);
+check(
+  'the sequenced wildcard-vs-wildcard overlap is reported in sequenced: [{ issue, files }] instead of failures',
+  Array.isArray(sequencedWildcardOverlapOut?.sequenced) &&
+    sequencedWildcardOverlapOut.sequenced.some((s: any) => s?.issue === 209 && s?.files?.includes('newmod/')),
+  sequencedWildcardOverlap.out,
+);
+
+// AC4 (round 3 of #41): a new-directory wildcard under an *existing* tracked
+// directory still has to overlap the existing directory's own wildcard —
+// round 2 wired `selfNewPrefixes`/`otherNewPrefixes` only to the
+// prefix-vs-prefix (`newPathsOverlap`) comparison, not to the
+// prefix-vs-full-glob-list (`matchesAny`) comparison `newLiteralPaths`
+// already gets. `tests/**` (matched: `tests/smoke.mts` etc. are tracked) is
+// not itself "new", so it never lands in `otherNewPrefixes`/`selfNewPrefixes`
+// — but `tests/newsub/**` (new: `tests/newsub/` is untracked) still falls
+// entirely under it. Direction A: self is the matched `tests/**`, the other
+// issue is the new `tests/newsub/**`.
+const matchedVsNewSubMilestone = milestoneFile([{ number: 210, labels: ['state:ready'], body: '## Files\n- `tests/newsub/**`\n' }]);
+const matchedVsNewSubOverlap = lint(1125, issueBody(), { milestone: matchedVsNewSubMilestone });
+const matchedVsNewSubOverlapOut = parse(matchedVsNewSubOverlap.out);
+check(
+  'a matched wildcard overlaps another issue\'s new-directory wildcard nested under it, with ok: false',
+  matchedVsNewSubOverlap.status === 1 && matchedVsNewSubOverlapOut?.ok === false,
+  matchedVsNewSubOverlap.out,
+);
+check(
+  'the matched-vs-new-subdirectory overlap carries { issue, files } naming the other issue and its new-directory prefix',
+  Array.isArray(matchedVsNewSubOverlapOut?.failures) &&
+    matchedVsNewSubOverlapOut.failures.some((f: any) => f?.issue === 210 && Array.isArray(f?.files) && f.files.includes('tests/newsub/')),
+  matchedVsNewSubOverlap.out,
+);
+
+// Direction B: self is the new `tests/newsub/**`, the other issue is the
+// matched `tests/**` — the parallel leg (`selfNewPrefixes` vs `otherGlobs`).
+const newSubVsMatchedMilestone = milestoneFile([{ number: 211, labels: ['state:ready'], body: '## Files\n- `tests/**`\n' }]);
+const newSubVsMatchedOverlap = lint(1126, issueBody({ files: '## Files\n- `tests/newsub/**`\n' }), { milestone: newSubVsMatchedMilestone });
+const newSubVsMatchedOverlapOut = parse(newSubVsMatchedOverlap.out);
+check(
+  'a new-directory wildcard overlaps another issue\'s matched wildcard covering it, with ok: false',
+  newSubVsMatchedOverlap.status === 1 && newSubVsMatchedOverlapOut?.ok === false,
+  newSubVsMatchedOverlap.out,
+);
+check(
+  'the new-subdirectory-vs-matched overlap carries { issue, files } naming the other issue and the new-directory prefix',
+  Array.isArray(newSubVsMatchedOverlapOut?.failures) &&
+    newSubVsMatchedOverlapOut.failures.some((f: any) => f?.issue === 211 && Array.isArray(f?.files) && f.files.includes('tests/newsub/')),
+  newSubVsMatchedOverlap.out,
+);
+
+// AC3 (round 3 of #41): the matched-vs-new-subdirectory pair is not a
+// failure when one issue is blocked by the other.
+const sequencedMatchedVsNewSubMilestone = milestoneFile([{ number: 212, labels: ['state:ready'], body: '## Files\n- `tests/newsub/**`\n' }]);
+const sequencedMatchedVsNewSubOverlap = lint(1127, issueBody({ deps: '## Dependencies\nBlocked by: #212\n' }), {
+  milestone: sequencedMatchedVsNewSubMilestone,
+});
+const sequencedMatchedVsNewSubOverlapOut = parse(sequencedMatchedVsNewSubOverlap.out);
+check(
+  'a matched wildcard and a new-directory wildcard nested under it are not a failure when one is blocked by the other (sequenced)',
+  sequencedMatchedVsNewSubOverlap.status === 0 && !(sequencedMatchedVsNewSubOverlapOut?.failures ?? []).some((f: any) => f?.issue === 212),
+  sequencedMatchedVsNewSubOverlap.out,
+);
+check(
+  'the sequenced matched-vs-new-subdirectory overlap is reported in sequenced: [{ issue, files }] instead of failures',
+  Array.isArray(sequencedMatchedVsNewSubOverlapOut?.sequenced) &&
+    sequencedMatchedVsNewSubOverlapOut.sequenced.some((s: any) => s?.issue === 212 && s?.files?.includes('tests/newsub/')),
+  sequencedMatchedVsNewSubOverlap.out,
 );
 
 // --- AC4: entry-point references (the #3 shape) -----------------------------
