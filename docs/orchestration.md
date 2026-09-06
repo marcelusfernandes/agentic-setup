@@ -15,15 +15,18 @@ One Claude Code session at the repository root (not in a worktree), running
 
 ```
 0. `scripts/reconcile.mts` prints the loop's state as one JSON document (`milestone`,
-   `ready`, `inProgress`, `resumable`, `inReview`, `stale`, `orphanWorktrees` — see
-   `skills/orchestrate/SKILL.md` step 0 for the invocation and what each field means),
-   instead of reconciling from memory. It fetches `origin` with prune itself first
-   (`--no-fetch` reads the local refs left by the last fetch, for an offline check):
+   `ready`, `inProgress`, `resumable`, `inReview`, `stale`, `orphanWorktrees`,
+   `deadWorktrees` — see `skills/orchestrate/SKILL.md` step 0 for the invocation and what
+   each field means), instead of reconciling from memory. It fetches `origin` with prune
+   itself first (`--no-fetch` reads the local refs left by the last fetch, for an offline
+   check):
    in-progress with no PR and no remote branch → ready (`stale`)
    in-progress with a remote branch, no PR and no local worktree on it → dispatch as
    round N+1 from origin/<branch>, no re-claim (`resumable`)
    in-review with green CI and review:approved → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
+   local worktree locked by a pid that no longer exists → unlock, remove --force, then
+   treat its issue as `resumable` before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
    dispatch only `ok: true` (`--strict` folds its `warnings` into `ok` for
    type:feature/type:bug); a `failures` entry drops the candidate, a `sequenced`
