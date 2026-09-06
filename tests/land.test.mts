@@ -4,6 +4,18 @@
 // PATH (a bash script that dispatches on the subcommand, logs its argv, and
 // prints canned JSON keyed by PR number).
 //
+// The fake `gh` mocks two distinct real endpoints: the legacy ruleset list
+// (`rulesets?targets=branch`, summaries only -- no `rules`, no
+// `conditions`) and the per-branch effective rules
+// (`rules/branches/<branch>`, flattened and enforcement-aware -- the one
+// land.mts actually reads). Case H below is the regression case: a branch
+// whose only ruleset forbids deletion (no required_status_checks) still
+// shows up as a non-empty ruleset *list*, so a script that used the list as
+// its gate signal would skip the client-checks fallback and let `--auto`
+// merge with nothing gating it. This fixture keeps the legacy endpoint
+// mocked (non-empty for exactly that branch) so the bug is reachable, not
+// merely absent from the test.
+//
 // Negative control: on the base (before this PR), scripts/land.mts still
 // polls, relabels and removes worktrees -- it does not print { queued } and
 // it calls `gh pr merge` without --auto, so every case below that checks
@@ -22,28 +34,41 @@ printf '%s\\n' "$*" >> "$state/gh-argv.log"
 
 case "\${1:-} \${2:-}" in
   "api repos/{owner}/{repo}/rulesets?targets=branch")
-    if [ "\${FAKE_GH_RULESET:-}" = "1" ]; then
-      echo '[{"id":1,"name":"main","target":"branch"}]'
-    else
-      echo '[]'
-    fi
+    # Legacy list endpoint (kept only so the regression in case H is
+    # reachable against a script that still reads it): non-empty whenever
+    # any branch ruleset exists at all, required-checks or not.
+    case "\${FAKE_GH_RULES:-}" in
+      required|deletion-only) echo '[{"id":1,"name":"main","target":"branch"}]' ;;
+      *) echo '[]' ;;
+    esac
+    ;;
+  "api repos/{owner}/{repo}/rules/branches/main")
+    # The endpoint land.mts actually reads: flattened, enforcement-aware
+    # rules that apply to this branch right now.
+    case "\${FAKE_GH_RULES:-}" in
+      required) echo '[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request"},{"type":"required_status_checks","parameters":{}}]' ;;
+      deletion-only) echo '[{"type":"deletion"},{"type":"non_fast_forward"}]' ;;
+      *) echo '[]' ;;
+    esac
     ;;
   "pr view")
     pr="$3"
     case "$pr" in
-      10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null}' ;;
-      11) echo '{"state":"OPEN","labels":[],"reviewDecision":null}' ;;
-      12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null}' ;;
-      13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null}' ;;
-      14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null}' ;;
-      15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null}' ;;
-      16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null}' ;;
+      10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      11) echo '{"state":"OPEN","labels":[],"reviewDecision":null,"baseRefName":"main"}' ;;
+      12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+      18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
       *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
     esac
     ;;
   "pr checks")
     pr="$3"
-    if [ "$pr" = "13" ]; then
+    if [ "$pr" = "13" ] || [ "$pr" = "17" ]; then
       echo "fake-gh: some required checks were not successful" >&2
       exit 1
     fi
@@ -96,7 +121,7 @@ const a = land(10);
 check('not-open refuses (exit 1)', a.status === 1, `${a.stdout}\n${a.stderr}`);
 const aOut = parse(a.stdout);
 check('not-open reports refused with pr and missing', typeof aOut?.refused === 'string' && aOut?.pr === 10 && (aOut?.missing ?? []).some((m: string) => m === 'state=CLOSED'), a.stdout);
-check('not-open never checked rulesets or merged', !/api repos/.test(a.log) && !/pr merge/.test(a.log), a.log);
+check('not-open never checked rules or merged', !/api repos/.test(a.log) && !/pr merge/.test(a.log), a.log);
 
 // --- B: OPEN, not approved, not docs -> refused -----------------------------
 const b = land(11);
@@ -105,41 +130,62 @@ const bOut = parse(b.stdout);
 check('not-approved is named in missing[]', (bOut?.missing ?? []).includes('review:not-approved'), JSON.stringify(bOut));
 check('not-approved never invoked gh pr merge', !/pr merge/.test(b.log), b.log);
 
-// --- C: type:docs with no approval, a ruleset present -> queued -------------
-const c = land(12, { FAKE_GH_RULESET: '1' });
+// --- C: type:docs with no approval, required_status_checks in the branch's
+// effective rules -> queued straight from the server ------------------------
+const c = land(12, { FAKE_GH_RULES: 'required' });
 check('docs without approval queues (exit 0)', c.status === 0, `${c.stdout}\n${c.stderr}`);
 const cOut = parse(c.stdout);
 check('docs queued reports { queued, gate: ruleset }', cOut?.queued === 12 && cOut?.gate === 'ruleset', c.stdout);
 
-// --- D: no ruleset, required checks red -> refused --------------------------
-const d = land(13, { FAKE_GH_RULESET: '0' });
-check('no-ruleset + red checks refuses (exit 1)', d.status === 1, `${d.stdout}\n${d.stderr}`);
+// --- D: no rules at all, required checks red -> refused ---------------------
+const d = land(13, { FAKE_GH_RULES: '' });
+check('no-rules + red checks refuses (exit 1)', d.status === 1, `${d.stdout}\n${d.stderr}`);
 const dOut = parse(d.stdout);
-check('no-ruleset + red checks names checks:required in missing[]', (dOut?.missing ?? []).includes('checks:required'), JSON.stringify(dOut));
-check('no-ruleset + red checks never invoked gh pr merge', !/pr merge/.test(d.log), d.log);
+check('no-rules + red checks names checks:required in missing[]', (dOut?.missing ?? []).includes('checks:required'), JSON.stringify(dOut));
+check('no-rules + red checks never invoked gh pr merge', !/pr merge/.test(d.log), d.log);
 
-// --- E: no ruleset, required checks green -> queued via the client-checks gate
-const e = land(14, { FAKE_GH_RULESET: '0' });
-check('no-ruleset + green checks queues (exit 0)', e.status === 0, `${e.stdout}\n${e.stderr}`);
+// --- E: no rules at all, required checks green -> queued via the
+// client-checks gate ---------------------------------------------------------
+const e = land(14, { FAKE_GH_RULES: '' });
+check('no-rules + green checks queues (exit 0)', e.status === 0, `${e.stdout}\n${e.stderr}`);
 const eOut = parse(e.stdout);
-check('no-ruleset + green checks reports { queued, gate: client-checks }', eOut?.queued === 14 && eOut?.gate === 'client-checks', e.stdout);
-check('no-ruleset + green checks invoked gh pr checks --required', /pr checks 14 --required/.test(e.log), e.log);
+check('no-rules + green checks reports { queued, gate: client-checks }', eOut?.queued === 14 && eOut?.gate === 'client-checks', e.stdout);
+check('no-rules + green checks invoked gh pr checks --required', /pr checks 14 --required/.test(e.log), e.log);
 
-// --- F: a ruleset exists -> queued straight from the server, no client
-// checks call at all; the merge is the last gh call made ---------------------
-const f = land(15, { FAKE_GH_RULESET: '1' });
-check('ruleset present queues (exit 0)', f.status === 0, `${f.stdout}\n${f.stderr}`);
+// --- F: required_status_checks present -> queued straight from the server,
+// no client checks call at all; the merge is the last gh call made ----------
+const f = land(15, { FAKE_GH_RULES: 'required' });
+check('required_status_checks present queues (exit 0)', f.status === 0, `${f.stdout}\n${f.stderr}`);
 const fOut = parse(f.stdout);
-check('ruleset present reports { queued, gate: ruleset }', fOut?.queued === 15 && fOut?.gate === 'ruleset', f.stdout);
-check('ruleset present invoked gh pr merge --squash --delete-branch --auto, never --admin', /pr merge 15 --squash --delete-branch --auto/.test(f.log) && !/--admin/.test(f.log), f.log);
-check('ruleset present never called gh pr checks', !/pr checks/.test(f.log), f.log);
+check('required_status_checks present reports { queued, gate: ruleset }', fOut?.queued === 15 && fOut?.gate === 'ruleset', f.stdout);
+check('required_status_checks present invoked gh pr merge --squash --delete-branch --auto, never --admin', /pr merge 15 --squash --delete-branch --auto/.test(f.log) && !/--admin/.test(f.log), f.log);
+check('required_status_checks present never called gh pr checks', !/pr checks/.test(f.log), f.log);
 const fLines = f.log.trim().split('\n').filter(Boolean);
-check('ruleset present did nothing after gh pr merge --auto', fLines[fLines.length - 1] === 'pr merge 15 --squash --delete-branch --auto', f.log);
+check('required_status_checks present did nothing after gh pr merge --auto', fLines[fLines.length - 1] === 'pr merge 15 --squash --delete-branch --auto', f.log);
 
 // --- G: preconditions and gate pass, but auto-merge is disabled on the repo -
-const g = land(16, { FAKE_GH_RULESET: '1' });
+const g = land(16, { FAKE_GH_RULES: 'required' });
 check('auto-merge disabled exits 1', g.status === 1, `${g.stdout}\n${g.stderr}`);
 const gOut = parse(g.stdout);
 check('auto-merge disabled reports { error } with gh\'s own message', typeof gOut?.error === 'string' && /auto merge/i.test(gOut.error), g.stdout);
+
+// --- H: a branch ruleset exists but only forbids deletion/force-push (no
+// required_status_checks) -> the client-checks fallback still runs, and a
+// red required check still refuses. A gate that trusted "any ruleset in the
+// list endpoint exists" would skip the fallback here and let --auto merge
+// ungated -- this is the regression case. --------------------------------
+const h = land(17, { FAKE_GH_RULES: 'deletion-only' });
+check('deletion-only ruleset still falls back to client-checks and refuses on red (exit 1)', h.status === 1, `${h.stdout}\n${h.stderr}`);
+const hOut = parse(h.stdout);
+check('deletion-only ruleset names checks:required and gate: client-checks', (hOut?.missing ?? []).includes('checks:required') && hOut?.gate === 'client-checks', JSON.stringify(hOut));
+check('deletion-only ruleset actually called gh pr checks --required', /pr checks 17 --required/.test(h.log), h.log);
+check('deletion-only ruleset never invoked gh pr merge', !/pr merge/.test(h.log), h.log);
+
+// --- I: same deletion-only ruleset, but required checks are green -> the
+// client-checks gate queues it normally --------------------------------
+const i = land(18, { FAKE_GH_RULES: 'deletion-only' });
+check('deletion-only ruleset + green checks queues via client-checks (exit 0)', i.status === 0, `${i.stdout}\n${i.stderr}`);
+const iOut = parse(i.stdout);
+check('deletion-only ruleset + green checks reports { queued, gate: client-checks }', iOut?.queued === 18 && iOut?.gate === 'client-checks', i.stdout);
 
 finish();

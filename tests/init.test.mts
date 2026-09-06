@@ -87,20 +87,35 @@ check(
 );
 check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 
-// --- gh section: labels no longer seed state:done; auto-merge gets enabled -
-// A fake `gh` on PATH: `auth status` always succeeds, `repo view` reports
-// autoMergeAllowed from a state-dir marker (so the second run of the same
-// scenario sees it as already enabled), `repo edit --enable-auto-merge`
-// creates that marker, `label create` and the milestone lookup are no-ops.
+// --- gh section: labels no longer seed state:done; auto-merge and
+// delete-branch-on-merge get enabled -----------------------------------
+// A fake `gh` on PATH mocking the real contract: `auth status` always
+// succeeds; `api repos/{owner}/{repo} --jq .allow_auto_merge` /
+// `--jq .delete_branch_on_merge` each report a state-dir marker (unset gh
+// does not have an `autoMergeAllowed` field on `repo view --json`, so that
+// command is deliberately left unmocked -- it falls to the catch-all);
+// `repo edit --enable-auto-merge` / `--delete-branch-on-merge` create the
+// matching marker; `label create` is a no-op.
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
 case "\${1:-} \${2:-}" in
   "auth status") exit 0 ;;
-  "repo view")
-    if [ -f "$state/automerge-enabled" ]; then echo '{"autoMergeAllowed":true}'; else echo '{"autoMergeAllowed":false}'; fi
+  "api repos/{owner}/{repo}")
+    case "$4" in
+      .allow_auto_merge)
+        if [ -f "$state/automerge-enabled" ]; then echo "true"; else echo "false"; fi ;;
+      .delete_branch_on_merge)
+        if [ -f "$state/deletebranch-enabled" ]; then echo "true"; else echo "false"; fi ;;
+      *) echo "" ;;
+    esac
     ;;
-  "repo edit") touch "$state/automerge-enabled" ;;
+  "repo edit")
+    case "$3" in
+      --enable-auto-merge) touch "$state/automerge-enabled" ;;
+      --delete-branch-on-merge) touch "$state/deletebranch-enabled" ;;
+    esac
+    ;;
   "label create") exit 0 ;;
   "api") echo "" ;;
   *) exit 0 ;;
@@ -129,21 +144,36 @@ commit(ghRepo, { 'README.md': '# gh\n' }, 'init');
 const state1 = mkdtempSync(join(tmpdir(), 'agentic-init-ghstate-'));
 cleanup(() => rmSync(state1, { recursive: true, force: true }));
 const gh1 = initWithGh(ghRepo, state1);
-check('init (gh, auto-merge disabled) exits 0', gh1.status === 0, `${gh1.stdout}${gh1.stderr}`);
+check('init (gh, both settings disabled) exits 0', gh1.status === 0, `${gh1.stdout}${gh1.stderr}`);
 check('init enables auto-merge and reports it', /\+ auto-merge enabled/.test(gh1.stdout) && /repo edit --enable-auto-merge/.test(ghLog(state1)), gh1.stdout);
+check('init enables delete-branch-on-merge and reports it', /\+ delete-branch-on-merge enabled/.test(gh1.stdout) && /repo edit --delete-branch-on-merge/.test(ghLog(state1)), gh1.stdout);
 check('init no longer seeds state:done', !/label create state:done\b/.test(ghLog(state1)), ghLog(state1));
 check('init still seeds other state labels', /label create state:ready\b/.test(ghLog(state1)), ghLog(state1));
 
-const gh2 = initWithGh(ghRepo, state1); // same state dir: repo view now reports autoMergeAllowed: true
-check('init rerun (auto-merge already enabled) exits 0', gh2.status === 0, `${gh2.stdout}${gh2.stderr}`);
+const gh2 = initWithGh(ghRepo, state1); // same state dir: both markers now present
+check('init rerun (both settings already enabled) exits 0', gh2.status === 0, `${gh2.stdout}${gh2.stderr}`);
 check('init rerun reports auto-merge already enabled and does not call repo edit again', /= auto-merge already enabled/.test(gh2.stdout), gh2.stdout);
-check('init rerun did not call gh repo edit a second time', (ghLog(state1).match(/repo edit --enable-auto-merge/g) ?? []).length === 1, ghLog(state1));
+check('init rerun reports delete-branch-on-merge already enabled and does not call repo edit again', /= delete-branch-on-merge already enabled/.test(gh2.stdout), gh2.stdout);
+check('init rerun did not call gh repo edit --enable-auto-merge a second time', (ghLog(state1).match(/repo edit --enable-auto-merge/g) ?? []).length === 1, ghLog(state1));
+check('init rerun did not call gh repo edit --delete-branch-on-merge a second time', (ghLog(state1).match(/repo edit --delete-branch-on-merge/g) ?? []).length === 1, ghLog(state1));
+
+// A fixture that starts already enabled (both settings), proving the read
+// path -- not just the write path -- actually works: a run against this
+// fixture must report "=" on its very first call, with no repo edit at all.
+const state3 = mkdtempSync(join(tmpdir(), 'agentic-init-ghstate-already-'));
+cleanup(() => rmSync(state3, { recursive: true, force: true }));
+writeFileSync(join(state3, 'automerge-enabled'), '');
+writeFileSync(join(state3, 'deletebranch-enabled'), '');
+const gh3 = initWithGh(ghRepo, state3);
+check('init against an already-enabled repository exits 0', gh3.status === 0, `${gh3.stdout}${gh3.stderr}`);
+check('init against an already-enabled repository reports both settings as "="', /= auto-merge already enabled/.test(gh3.stdout) && /= delete-branch-on-merge already enabled/.test(gh3.stdout), gh3.stdout);
+check('init against an already-enabled repository never calls gh repo edit', !/repo edit/.test(ghLog(state3)), ghLog(state3));
 
 const state2 = mkdtempSync(join(tmpdir(), 'agentic-init-ghstate-dry-'));
 cleanup(() => rmSync(state2, { recursive: true, force: true }));
 const ghDry = initWithGh(ghRepo, state2, '--dry-run');
 check('init --dry-run (with gh) exits 0', ghDry.status === 0, `${ghDry.stdout}${ghDry.stderr}`);
-check('init --dry-run reports it would enable auto-merge', /\+ auto-merge enabled/.test(ghDry.stdout), ghDry.stdout);
+check('init --dry-run reports it would enable auto-merge and delete-branch-on-merge', /\+ auto-merge enabled/.test(ghDry.stdout) && /\+ delete-branch-on-merge enabled/.test(ghDry.stdout), ghDry.stdout);
 check('init --dry-run never actually calls gh repo edit', !/repo edit/.test(ghLog(state2)), ghLog(state2));
 
 finish();
