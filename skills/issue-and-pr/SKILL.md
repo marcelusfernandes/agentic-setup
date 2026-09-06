@@ -10,18 +10,24 @@ Everything that goes to GitHub is in English. The full contract is in the plugin
 
 ## Claim (orchestrator only)
 
-**The orchestrator creates the branch, not the implementer.**
+**The orchestrator creates the branch, not the implementer.** Run `scripts/claim.mts`,
+located the way `skills/orchestrate` locates every plugin script — `CLAUDE_PLUGIN_ROOT`
+with a `find ~/.claude/plugins` fallback (see that skill's step 0 for the three-line
+locator) — and run from the repository root, since it reads the current working
+directory's git:
 
 ```bash
-n=42; slug=dashboard-kpis; type=feat
-git fetch origin
-git push origin "origin/main:refs/heads/$type/$n-$slug" || { echo "branch exists: another agent has #$n"; exit 1; }
-gh issue edit $n --add-assignee @me --add-label state:in-progress --remove-label state:ready
+node "$CLAIM" 42 --slug dashboard-kpis --type feat
 ```
 
-The push of a new ref is the lock: it fails if the ref exists. Only then assign and
-relabel. The implementer is born in a worktree on that branch and **never creates or
-renames one**.
+`<type>` defaults to the title prefix (`feat(scope): …` → `feat`) when `--type` is
+omitted. The push of a new ref (`origin/<default>:refs/heads/<type>/<n>-<slug>`) is the
+lock — `git push --porcelain`, not a local pre-check, decides whether it held. Exit 0 →
+`{ issue, branch, base }`: pushed, assigned `@me`, relabelled `state:in-progress`. Exit 2 →
+`{ held }`: the branch already exists, another agent has it — skip, no retry. Exit 1 →
+`{ refused }` (closed, missing `state:ready`, an open `Blocked by:` issue, or no `## Files`
+bullet — nothing pushed, nothing relabelled) or `{ error }` (a `gh`/`git` failure). The
+implementer is born in a worktree on that branch and **never creates or renames one**.
 
 ## Open the PR (implementer)
 
@@ -69,16 +75,31 @@ id=$(gh api repos/{owner}/{repo}/issues/$n -q .id)
 gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$id
 ```
 
-`issue.md` follows `.github/ISSUE_TEMPLATE/task.md`. What CI will hold the issue to:
+`issue.md` follows `.github/ISSUE_TEMPLATE/task.md`. An issue is not dispatchable until
+`ci/issue-lint.mts <n>` reports `ok: true` (run it, or wait for the `issue-lint` workflow's
+comment, before it reaches `state:ready`) — see `skills/orchestrate` step 1 for the exact
+invocation and what `--strict` does. What CI, and now `issue-lint`, will hold the issue to:
 - **Files** are globs; the `scope` check compares `git diff --name-only` against them. Two
-  issues in flight cannot have intersecting globs.
+  issues in flight cannot have intersecting globs — `issue-lint` fails a sub-issue over
+  this itself, against every other `state:ready`/`state:in-progress`/`state:in-review`
+  issue in the same milestone, unless a `Blocked by:` relation orders the two (then it is
+  reported as `sequenced`, not a failure).
 - **Proof** names the test command and what it covers; the negative control is the
   `test(red):` commit.
 - **Dependencies** as `Blocked by: #N`; the orchestrator does not dispatch a blocked issue.
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.
 - An issue that adds an entry point to an existing table, menu or list **names that file in
   `## Files` from the start**, not only the new feature's directory — otherwise the
-  orchestrator ends up granting `authorised:` after the fact.
+  orchestrator ends up granting `authorised:` after the fact. `issue-lint` warns about
+  exactly this gap: for every file the issue's globs cover, it `git grep`s every other
+  tracked file for that path or basename and reports a hit as `{ file, referencedBy }` in
+  `warnings`. This is the check #3's shape needed and didn't have: its globs covered
+  `tests/**` to rename the entry point (`tests/smoke.mts` → `tests/run.mts`), while
+  `.github/workflows/test.yml` referenced the old path by name from outside `## Files` —
+  fixed inside the same PR under an `authorised:` grant on the workflow file, not caught by
+  any check before dispatch. A warning alone does not fail the lint unless `--strict` was
+  passed (the orchestrator's default for `type:feature`/`type:bug`); either way, widen
+  `## Files` to cover the referencing file up front rather than needing the grant.
 
 ## Labels
 

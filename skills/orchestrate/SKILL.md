@@ -50,20 +50,60 @@ rather than guessing the state.
 
 ## 1. Candidates
 
-Use `ready` from the JSON above — it already excludes issues with an open blocker.
+Use `ready` from the JSON above — it already excludes issues with an open blocker. Before
+picking, lint every candidate — locate `ci/issue-lint.mts` the same way as `reconcile.mts`
+above:
+
+```bash
+LINT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/ci/issue-lint.mts}"
+[ -f "$LINT" ] || LINT="$(find ~/.claude/plugins -path '*agentic-setup*/ci/issue-lint.mts' 2>/dev/null | head -1)"
+[ -f "$LINT" ] || { echo "agentic-setup: issue-lint.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$LINT" <n> [--strict]
+```
+
+Pass `--strict` when the candidate carries `type:feature` or `type:bug` — its `warnings`
+then count toward `ok`/exit code. For any other type, omit it. Prints
+`{ issue, ok, failures, warnings, globs, sequenced }`; only `ok: true` is dispatchable. A
+`failures` entry (a missing section, a wildcard glob that matches no tracked file, a
+`Blocked by:` number `gh` cannot find, or a `{ issue, files }` overlap with another issue
+in flight) drops the candidate from this pass — a literal path with no `*`/`**` that
+matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
+expected to create it), and a `sequenced` overlap is not a failure either, it means the two
+issues are already ordered by a `Blocked by:` relation. Read every `warnings` entry
+yourself even on an issue that passes without `--strict` (an entry-point reference outside
+`## Files` — the `#3` shape: a file the issue's globs cover is named by a tracked file the
+issue does not list) before deciding whether to widen `## Files` first.
 
 ## 2. Pick up to 4 with disjoint globs
 
 Read each candidate's `## Files`. Two issues whose globs could match the same file do not
-run together. Four is the practical ceiling; file conflict is the real limit, not the
-subagent count.
+run together — `issue-lint`'s own `failures`/`sequenced` already checked this against every
+other issue in flight in the milestone, so a candidate that reached `ok: true` has no
+undeclared overlap left to find by hand. Four is the practical ceiling; file conflict is
+the real limit, not the subagent count.
 
 ## 3. Lock, then launch
 
-For each pick (skill `issue-and-pr`, "Claim"): push `origin/main:refs/heads/<type>/<n>-<slug>`
-— if it exists, someone has it, skip — assign, `state:in-progress`. Then launch the
-`implementer` agent with **the whole issue body in the prompt** (subagents do not see this
-conversation). One agent per issue, in parallel.
+For each pick (skill `issue-and-pr`, "Claim"), run `scripts/claim.mts` — located the same
+way:
+
+```bash
+CLAIM="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/claim.mts}"
+[ -f "$CLAIM" ] || CLAIM="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/claim.mts' 2>/dev/null | head -1)"
+[ -f "$CLAIM" ] || { echo "agentic-setup: claim.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$CLAIM" <n> --slug <slug> [--type <type>]
+```
+
+Exit 0 → `{ issue, branch, base }`: the push succeeded (the lock), the issue is assigned
+and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another agent (or
+a previous, still-live claim) holds it; skip, do not retry. Exit 1 with `{ refused }`: the
+issue is not claimable (closed, missing `state:ready`, an open `Blocked by:` issue, or no
+`## Files` bullet) — drop it from this pass, it needs a person or a prior issue to close
+first. Exit 1 with `{ error }`: a `gh`/`git` failure, not a verdict on the issue — stop and
+report rather than guessing.
+
+Then launch the `implementer` agent with **the whole issue body in the prompt** (subagents
+do not see this conversation). One agent per issue, in parallel.
 
 ## 4. PR opened → review
 
@@ -73,16 +113,53 @@ takes minutes, look once per pass.
 
 ## 5. Decide
 
-- Checks green **and** `review:approved` → `gh pr merge <n> --squash --delete-branch`
-  (the protect-main hook re-verifies both). Label the issue `state:done`. Remove the
-  worktree **after** the merge, never before.
+- Checks green **and** `review:approved` (or `type:docs`, which `land.mts` merges without
+  approval) → run `scripts/land.mts`, located the same way as the scripts above:
+
+  ```bash
+  LAND="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/land.mts}"
+  [ -f "$LAND" ] || LAND="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/land.mts' 2>/dev/null | head -1)"
+  [ -f "$LAND" ] || { echo "agentic-setup: land.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+  node "$LAND" <pr> [--wait <seconds>]
+  ```
+
+  `land.mts` re-reads the PR's live state itself and is the only thing that merges it —
+  never run `gh pr merge` by hand for this step. It **replaces** `protect-main`'s merge
+  gate for this call, it does not rely on it: that hook matches `gh pr merge` in the Bash
+  *command string* and never sees a `gh` process spawned from node, so `AGENTIC_ALLOW_MERGE`
+  has no effect here and there is no bypass for `land.mts`'s own checks
+  (`scripts/land.mts` header). On success it prints `{ merged, pr, issues, worktreeRemoved }`
+  — every closed issue is already `state:done` and its worktree already gone; there is
+  nothing left to label or remove by hand.
+
+  A precondition failing prints `{ refused, pr, missing, rulesetChecks }`, exit 1, and
+  changes nothing. **A `refused` is never a signal to retry with `--admin`** — read
+  `missing` and decide between waiting and sending the PR back:
+  - `state=<x>` / `mergeStateStatus=<x>` (not `OPEN`/`CLEAN`) → the PR is closed, dirty or
+    behind `main`; a conflict sends it to the implementer (`git merge origin/main`),
+    anything else needs a look.
+  - `review:not-approved` → wait for the reviewer; this is not a merge failure.
+  - `checks:<name>=<status>` → that required check's latest run is not green. If it is
+    still `IN_PROGRESS`/`QUEUED`, wait or re-run with `--wait <seconds>` to poll instead of
+    refusing immediately; if it finished red, send the PR back to the implementer like any
+    other CI rejection.
+  - `checks:none-registered` → no check ran at all on this PR; investigate before waiting.
+
+  `{ error }` (also exit 1) means the merge command itself failed, or the PR never reached
+  `MERGED` after `gh pr merge` returned — a `gh`/`git` problem, not a verdict; stop and
+  report, touch no label or worktree.
+
+  This script exists because of exactly the shortcut it forecloses: in M1 (PR #28, closing
+  #25) the orchestrator ran `gh pr merge`, the server refused it over a re-triggered check,
+  and the orchestrator labelled the issue `state:done` anyway — `reconcile.mts` caught the
+  inconsistency a minute later (`docs/decisions.md` item 11). `land.mts` only ever labels
+  after `gh pr view` itself reports `state: MERGED`.
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
   summary and the reviewer's JSON (round 2; skill `safe-worktree` §C).
 - Rejected a second time → `state:blocked` + `human`, comment with the summary, move on.
   Exception: a purely mechanical defect with the exact fix named by the reviewer earns one
   short extra round. Log the exception in the issue.
 - Conflict with `main` → the implementer runs `git merge origin/main` on the branch.
-- `type:docs` PR with green CI → merge without a reviewer.
 
 ## 6. Close the pass
 

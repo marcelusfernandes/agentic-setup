@@ -13,10 +13,12 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 ## Map
 
 - `hooks/` — the three hooks and `lib/common.mts`; `hooks.json` wires them.
-- `ci/` — `scope-check.mts`, `negative-control.mts`, `lib/detect.mts` (shared with the
-  stop-gate hook). Copied into adopting repositories by `init`; **this** repository's
-  workflows point at `ci/` directly.
-- `scripts/init.mts` — the installer. `agents/`, `skills/`, `templates/`, `docs/`.
+- `ci/` — `scope-check.mts`, `negative-control.mts`, `issue-lint.mts` (an issue's contract,
+  checked before dispatch), `lib/detect.mts` (shared with the stop-gate hook). Copied into
+  adopting repositories by `init`; **this** repository's workflows point at `ci/` directly.
+- `scripts/` — `init.mts` (the installer: `agents/`, `skills/`, `templates/`, `docs/`),
+  `reconcile.mts` (the loop's state as JSON), `claim.mts` (locks an issue or refuses),
+  `land.mts` (the only way the orchestrator merges a PR).
 
 ## Invariants (the reviewer holds every PR to these)
 
