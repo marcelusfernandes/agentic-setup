@@ -92,4 +92,22 @@ check(
   rZero.out,
 );
 
+// AC1 (#42): `?` is a single-character wildcard, matching exactly one
+// character other than `/` — not "optional preceding character" (a live
+// regex quantifier) and not a path separator.
+const issueQuestion = file('issue-question.md', '## Files\n- `src/a?c.ts`\n');
+const filesQuestionMatch = file('files-question-match.txt', 'src/abc.ts\n');
+const filesQuestionNoMatch = file('files-question-nomatch.txt', 'src/ac.ts\n');
+const filesQuestionNoMatchSlash = file('files-question-nomatch-slash.txt', 'src/a/c.ts\n');
+const rQuestionMatch = scope(filesQuestionMatch, issueQuestion, prPlain);
+check('scope: `?` matches exactly one character (src/a?c.ts matches src/abc.ts)', rQuestionMatch.status === 0, rQuestionMatch.out);
+check(
+  'scope: `?` does not match zero characters (src/a?c.ts does not match src/ac.ts)',
+  scope(filesQuestionNoMatch, issueQuestion, prPlain).status === 1,
+);
+check(
+  'scope: `?` does not match a path separator (src/a?c.ts does not match src/a/c.ts)',
+  scope(filesQuestionNoMatchSlash, issueQuestion, prPlain).status === 1,
+);
+
 finish();

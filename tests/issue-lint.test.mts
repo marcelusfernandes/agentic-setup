@@ -241,15 +241,28 @@ check(
   noPrefixWildcard.out,
 );
 
-// AC2: a glob that does not parse (a leading unescaped `?` has nothing to
-// repeat — `new RegExp` throws) fails, distinctly from "no match".
-const badGlob = lint(1080, issueBody({ files: '## Files\n- `?abc`\n' }));
-const badGlobOut = parse(badGlob.out);
-check('a glob that does not parse fails with ok: false', badGlob.status === 1 && badGlobOut?.ok === false, badGlob.out);
+// AC4 (#42): a glob containing `?` is a wildcard, not a literal path —
+// `isLiteralPath` must treat `?` the same as `*`. `?abc` matches nothing in
+// this repo's tracked files and has no fixed directory prefix (the `?` is
+// its first character), so it fails the same way `**/*.foo` does above:
+// "wildcard glob matches no tracked file", not "new".
+//
+// There is no "glob that does not parse" case any more: `?` now translates
+// to `[^/]`, a plain wildcard token, so every character `globToRegExp` sees
+// is either one of its wildcard tokens (`**`, `*`, `?`) or gets escaped
+// before reaching `new RegExp` — no glob string can make it throw.
+const questionMarkGlob = lint(1080, issueBody({ files: '## Files\n- `?abc`\n' }));
+const questionMarkGlobOut = parse(questionMarkGlob.out);
 check(
-  'the parse failure names the glob in failures[]',
-  Array.isArray(badGlobOut?.failures) && badGlobOut.failures.some((f: any) => typeof f === 'string' && f.includes('?abc')),
-  badGlob.out,
+  'a `?` glob matching no tracked file fails with ok: false',
+  questionMarkGlob.status === 1 && questionMarkGlobOut?.ok === false,
+  questionMarkGlob.out,
+);
+check(
+  'the `?` glob failure uses the "wildcard glob matches no tracked file" wording and names the glob',
+  Array.isArray(questionMarkGlobOut?.failures) &&
+    questionMarkGlobOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: ?abc'),
+  questionMarkGlob.out,
 );
 
 // --- AC3: disjointness -------------------------------------------------------

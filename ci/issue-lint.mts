@@ -174,18 +174,27 @@ const lsFiles = git(['ls-files']);
 if (lsFiles.status !== 0) fail(`git ls-files failed: ${lsFiles.stderr.trim()}`);
 const trackedFiles = lsFiles.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 
-/** Whether a glob is a literal path — no `*` (which also rules out `**`). */
+/** The index of the first wildcard token (`*` or `?`) in a glob, or -1 when
+ * it has none. */
+function firstWildcardIndex(glob: string): number {
+  const indices = [glob.indexOf('*'), glob.indexOf('?')].filter((i) => i !== -1);
+  return indices.length === 0 ? -1 : Math.min(...indices);
+}
+
+/** Whether a glob is a literal path — no `*` or `?` (no `*` also rules out
+ * `**`). */
 function isLiteralPath(glob: string): boolean {
-  return !glob.includes('*');
+  return firstWildcardIndex(glob) === -1;
 }
 
 /** For a wildcard glob, the directory its fixed prefix (the part before the
- * first `*`) is rooted in — e.g. `src/newmod/**` → `src/newmod/`,
- * `src/**\/*.zig` → `src/`. Empty when the glob has no fixed directory
- * prefix at all (e.g. `**\/*.foo`, which starts with `*`). */
+ * first wildcard token, `*` or `?`) is rooted in — e.g. `src/newmod/**` →
+ * `src/newmod/`, `src/**\/*.zig` → `src/`. Empty when the glob has no fixed
+ * directory prefix at all (e.g. `**\/*.foo` or `?abc`, both of which start
+ * with a wildcard token). */
 function fixedDirPrefix(glob: string): string {
-  const starIndex = glob.indexOf('*');
-  const prefix = starIndex === -1 ? glob : glob.slice(0, starIndex);
+  const wildcardIndex = firstWildcardIndex(glob);
+  const prefix = wildcardIndex === -1 ? glob : glob.slice(0, wildcardIndex);
   const slash = prefix.lastIndexOf('/');
   return slash === -1 ? '' : prefix.slice(0, slash + 1);
 }
