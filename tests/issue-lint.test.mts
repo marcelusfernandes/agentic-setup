@@ -404,6 +404,67 @@ check(
   sequencedWildcardOverlap.out,
 );
 
+// AC4 (round 3 of #41): a new-directory wildcard under an *existing* tracked
+// directory still has to overlap the existing directory's own wildcard —
+// round 2 wired `selfNewPrefixes`/`otherNewPrefixes` only to the
+// prefix-vs-prefix (`newPathsOverlap`) comparison, not to the
+// prefix-vs-full-glob-list (`matchesAny`) comparison `newLiteralPaths`
+// already gets. `tests/**` (matched: `tests/smoke.mts` etc. are tracked) is
+// not itself "new", so it never lands in `otherNewPrefixes`/`selfNewPrefixes`
+// — but `tests/newsub/**` (new: `tests/newsub/` is untracked) still falls
+// entirely under it. Direction A: self is the matched `tests/**`, the other
+// issue is the new `tests/newsub/**`.
+const matchedVsNewSubMilestone = milestoneFile([{ number: 210, labels: ['state:ready'], body: '## Files\n- `tests/newsub/**`\n' }]);
+const matchedVsNewSubOverlap = lint(1125, issueBody(), { milestone: matchedVsNewSubMilestone });
+const matchedVsNewSubOverlapOut = parse(matchedVsNewSubOverlap.out);
+check(
+  'a matched wildcard overlaps another issue\'s new-directory wildcard nested under it, with ok: false',
+  matchedVsNewSubOverlap.status === 1 && matchedVsNewSubOverlapOut?.ok === false,
+  matchedVsNewSubOverlap.out,
+);
+check(
+  'the matched-vs-new-subdirectory overlap carries { issue, files } naming the other issue and its new-directory prefix',
+  Array.isArray(matchedVsNewSubOverlapOut?.failures) &&
+    matchedVsNewSubOverlapOut.failures.some((f: any) => f?.issue === 210 && Array.isArray(f?.files) && f.files.includes('tests/newsub/')),
+  matchedVsNewSubOverlap.out,
+);
+
+// Direction B: self is the new `tests/newsub/**`, the other issue is the
+// matched `tests/**` — the parallel leg (`selfNewPrefixes` vs `otherGlobs`).
+const newSubVsMatchedMilestone = milestoneFile([{ number: 211, labels: ['state:ready'], body: '## Files\n- `tests/**`\n' }]);
+const newSubVsMatchedOverlap = lint(1126, issueBody({ files: '## Files\n- `tests/newsub/**`\n' }), { milestone: newSubVsMatchedMilestone });
+const newSubVsMatchedOverlapOut = parse(newSubVsMatchedOverlap.out);
+check(
+  'a new-directory wildcard overlaps another issue\'s matched wildcard covering it, with ok: false',
+  newSubVsMatchedOverlap.status === 1 && newSubVsMatchedOverlapOut?.ok === false,
+  newSubVsMatchedOverlap.out,
+);
+check(
+  'the new-subdirectory-vs-matched overlap carries { issue, files } naming the other issue and the new-directory prefix',
+  Array.isArray(newSubVsMatchedOverlapOut?.failures) &&
+    newSubVsMatchedOverlapOut.failures.some((f: any) => f?.issue === 211 && Array.isArray(f?.files) && f.files.includes('tests/newsub/')),
+  newSubVsMatchedOverlap.out,
+);
+
+// AC3 (round 3 of #41): the matched-vs-new-subdirectory pair is not a
+// failure when one issue is blocked by the other.
+const sequencedMatchedVsNewSubMilestone = milestoneFile([{ number: 212, labels: ['state:ready'], body: '## Files\n- `tests/newsub/**`\n' }]);
+const sequencedMatchedVsNewSubOverlap = lint(1127, issueBody({ deps: '## Dependencies\nBlocked by: #212\n' }), {
+  milestone: sequencedMatchedVsNewSubMilestone,
+});
+const sequencedMatchedVsNewSubOverlapOut = parse(sequencedMatchedVsNewSubOverlap.out);
+check(
+  'a matched wildcard and a new-directory wildcard nested under it are not a failure when one is blocked by the other (sequenced)',
+  sequencedMatchedVsNewSubOverlap.status === 0 && !(sequencedMatchedVsNewSubOverlapOut?.failures ?? []).some((f: any) => f?.issue === 212),
+  sequencedMatchedVsNewSubOverlap.out,
+);
+check(
+  'the sequenced matched-vs-new-subdirectory overlap is reported in sequenced: [{ issue, files }] instead of failures',
+  Array.isArray(sequencedMatchedVsNewSubOverlapOut?.sequenced) &&
+    sequencedMatchedVsNewSubOverlapOut.sequenced.some((s: any) => s?.issue === 212 && s?.files?.includes('tests/newsub/')),
+  sequencedMatchedVsNewSubOverlap.out,
+);
+
 // --- AC4: entry-point references (the #3 shape) -----------------------------
 // tests/** covers tests/smoke.mts, which .github/workflows/test.yml
 // references by path — the check that would have caught #3.
