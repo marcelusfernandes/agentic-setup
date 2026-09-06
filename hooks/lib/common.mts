@@ -414,16 +414,14 @@ export function commandSegments(command: string): string[] {
       continue;
     }
     if (ch === '(') {
-      // Outside a substitution a bare '(' is a plain segment boundary (a
-      // subshell); inside one, it nests — depth must return to zero before
-      // the matching ')' is allowed to close the substitution.
-      if (dollarStack.length) {
-        dollarStack[dollarStack.length - 1].depth++;
-        current += ch;
-      } else {
-        segments.push(current);
-        current = '';
-      }
+      // A bare '(' is a plain segment boundary (a subshell) whether or not
+      // we're inside a substitution — that doesn't change just because it's
+      // nested. Inside one it *also* bumps the depth counter, so the
+      // matching ')' is recognised as closing this subshell rather than the
+      // enclosing $( … ) (depth must return to zero before that's allowed).
+      if (dollarStack.length) dollarStack[dollarStack.length - 1].depth++;
+      segments.push(current);
+      current = '';
       continue;
     }
     if (ch === ')') {
@@ -431,7 +429,8 @@ export function commandSegments(command: string): string[] {
         const top = dollarStack[dollarStack.length - 1];
         if (top.depth > 0) {
           top.depth--;
-          current += ch;
+          segments.push(current);
+          current = '';
         } else {
           dollarStack.pop();
           segments.push(current);
