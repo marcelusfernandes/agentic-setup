@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
-import { parseLinkedIssues } from '../ci/lib/scope.mts';
+import { findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
 
 const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
 cleanup(() => rmSync(dir, { recursive: true, force: true }));
@@ -21,6 +21,15 @@ const prPlain = file('pr-plain.md', 'Closes #1\n\n## Files\nGlobs touched (must 
 const prGrant = file('pr-grant.md', 'Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n- authorised: `src/lib/b.ts` — see issue comment\n');
 const prNoClose = file('pr-noclose.md', '## What changed\nstuff\n');
 const scope = (f: string, i: string | null, p: string) => ci('scope-check.mts', ['--files-file', f, ...(i ? ['--issue-body-file', i] : []), '--pr-body-file', p]);
+// The script's stdout is the JSON block (indented, so its top-level closing
+// `}` is the first line that is exactly `}`) followed by the job summary
+// text; this pulls out just the JSON so a case can assert on individual
+// keys instead of pattern-matching the whole combined output.
+const scopeJson = (out: string): any => {
+  const m = out.match(/^\{[\s\S]*?\n\}\n/);
+  if (!m) throw new Error(`no top-level JSON object found in: ${out}`);
+  return JSON.parse(m[0]);
+};
 
 check('scope passes inside the issue globs', scope(files, issueSrc, prPlain).status === 0);
 check('scope passes with bare (unquoted) globs', scope(files, issueBare, prPlain).status === 0);
@@ -182,6 +191,64 @@ check(
   'scope passes the same rename when the PR authorises the referencing workflow file',
   rAuthorised.status === 0,
   rAuthorised.out,
+);
+
+// #83: an `authorised:` line outside the PR's `## Files` section is
+// prose, not a grant — `parseAuthorisedGlobs` never sees it — but the
+// summary and JSON should say why, instead of silently listing it among
+// the ordinary violations.
+check(
+  'findMisplacedAuthorisedLines finds an authorised: line outside ## Files, trimmed and bullet-stripped',
+  JSON.stringify(findMisplacedAuthorisedLines('Closes #1\n\n- authorised: `src/a.ts`\n  (justification)\n\n## Files\nGlobs touched.\n')) ===
+    JSON.stringify(['authorised: `src/a.ts`']),
+  JSON.stringify(findMisplacedAuthorisedLines('Closes #1\n\n- authorised: `src/a.ts`\n  (justification)\n\n## Files\nGlobs touched.\n')),
+);
+check(
+  'findMisplacedAuthorisedLines finds nothing when the authorised: line sits inside ## Files',
+  findMisplacedAuthorisedLines('Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (justification)\n').length === 0,
+);
+check(
+  'findMisplacedAuthorisedLines finds nothing when there is no authorised: line at all',
+  findMisplacedAuthorisedLines('Closes #1\n\n## Files\nGlobs touched.\n').length === 0,
+);
+
+const prGrantMisplaced = file(
+  'pr-grant-misplaced.md',
+  'Closes #1\n\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n\n## Files\nGlobs touched (must match the issue).\n',
+);
+const rMisplaced = scope(files, issueLib, prGrantMisplaced);
+check('scope fails when the only grant sits outside ## Files (it does not count)', rMisplaced.status === 1, rMisplaced.out);
+check(
+  'scope JSON names the misplaced authorised: line when the check fails',
+  JSON.stringify(scopeJson(rMisplaced.out).misplacedAuthorised) === JSON.stringify(['authorised: `src/a.ts`']),
+  rMisplaced.out,
+);
+check(
+  'scope summary explains that an authorised: line outside ## Files does not count',
+  /An authorised: line outside ## Files does not count — move it into that section\./.test(rMisplaced.out) &&
+    /authorised: `src\/a\.ts`/.test(rMisplaced.out),
+  rMisplaced.out,
+);
+
+const rGrantOk = scope(files, issueLib, prGrant);
+check(
+  'scope JSON has no misplacedAuthorised key when the grant is inside ## Files and the check passes',
+  (() => {
+    const json = scopeJson(rGrantOk.out);
+    return json.ok === true && !('misplacedAuthorised' in json);
+  })(),
+  rGrantOk.out,
+);
+check('scope prints no misplacedAuthorised text when the grant is inside ## Files and the check passes', !/misplacedAuthorised/.test(rGrantOk.out), rGrantOk.out);
+
+const rPlainPass = scope(files, issueSrc, prPlain);
+check(
+  'scope prints no misplacedAuthorised key on an ordinary passing PR',
+  (() => {
+    const json = scopeJson(rPlainPass.out);
+    return json.ok === true && !('misplacedAuthorised' in json);
+  })(),
+  rPlainPass.out,
 );
 
 // A removed path nobody references anywhere else is not a dangling

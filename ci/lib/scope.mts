@@ -66,6 +66,15 @@ export function parseAuthorisedGlobs(prBody: string): string[] {
   return globs;
 }
 
+/**
+ * The `authorised:` lines (trimmed, bullet marker removed) that appear
+ * outside the PR's `## Files` section — `parseAuthorisedGlobs` never sees
+ * these, so a grant written here silently doesn't count. See #83.
+ */
+export function findMisplacedAuthorisedLines(prBody: string): string[] {
+  throw new Error('not implemented');
+}
+
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
   const globs = [...issueGlobs, ...authorisedGlobs];
   const violations = files.filter((f) => !matchesAny(f, globs));
