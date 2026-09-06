@@ -91,3 +91,35 @@ Every feature PR carries a `test(red):` commit. CI checks out the PR's base, app
 only the test files from the diff, runs the test command and requires a failure. A PR
 whose tests pass without its change has proven nothing; this job is what makes "merge
 without a human" honest rather than hopeful.
+
+## 11. Every mutating orchestrator step is a script with a refusal path
+
+Every orchestrator step that mutates GitHub — locking an issue, dispatching one, merging a
+PR — is a script that reads live state and refuses rather than guessing, not a prose
+instruction the model is trusted to follow correctly under load: `scripts/claim.mts`
+(lock), `ci/issue-lint.mts` (dispatch gate), `scripts/land.mts` (merge). The model still
+plans and decides which issue to pick, which PR to send back, whether to wait; the script
+verifies the precondition and performs the write, and prints what it refused and why
+instead of a stack trace or a silent no-op.
+
+*Why:* two M1 incidents, both from a step that was prose with nothing between its arrows
+verifying anything.
+- **#25's premature `done`.** Step 5 read "green checks and `review:approved` → merge →
+  label done → remove the worktree". In PR #28 (closing #25) the orchestrator ran
+  `gh pr merge`, the server refused it (a label change had re-triggered a required check,
+  so its latest run was no longer the one the orchestrator had seen), and the orchestrator
+  labelled the issue `state:done` anyway — `scripts/reconcile.mts` exposed the
+  inconsistency a minute later. `scripts/land.mts` closes this by re-reading `gh pr view`
+  itself at the moment of the call and labelling only after a follow-up `gh pr view`
+  reports `state: MERGED`.
+- **#3's missing glob.** Nothing checked, before dispatch, that an issue's `## Files`
+  covered every file the change would touch — `scope-check` only enforces the boundary
+  *after* the diff exists. Issue #3 renamed `tests/smoke.mts` to `tests/run.mts` inside its
+  `tests/**` glob, while `.github/workflows/test.yml` referenced the old path from outside
+  it; fixed inside the same PR under an `authorised:` grant on the workflow file, not by
+  any check. `ci/issue-lint.mts`'s AC4 now `git grep`s every tracked file for a reference
+  to each file an issue's globs cover and reports a hit as a `warnings` entry before the
+  issue is ever dispatched.
+
+*Cost accepted:* one more script to maintain per mutating step, each with its own test
+file and its own refusal shapes to keep in sync with the skills that call it.
