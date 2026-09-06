@@ -33,7 +33,10 @@ case "\${1:-} \${2:-}" in
   {"number":20,"title":"In progress with pr","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":21,"title":"In progress stale","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":30,"title":"In review green approved","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":31,"title":"In review red","body":"","labels":[{"name":"state:in-review"}]}
+  {"number":31,"title":"In review red","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":40,"title":"In review dedupe green","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":41,"title":"In review dedupe red latest failure","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]}
 ]
 JSON
         ;;
@@ -48,7 +51,23 @@ JSON
 [
   {"number":100,"headRefName":"feat/20-x","labels":[],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null},
   {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null},
-  {"number":131,"headRefName":"feat/31-z","labels":[],"statusCheckRollup":[{"state":"FAILURE"}],"reviewDecision":null}
+  {"number":131,"headRefName":"feat/31-z","labels":[],"statusCheckRollup":[{"state":"FAILURE"}],"reviewDecision":null},
+  {"number":140,"headRefName":"feat/40-dedupe-green","labels":[],"statusCheckRollup":[
+    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED"},
+    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS"},
+    {"name":"test (node)","status":"COMPLETED","conclusion":"SUCCESS"},
+    {"name":"test (bun)","status":"COMPLETED","conclusion":"SUCCESS"},
+    {"name":"negative-control","status":"COMPLETED","conclusion":"CANCELLED"},
+    {"name":"negative-control","status":"COMPLETED","conclusion":"SUCCESS"}
+  ],"reviewDecision":null},
+  {"number":141,"headRefName":"feat/41-dedupe-red","labels":[],"statusCheckRollup":[
+    {"name":"scope","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:05:00Z","completedAt":"2026-01-01T00:06:00Z"},
+    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"}
+  ],"reviewDecision":null},
+  {"number":142,"headRefName":"feat/42-dedupe-pending","labels":[],"statusCheckRollup":[
+    {"name":"test (node)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"},
+    {"name":"test (node)","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-01-01T00:02:00Z","completedAt":null}
+  ],"reviewDecision":null}
 ]
 JSON
     ;;
@@ -74,7 +93,7 @@ cleanup(() => rmSync(remoteDir, { recursive: true, force: true }));
 git(['init', '-q', '--bare', remoteDir], repo);
 git(['remote', 'add', 'origin', remoteDir], repo);
 
-for (const branch of ['feat/20-x', 'feat/30-y', 'feat/31-z']) {
+for (const branch of ['feat/20-x', 'feat/30-y', 'feat/31-z', 'feat/40-dedupe-green', 'feat/41-dedupe-red', 'feat/42-dedupe-pending']) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
 }
@@ -132,6 +151,26 @@ const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
 check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
 check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.checks === 'red' && inReview31?.reviewApproved === false, JSON.stringify(inReview31));
+
+// --- AC1/AC2: dedupe superseded check runs before classifying --------------
+const inReview40 = (out?.inReview ?? []).find((i: any) => i.number === 40);
+const inReview41 = (out?.inReview ?? []).find((i: any) => i.number === 41);
+const inReview42 = (out?.inReview ?? []).find((i: any) => i.number === 42);
+check(
+  'in-review dedupes superseded CANCELLED runs to green (the raw #20 rollup)',
+  inReview40?.pr === 140 && inReview40?.checks === 'green',
+  JSON.stringify(inReview40),
+);
+check(
+  'in-review reads red when the latest run of a check is FAILURE, even though an older run of the same check succeeded',
+  inReview41?.pr === 141 && inReview41?.checks === 'red',
+  JSON.stringify(inReview41),
+);
+check(
+  'in-review reads pending when the latest run of a check is still IN_PROGRESS',
+  inReview42?.pr === 142 && inReview42?.checks === 'pending',
+  JSON.stringify(inReview42),
+);
 
 const orphanRealpath = realpathSync(worktreeDir);
 const orphans: string[] = out?.orphanWorktrees ?? [];
