@@ -24,11 +24,13 @@ Bash tool:
 RECONCILE="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/reconcile.mts}"
 [ -f "$RECONCILE" ] || RECONCILE="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/reconcile.mts' 2>/dev/null | head -1)"
 [ -f "$RECONCILE" ] || { echo "agentic-setup: reconcile.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-git fetch --prune origin
 node "$RECONCILE" --milestone "<current>"
 ```
 
-Without `--milestone`, it picks the open milestone with the lowest number. Fields:
+`reconcile.mts` runs `git fetch --prune origin` itself before reading remote branches, so
+this makes one network call for git, not two. Without `--milestone`, it picks the open
+milestone with the lowest number; `--no-fetch` skips the fetch and reads the local refs
+left by the last one, for an offline check against the last fetch. Fields:
 
 - `milestone` — the title it reconciled against.
 - `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose

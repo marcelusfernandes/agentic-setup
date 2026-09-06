@@ -4,8 +4,8 @@
 // GitHub data comes from a fake `gh` put first on PATH (a bash script that
 // dispatches on the subcommand and prints canned JSON); worktree data comes
 // from a real temporary git repository with a real linked worktree and a
-// real (bare, local) "origin" remote, so `git ls-remote` and
-// `git worktree list --porcelain` are exercised for real.
+// real (bare, local) "origin" remote, so `git fetch --prune`, `git
+// for-each-ref` and `git worktree list --porcelain` are exercised for real.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,7 +38,9 @@ case "\${1:-} \${2:-}" in
   {"number":41,"title":"In review dedupe red latest failure","body":"","labels":[{"name":"state:in-review"}]},
   {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]},
   {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]}
+  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -77,7 +79,8 @@ JSON
   {"number":144,"headRefName":"feat/44-running-completes-green","labels":[],"statusCheckRollup":[
     {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
     {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:02:00Z","completedAt":"2026-01-01T00:04:00Z"}
-  ],"reviewDecision":null}
+  ],"reviewDecision":null},
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null}
 ]
 JSON
     ;;
@@ -112,11 +115,31 @@ for (const branch of [
   'feat/42-dedupe-pending',
   'feat/43-running-not-red',
   'feat/44-running-completes-green',
+  'feat/50-prune-target',
+  'feat/60-shadowed',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
 }
 git(['checkout', '-q', 'main'], repo);
+
+// A real clone sets refs/remotes/origin/HEAD; `git init` + `remote add`
+// (used above) never does on its own, so recreate it explicitly.
+git(['push', '-q', 'origin', 'main'], repo);
+git(['fetch', '-q', 'origin'], repo);
+git(['remote', 'set-head', 'origin', 'main'], repo);
+
+// A plain local branch that shadows a remote-tracking ref one level down:
+// `refs/heads/origin/feat/60-shadowed` next to `refs/remotes/origin/feat/
+// 60-shadowed`. `%(refname:short)` picks the *shortest unambiguous* form —
+// with this shadow present it renders the tracking ref as
+// "remotes/origin/feat/60-shadowed" instead of "origin/feat/60-shadowed",
+// so the code's `.replace(/^origin\//, '')` no longer strips the prefix.
+// (A branch literally named "origin" cannot reproduce the closely related
+// origin/HEAD finding this way: its mere existence makes git disambiguate
+// origin/HEAD to "origin/HEAD" instead of the bogus "origin", which is
+// exactly the scenario git's own disambiguation is designed to avoid.)
+git(['branch', 'origin/feat/60-shadowed', 'main'], repo);
 
 const worktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-worktree-')), 'wt');
 cleanup(() => rmSync(worktreeDir, { recursive: true, force: true }));
@@ -166,6 +189,17 @@ check('in-progress with neither PR nor remote branch', inProgress21?.branch === 
 
 check('stale lists only the issue with no PR and no remote branch', (out?.stale ?? []).length === 1 && out.stale[0].number === 21, JSON.stringify(out?.stale));
 
+// --- AC3: a remote-tracking ref shadowed by a same-named local branch one
+// level down must still resolve to its real (slash-bearing) branch name, not
+// leak `remotes/origin/...` (or worse, drop out entirely) because
+// `%(refname:short)` shortened it to a longer, ambiguity-avoiding form -----
+const inProgress60 = (out?.inProgress ?? []).find((i: any) => i.number === 60);
+check(
+  'in-progress resolves a remote branch whose tracking ref is shadowed by a same-named local branch one level down',
+  inProgress60?.branch === 'feat/60-shadowed' && inProgress60?.hasRemoteBranch === true && inProgress60?.pr === 160,
+  JSON.stringify(inProgress60),
+);
+
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
 check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
@@ -214,6 +248,38 @@ check(
   JSON.stringify(orphans),
 );
 check('orphanWorktrees does not list the main worktree', !orphans.some((p) => realpathSync(p) === realpathSync(repo)));
+
+const inProgress50 = (out?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  'in-progress prune target starts with a remote branch',
+  inProgress50?.branch === 'feat/50-prune-target' && inProgress50?.hasRemoteBranch === true,
+  JSON.stringify(inProgress50),
+);
+
+// --- AC1/AC2/AC3: default fetch (--prune) sees a branch deleted on the real
+// remote since the last fetch; --no-fetch does not, reading the stale local
+// ref instead. The deletion happens directly on the bare "origin" (not via a
+// push from `repo`), so `repo`'s own refs/remotes/origin/* stay stale until
+// something actually fetches. On the base (ls-remote queries the remote live,
+// every time) both calls would already report the branch gone, so this pair
+// only distinguishes the fixed behaviour from the base's. --------------------
+git(['branch', '-D', 'feat/50-prune-target'], remoteDir);
+
+const outNoFetch: any = JSON.parse(reconcile('--milestone', 'M1', '--no-fetch').stdout);
+const noFetch50 = (outNoFetch?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  '--no-fetch still reports the stale local ref as a remote branch (AC2)',
+  noFetch50?.hasRemoteBranch === true,
+  JSON.stringify(noFetch50),
+);
+
+const outFetched: any = JSON.parse(reconcile('--milestone', 'M1').stdout);
+const fetched50 = (outFetched?.inProgress ?? []).find((i: any) => i.number === 50);
+check(
+  'the default run fetches with --prune first and no longer sees the deleted branch (AC1/AC3)',
+  fetched50?.hasRemoteBranch === false,
+  JSON.stringify(fetched50),
+);
 
 // --- default milestone: lowest-numbered open milestone, no --milestone -----
 const r2 = reconcile();
