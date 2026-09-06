@@ -274,6 +274,25 @@ check(
   withReference.out,
 );
 
+// AC3/AC4 (of #37): a *new* literal path is checked for entry-point
+// references too, the same as a matched tracked file — its basename
+// ("smoke.mts") is already referenced (as a substring of "tests/smoke.mts")
+// by .github/workflows/test.yml, so declaring a new file with that same
+// basename still produces a warning, not a failure.
+const newPathReference = lint(1130, issueBody({ files: '## Files\n- `other/smoke.mts`\n' }));
+const newPathReferenceOut = parse(newPathReference.out);
+check(
+  'a new literal path referenced (by basename) by an uncovered file passes with ok: true',
+  newPathReference.status === 0 && newPathReferenceOut?.ok === true,
+  newPathReference.out,
+);
+check(
+  'the warning names the new path and the file that references its basename',
+  Array.isArray(newPathReferenceOut?.warnings) &&
+    newPathReferenceOut.warnings.some((w: any) => w.file === 'other/smoke.mts' && w.referencedBy === '.github/workflows/test.yml'),
+  newPathReference.out,
+);
+
 const strictReference = lint(114, issueBody(), { strict: true });
 const strictReferenceOut = parse(strictReference.out);
 check(
