@@ -36,7 +36,9 @@ case "\${1:-} \${2:-}" in
   {"number":31,"title":"In review red","body":"","labels":[{"name":"state:in-review"}]},
   {"number":40,"title":"In review dedupe green","body":"","labels":[{"name":"state:in-review"}]},
   {"number":41,"title":"In review dedupe red latest failure","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]}
+  {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]}
 ]
 JSON
         ;;
@@ -67,6 +69,14 @@ JSON
   {"number":142,"headRefName":"feat/42-dedupe-pending","labels":[],"statusCheckRollup":[
     {"name":"test (node)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"},
     {"name":"test (node)","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-01-01T00:02:00Z","completedAt":null}
+  ],"reviewDecision":null},
+  {"number":143,"headRefName":"feat/43-running-not-red","labels":[],"statusCheckRollup":[
+    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
+    {"name":"scope","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-01-01T00:02:00Z","completedAt":null}
+  ],"reviewDecision":null},
+  {"number":144,"headRefName":"feat/44-running-completes-green","labels":[],"statusCheckRollup":[
+    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
+    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:02:00Z","completedAt":"2026-01-01T00:04:00Z"}
   ],"reviewDecision":null}
 ]
 JSON
@@ -93,7 +103,16 @@ cleanup(() => rmSync(remoteDir, { recursive: true, force: true }));
 git(['init', '-q', '--bare', remoteDir], repo);
 git(['remote', 'add', 'origin', remoteDir], repo);
 
-for (const branch of ['feat/20-x', 'feat/30-y', 'feat/31-z', 'feat/40-dedupe-green', 'feat/41-dedupe-red', 'feat/42-dedupe-pending']) {
+for (const branch of [
+  'feat/20-x',
+  'feat/30-y',
+  'feat/31-z',
+  'feat/40-dedupe-green',
+  'feat/41-dedupe-red',
+  'feat/42-dedupe-pending',
+  'feat/43-running-not-red',
+  'feat/44-running-completes-green',
+]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
 }
@@ -170,6 +189,21 @@ check(
   'in-review reads pending when the latest run of a check is still IN_PROGRESS',
   inReview42?.pr === 142 && inReview42?.checks === 'pending',
   JSON.stringify(inReview42),
+);
+
+// --- AC1/AC2 (#24): order by startedAt, not completedAt, so a running check
+// never reads red because of the cancelled predecessor it replaced ---------
+const inReview43 = (out?.inReview ?? []).find((i: any) => i.number === 43);
+const inReview44 = (out?.inReview ?? []).find((i: any) => i.number === 44);
+check(
+  'in-review reads pending for a running check whose cancelled predecessor completed later than it started',
+  inReview43?.pr === 143 && inReview43?.checks === 'pending',
+  JSON.stringify(inReview43),
+);
+check(
+  'in-review reads green once the running check succeeds, still after its cancelled predecessor completed later than it started',
+  inReview44?.pr === 144 && inReview44?.checks === 'green',
+  JSON.stringify(inReview44),
 );
 
 const orphanRealpath = realpathSync(worktreeDir);
