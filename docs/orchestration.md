@@ -15,23 +15,30 @@ One Claude Code session at the repository root (not in a worktree), running
 
 ```
 0. `scripts/reconcile.mts` prints the loop's state as one JSON document (`milestone`,
-   `ready`, `inProgress`, `resumable`, `inReview`, `stale`, `orphanWorktrees` — see
-   `skills/orchestrate/SKILL.md` step 0 for the invocation and what each field means),
-   instead of reconciling from memory. It fetches `origin` with prune itself first
-   (`--no-fetch` reads the local refs left by the last fetch, for an offline check):
+   `ready`, `inProgress`, `resumable`, `inReview`, `stale`, `orphanWorktrees`,
+   `deadWorktrees` — see `skills/orchestrate/SKILL.md` step 0 for the invocation and what
+   each field means), instead of reconciling from memory. It fetches `origin` with prune
+   itself first (`--no-fetch` reads the local refs left by the last fetch, for an offline
+   check):
    in-progress with no PR and no remote branch → ready (`stale`)
    in-progress with a remote branch, no PR and no local worktree on it → dispatch as
    round N+1 from origin/<branch>, no re-claim (`resumable`)
    in-review with green CI and review:approved → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
+   local worktree locked by a pid that no longer exists → unlock, remove --force, then
+   treat its issue as `resumable` before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
-   dispatch only `ok: true` (`--strict` folds its `warnings` into `ok` for
-   type:feature/type:bug); a `failures` entry drops the candidate, a `sequenced`
-   overlap does not
+   dispatch only `ok: true` (`--strict` folds `warnings` into `ok` but is opt-in, never
+   applied by issue type — read every warning, widen `## Files` on a rename/removal, else
+   log a one-line classification when dispatching); a `failures` entry drops the candidate
+   (a wildcard glob whose fixed prefix has no tracked file is `new`, like a literal new
+   path, not a failure), a `sequenced` overlap does not
 2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
    already checked this against the milestone's other in-flight issues)
-3. for each: `scripts/claim.mts <n> --slug <slug>` pushes the remote branch
-   <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
+3. for each: `scripts/claim.mts <n> --slug <slug>` runs `ci/issue-lint.mts` on the issue
+   itself first and refuses (`{ refused: "issue-lint failed", lint }`) on anything but
+   `ok: true` (`--strict` opt-in passthrough, `--no-lint` to skip), then pushes the remote
+   branch <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
    in-progress, then launch an `implementer` in its own worktree with the whole
    issue in the prompt; a `resumable` issue skips `claim.mts` — the lock is already
    held — and launches straight to an implementer as round N+1 from origin/<branch>
@@ -102,7 +109,7 @@ merges, never offers to fix.
 |---|---|---|
 | PreToolUse Bash | `protect-main.mts` | denies push to `main`/`master`, deleting them, and `gh pr merge` without green checks and the review label. Force-push, `reset --hard`, `clean`, `stash` and `--admin` merges are also denied declaratively by the permission deny list `/agentic-setup:init` writes — the hook catches the forms a prefix pattern cannot |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
-| Stop | `stop-gate.mts` | runs the detected check + test commands before an agent on a `<type>/<n>-<slug>` branch may stop, **except** when the last commit is `test(red):`. On `main`, on an unrecognised branch, or with no detectable test command it skips with a note on stderr; the real gate is CI |
+| Stop, SubagentStop | `stop-gate.mts` | runs the detected check + test commands before an agent on a `<type>/<n>-<slug>` branch may stop, **except** when the last commit is `test(red):`. On `main`, on an unrecognised branch, or with no detectable test command it skips with a note on stderr; the real gate is CI. Registered under both events (`hooks/hooks.json`) — an implementer runs as a subagent, so its stop fires `SubagentStop`, not `Stop`; on `SubagentStop` the payload's `cwd` is the subagent's own worktree (verified live, 2026-09-06) |
 
 Hooks run with Claude Code's environment (`${CLAUDE_PLUGIN_ROOT}` resolves to the plugin,
 the payload's `cwd` to the agent's worktree). A change to a hook takes effect after the

@@ -85,18 +85,25 @@ LINT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/ci/issue-lint.mts}"
 node "$LINT" <n> [--strict]
 ```
 
-Pass `--strict` when the candidate carries `type:feature` or `type:bug` — its `warnings`
-then count toward `ok`/exit code. For any other type, omit it. Prints
-`{ issue, ok, failures, warnings, globs, sequenced }`; only `ok: true` is dispatchable. A
+Prints `{ issue, ok, failures, warnings, globs, sequenced }`; dispatch only `ok: true`. A
 `failures` entry (a missing section, a wildcard glob that matches no tracked file, a
 `Blocked by:` number `gh` cannot find, or a `{ issue, files }` overlap with another issue
-in flight) drops the candidate from this pass — a literal path with no `*`/`**` that
-matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
-expected to create it), and a `sequenced` overlap is not a failure either, it means the two
-issues are already ordered by a `Blocked by:` relation. Read every `warnings` entry
-yourself even on an issue that passes without `--strict` (an entry-point reference outside
-`## Files` — the `#3` shape: a file the issue's globs cover is named by a tracked file the
-issue does not list) before deciding whether to widen `## Files` first.
+in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
+that matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
+expected to create it), and so is a wildcard glob whose fixed prefix (the part before its
+first `*` or `?`) names a directory with no tracked file anywhere — the way an issue
+declares a whole new directory. A `sequenced` overlap is not a failure either, it means the
+two issues are already ordered by a `Blocked by:` relation.
+
+`--strict` folds `warnings` into `ok`/exit code; it is an opt-in flag, never something this
+step passes by issue type — a warning fires on every in-place reference to a covered file,
+not only a rename, so folding it into `ok` by default would block a bug fixing an
+already-referenced file (`docs/decisions.md` item 12). Read every `warnings` entry
+yourself on every `ok: true` candidate: `{ file, referencedBy }` says a tracked file
+outside `## Files` names a path the candidate's globs cover (the `#3` shape). If that path
+is one the issue renames or removes, widen `## Files` to include the referencing file
+before dispatching. Otherwise, log a one-line classification of the warning as a comment
+on the issue when you dispatch it.
 
 ## 2. Pick up to 4 with disjoint globs
 
@@ -115,16 +122,27 @@ way:
 CLAIM="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/claim.mts}"
 [ -f "$CLAIM" ] || CLAIM="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/claim.mts' 2>/dev/null | head -1)"
 [ -f "$CLAIM" ] || { echo "agentic-setup: claim.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-node "$CLAIM" <n> --slug <slug> [--type <type>]
+node "$CLAIM" <n> --slug <slug> [--type <type>] [--strict] [--no-lint]
 ```
 
-Exit 0 → `{ issue, branch, base }`: the push succeeded (the lock), the issue is assigned
-and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another agent (or
-a previous, still-live claim) holds it; skip, do not retry. Exit 1 with `{ refused }`: the
-issue is not claimable (closed, missing `state:ready`, an open `Blocked by:` issue, or no
-`## Files` bullet) — drop it from this pass, it needs a person or a prior issue to close
-first. Exit 1 with `{ error }`: a `gh`/`git` failure, not a verdict on the issue — stop and
-report rather than guessing.
+`<type>` defaults to the title prefix (`feat(scope): …` → `feat`) and must be one of
+`feat|fix|refactor|chore|docs|test|ci|deps`; a title outside that set (e.g. `perf(ci): …`)
+has no type of its own, so pass `--type` with a value from the set (whichever fits — `ci`
+for `perf(ci): …`), or `claim.mts` errors out (an invalid `--type` errors too, same set).
+Before pushing, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses on
+anything but `ok: true` — `{ refused: "issue-lint failed", lint }`, nothing pushed or
+relabelled. `--strict` is opt-in, passed through verbatim when given (not applied by issue
+type — same rule as step 1); `--no-lint` skips the check (`"lint": "skipped"` in the
+success JSON instead of `"lint": { "ok": true, "warnings": <n> }`).
+
+Exit 0 → `{ issue, branch, base, lint }`: the push succeeded (the lock), the issue is
+assigned and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another
+agent (or a previous, still-live claim) holds it; skip, do not retry. Exit 1 with
+`{ refused }`: the issue is not claimable (closed, missing `state:ready`, an open
+`Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint`) — drop it from this
+pass, it needs a person or a prior issue to close first. Exit 1 with `{ error }`: a usage
+problem (no type determinable and none given, or an invalid `--type`) or a `gh`/`git`
+failure — not a verdict on the issue; stop and report rather than guessing.
 
 Then launch the `implementer` agent with **the whole issue body in the prompt** (subagents
 do not see this conversation). One agent per issue, in parallel.
@@ -174,6 +192,14 @@ takes minutes, look once per pass.
     refusing immediately; if it finished red, send the PR back to the implementer like any
     other CI rejection.
   - `checks:none-registered` → no check ran at all on this PR; investigate before waiting.
+
+  `mergeStateStatus` can lag behind the check runs by a few minutes after a re-run —
+  `land.mts` reads it live at the moment of the call, not from a cached view, and refuses
+  while it is still catching up. `--wait <seconds>` does not cover this case: it polls only
+  while some required check is still `IN_PROGRESS`/`QUEUED` (`scripts/land.mts` — the
+  `WAITABLE_MERGE_STATUS`/`anyPending` loop), and every check is already green here. A
+  `refused` whose only `missing` entry is `mergeStateStatus=<x>` with every required check
+  green means call `land.mts` again shortly, not `--admin`.
 
   `{ error }` (also exit 1) means the merge command itself failed, or the PR never reached
   `MERGED` after `gh pr merge` returned — a `gh`/`git` problem, not a verdict; stop and
