@@ -1,6 +1,6 @@
 ---
 name: safe-worktree
-description: How to work in an isolated git worktree without losing work or breaking a shared local service. Use at the start of every implementation in a worktree and whenever a Stop or write hook complains.
+description: How to work in an isolated git worktree without losing work or breaking a shared local service. Use at the start of every implementation in a worktree and whenever the write hook complains.
 ---
 
 # Safe worktree
@@ -32,11 +32,15 @@ of it. What is left is below.
    copy of uncommitted work is this tree.
 7. **A red test compiles.** A test that imports a missing symbol is a compile error and
    jams the gate. Export a stub that throws (`throw new Error('not implemented')`) so the red
-   is a runtime red. Commit as `test(red): …`; the Stop hook respects that prefix.
+   is a runtime red. Commit as `test(red): …` — a convention with no mechanical consumer
+   since the Stop hook was cut; `negative-control` reads the PR's diff, not any commit, and
+   copies the changed test files onto the base to prove they fail there.
 8. **Check with the exact gate command**, not a partial one. A type-check on one package
    gives a false green; so does running a single test file when the gate runs the suite.
-9. **Distrust an old error.** The Stop hook may report a state your last edit already
-   fixed. Run again before "fixing" what already passed.
+   There is no Stop hook to run it for you — CI is the only gate, so run it yourself
+   before opening or updating the PR.
+9. **Distrust an old error.** A failure from three edits ago is not evidence about now —
+   run the check and test commands again before trusting a "fixed" from memory.
 
 ## C. Round 2 or later of the same issue
 

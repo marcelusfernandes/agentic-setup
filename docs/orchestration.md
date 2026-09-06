@@ -23,41 +23,46 @@ One Claude Code session at the repository root (not in a worktree), running
    in-progress with no PR and no remote branch → ready (`stale`)
    in-progress with a remote branch, no PR and no local worktree on it → dispatch as
    round N+1 from origin/<branch>, no re-claim (`resumable`)
-   in-review with green CI and review:approved → merge (`inReview`)
+   in-review, checks read per PR via `gh pr checks <pr> --json name,bucket` (green when
+   every bucket is pass/skipping, red on any fail/cancel, else pending), and an approved
+   review → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
    local worktree locked by a pid that no longer exists → unlock, remove --force, then
    treat its issue as `resumable` before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
-   dispatch only `ok: true` (`--strict` folds `warnings` into `ok` but is opt-in, never
-   applied by issue type — read every warning, widen `## Files` on a rename/removal, else
-   log a one-line classification when dispatching); a `failures` entry drops the candidate
-   (a wildcard glob whose fixed prefix has no tracked file is `new`, like a literal new
-   path, not a failure), a `sequenced` overlap does not
+   dispatch only `ok: true`. issue-lint checks the contract only — sections present,
+   globs that parse and match something (or are `new`), globs disjoint from the other
+   issues already in flight in the milestone, and every `Blocked by: #N` number exists —
+   it never reads a diff, so it has no entry-point warning to fold in; a `failures` entry
+   drops the candidate (a wildcard glob whose fixed prefix has no tracked file is `new`,
+   like a literal new path, not a failure), a `sequenced` overlap does not
 2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
    already checked this against the milestone's other in-flight issues)
 3. for each: `scripts/claim.mts <n> --slug <slug>` runs `ci/issue-lint.mts` on the issue
    itself first and refuses (`{ refused: "issue-lint failed", lint }`) on anything but
-   `ok: true` (`--strict` opt-in passthrough, `--no-lint` to skip), then pushes the remote
-   branch <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
-   in-progress, then launch an `implementer` in its own worktree with the whole
-   issue in the prompt; a `resumable` issue skips `claim.mts` — the lock is already
-   held — and launches straight to an implementer as round N+1 from origin/<branch>
+   `ok: true` (`--no-lint` to skip), then pushes the remote branch <type>/<n>-<slug> as
+   the lock (skip on `{ held }`, exit 2), assigns, labels in-progress, then launch an
+   `implementer` in its own worktree with the whole issue in the prompt; a `resumable`
+   issue skips `claim.mts` — the lock is already held — and launches straight to an
+   implementer as round N+1 from origin/<branch>
 4. PR opened → launch a `reviewer` (read-only) and wait for CI
-5. green checks + review:approved (or type:docs) → `scripts/land.mts <pr>` re-reads
-   the PR live and merges only if it will be accepted, labelling done and removing
-   the worktree only after `gh pr view` itself reports MERGED → back to 1
-   `land.mts` refused → read `missing`: a still-running required check waits
-   (`--wait <seconds>`); anything else (stale branch, red check, no approval) sends
-   the PR back — never a retry with `--admin`
+5. green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`
+   refuses unless the PR is OPEN and approved, then gates on the base branch's ruleset
+   when it has a `required_status_checks` rule, else on `gh pr checks <pr> --required`,
+   then queues `gh pr merge <pr> --squash --auto` — the server merges once its own rules
+   are satisfied. `Closes #N` closes the issue on merge (closed is done, nothing to
+   relabel); the repository's `delete_branch_on_merge` setting removes the branch, and
+   the now-orphaned worktree is picked up by `orphanWorktrees` on a later pass → back to 1
+   `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `checks:required`,
+   or `gh-pr-view`) → read it and decide between waiting and sending the PR back; never a
+   retry with `--admin`
    rejected (CI or reviewer) → back to the implementer with the summary (round 2)
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
    a published branch)
    second rejection → state:blocked + human, comment with the summary, move on
      (exception: a mechanical defect with the exact fix named by the reviewer earns
       one short extra round; a rejection with judgment pending blocks)
-6. docs-only PR (`docs/**`, `CLAUDE.md`, `.claude/**`) → `land.mts` merges on green
-   CI, no reviewer required
-7. pass with nothing to do → summary of what is blocked on the parent issue;
+6. pass with nothing to do → summary of what is blocked on the parent issue;
    milestone with no open issue → open the next milestone's parent issue
 ```
 
@@ -100,21 +105,29 @@ such). Returns JSON:
 {"verdict": "approved" | "rejected", "reasons": [{"ac": "AC2", "file": "path:line", "missing": "..."}]}
 ```
 
-and sets `review:approved`, or `state:qa-failed` with the reasons. Never edits, never
-merges, never offers to fix.
+and sets `review:approved`, or `state:qa-failed` with the reasons. When
+`AGENTIC_REVIEWER_TOKEN` is set in its environment, it also casts a real GitHub review
+(`gh pr review --approve` or `--request-changes`) as that separate identity — the label
+stays a convenience, but `land.mts` then requires the review itself, not the label
+(`agents/reviewer.md`, `docs/decisions.md` item 13). Never edits, never merges, never
+offers to fix.
 
 ## Hooks (deterministic, instead of prose)
 
 | event | hook | what it does |
 |---|---|---|
-| PreToolUse Bash | `protect-main.mts` | denies push to `main`/`master`, deleting them, and `gh pr merge` without green checks and the review label. Force-push, `reset --hard`, `clean`, `stash` and `--admin` merges are also denied declaratively by the permission deny list `/agentic-setup:init` writes — the hook catches the forms a prefix pattern cannot |
+| PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin`. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion. Force-push, `reset --hard`, `clean` and `stash` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
-| Stop, SubagentStop | `stop-gate.mts` | runs the detected check + test commands before an agent on a `<type>/<n>-<slug>` branch may stop, **except** when the last commit is `test(red):`. On `main`, on an unrecognised branch, or with no detectable test command it skips with a note on stderr; the real gate is CI. Registered under both events (`hooks/hooks.json`) — an implementer runs as a subagent, so its stop fires `SubagentStop`, not `Stop`; on `SubagentStop` the payload's `cwd` is the subagent's own worktree (verified live, 2026-09-06) |
+
+There is no Stop or SubagentStop hook: nothing runs the check or test commands before an
+agent stops. CI (`test`, `scope`, `negative-control`) is the only gate before a merge is
+queued — see item 13 of `docs/decisions.md` for why the earlier Stop-hook layer was cut.
 
 Hooks run with Claude Code's environment (`${CLAUDE_PLUGIN_ROOT}` resolves to the plugin,
 the payload's `cwd` to the agent's worktree). A change to a hook takes effect after the
 plugin updates, for every agent at once. Hooks fail **open** when Node is missing — the
-git `pre-push` hook and the `guard-main` action are the other layers.
+git `pre-push` hook, the ruleset (when the plan allows one) and the `guard-main` action
+are the other layers.
 
 ## Escalation to a person
 
@@ -143,13 +156,25 @@ production-affecting decision; a product decision the docs do not cover; **an is
   disjoint globs is the practical number.
 - The implementer does not wait on CI. Polling CI burns tokens; the reviewer follows the
   checks and the orchestrator reconciles.
-- **The check re-run window.** A label change (or a push) re-triggers `agentic-checks`, so
-  a PR the orchestrator saw as green a moment earlier can have a required check back to
-  `IN_PROGRESS` by the time it acts. `land.mts` reads the state at the moment of its own
-  call (`gh pr view`, evaluated fresh, not the reconcile snapshot) and refuses rather than
-  acting on stale information — this is what closed the M1 gap where the orchestrator
-  relabelled an issue `state:done` on read state the server no longer agreed with
-  (`docs/decisions.md` item 11).
+- **The check re-run window no longer needs a client-side read.** A label change (or a
+  push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
+  earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where
+  `land.mts` gates on the ruleset, `gh pr merge --auto` sidesteps this by construction: it
+  merges the instant GitHub's own rules are satisfied, so there is no client-side snapshot
+  that can go stale between being read and the merge happening — closing by design the M1
+  gap where the orchestrator relabelled an issue done on read state the server no longer
+  agreed with (`docs/decisions.md` items 11 and 13). Where it gates on `gh pr checks
+  --required` instead (no ruleset on the base branch), that read is still a snapshot taken
+  moments before `--auto` is queued.
+- **No Stop or SubagentStop hook runs the test or check commands before an agent stops.**
+  CI is the only gate; an implementer that stops with a red suite finds out from the
+  `test` check on its PR, not before.
+- **The reviewer and the merging identity can be the same token.** Without
+  `AGENTIC_REVIEWER_TOKEN` configured, `review:approved` is a label the same identity that
+  runs `land.mts` can write itself — `land.mts` then falls back to trusting the label. With
+  the token set (and the base branch ruleset's `required_approving_review_count` raised to
+  1, in that order — see `docs/decisions.md` item 13), only a real `APPROVED` review from
+  the separate reviewer identity counts.
 - Agent Teams do not isolate in worktrees; the loop does not use them.
 - **A restarted orchestrator session cannot tell a live implementer from an abandoned
   one by label state alone.** If the orchestrator process dies (an OS kill, low memory)

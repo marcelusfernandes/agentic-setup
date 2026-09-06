@@ -32,7 +32,7 @@ the result is not `ok: true` — a normal failure, or the lint's own `{ error }`
 could not even run: `{ refused: "issue-lint failed", lint: <the lint JSON> }`, exit 1,
 nothing pushed or relabelled. `issue-lint` checks the contract only — sections, globs,
 `Blocked by:` numbers — and has nothing else to pass through: the entry-point-reference
-warning it used to run, and its `--strict` flag, were both removed in #62 (see "Write
+warning it used to run, and its opt-in strict flag, were both removed in #62 (see "Write
 sub-issues" below); `--no-lint` skips the check entirely, and the success JSON then
 reports `"lint": "skipped"` instead of `"lint": { "ok": true }`.
 
@@ -109,8 +109,9 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
   missing one itself any more: it used to `git grep` every covered path/basename against
   the rest of the tree and warn on a hit, but that fired on any ordinary import, doc or
   workflow mention of a covered path (not only a rename or removal), so it was removed in
-  #62 along with its `--strict` flag — `issue-lint` checks the contract only now (sections,
-  globs, `Blocked by:` numbers). The mechanical form of this gap — a path a PR removes or
+  #62 along with its opt-in strict flag — `issue-lint` checks the contract only now
+  (sections, globs, `Blocked by:` numbers). The mechanical form of this gap — a path a PR
+  removes or
   renames while another tracked file outside the diff still names it, the shape #3 needed
   — moved to PR time instead, where a diff exists to tell a rename from an in-place edit:
   the `scope` job fails on it unless the referencing file sits inside the linked issue's
@@ -119,7 +120,11 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
 
 ## Labels
 
-`state:` ready → in-progress → in-review → done; `qa-failed` goes back to the implementer;
-`blocked` after two rounds, always with `human`. `review:approved` is set only by the
-reviewer. `scope:` and `type:` by whoever writes the issue. A new dependency is a
-`type:deps` issue for the orchestrator.
+`state:` ready → in-progress → in-review; `qa-failed` goes back to the implementer;
+`blocked` after two rounds, always with `human`. There is no `done` value: `Closes #N`
+closes the issue when its PR merges, and a closed issue is a done issue — nothing to
+relabel. `review:approved` is set by the reviewer; when `AGENTIC_REVIEWER_TOKEN` is
+configured for the reviewer's own environment, it also casts a real GitHub review as that
+separate identity, and `scripts/land.mts` then requires that review, not the label
+(`docs/decisions.md` item 13). `scope:` and `type:` by whoever writes the issue. A new
+dependency is a `type:deps` issue for the orchestrator.

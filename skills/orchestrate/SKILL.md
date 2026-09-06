@@ -49,7 +49,9 @@ left by the last one, for an offline check against the last fetch. Fields:
   `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer never
   pushed past the lock branch's starting point.
 - `inReview` — `{ number, pr, checks, reviewApproved }`: `state:in-review` issues.
-  `checks` is `'green'`, `'red'` or `'pending'` from the PR's status rollup;
+  `checks` is `'green'`, `'red'` or `'pending'`, from one `gh pr checks <pr> --json
+  name,bucket` call per PR (green when every surviving check's bucket is pass/skipping,
+  red on any fail/cancel, else pending) — no rollup dedupe of its own.
   `reviewApproved` is the `review:approved` label or an `APPROVED` review. Checks green
   and `reviewApproved` → merge (step 5).
 - `stale` — `{ number, reason }`: in-progress issues with no open PR **and** no remote
@@ -82,10 +84,14 @@ above:
 LINT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/ci/issue-lint.mts}"
 [ -f "$LINT" ] || LINT="$(find ~/.claude/plugins -path '*agentic-setup*/ci/issue-lint.mts' 2>/dev/null | head -1)"
 [ -f "$LINT" ] || { echo "agentic-setup: issue-lint.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-node "$LINT" <n> [--strict]
+node "$LINT" <n>
 ```
 
-Prints `{ issue, ok, failures, warnings, globs, sequenced }`; dispatch only `ok: true`. A
+Prints `{ issue, ok, failures, globs, sequenced }`; dispatch only `ok: true`. issue-lint
+checks the issue's contract only — sections present, globs that parse and match
+something (or are `new`), globs disjoint from the other issues already in flight, and
+every `Blocked by:` number exists — it never reads a diff, so there is no entry-point
+warning to read here any more (`docs/decisions.md` item 12, superseded by item 13). A
 `failures` entry (a missing section, a wildcard glob that matches no tracked file, a
 `Blocked by:` number `gh` cannot find, or a `{ issue, files }` overlap with another issue
 in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
@@ -94,16 +100,6 @@ expected to create it), and so is a wildcard glob whose fixed prefix (the part b
 first `*` or `?`) names a directory with no tracked file anywhere — the way an issue
 declares a whole new directory. A `sequenced` overlap is not a failure either, it means the
 two issues are already ordered by a `Blocked by:` relation.
-
-`--strict` folds `warnings` into `ok`/exit code; it is an opt-in flag, never something this
-step passes by issue type — a warning fires on every in-place reference to a covered file,
-not only a rename, so folding it into `ok` by default would block a bug fixing an
-already-referenced file (`docs/decisions.md` item 12). Read every `warnings` entry
-yourself on every `ok: true` candidate: `{ file, referencedBy }` says a tracked file
-outside `## Files` names a path the candidate's globs cover (the `#3` shape). If that path
-is one the issue renames or removes, widen `## Files` to include the referencing file
-before dispatching. Otherwise, log a one-line classification of the warning as a comment
-on the issue when you dispatch it.
 
 ## 2. Pick up to 4 with disjoint globs
 
@@ -122,7 +118,7 @@ way:
 CLAIM="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/claim.mts}"
 [ -f "$CLAIM" ] || CLAIM="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/claim.mts' 2>/dev/null | head -1)"
 [ -f "$CLAIM" ] || { echo "agentic-setup: claim.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-node "$CLAIM" <n> --slug <slug> [--type <type>] [--strict] [--no-lint]
+node "$CLAIM" <n> --slug <slug> [--type <type>] [--no-lint]
 ```
 
 `<type>` defaults to the title prefix (`feat(scope): …` → `feat`) and must be one of
@@ -131,9 +127,8 @@ has no type of its own, so pass `--type` with a value from the set (whichever fi
 for `perf(ci): …`), or `claim.mts` errors out (an invalid `--type` errors too, same set).
 Before pushing, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses on
 anything but `ok: true` — `{ refused: "issue-lint failed", lint }`, nothing pushed or
-relabelled. `--strict` is opt-in, passed through verbatim when given (not applied by issue
-type — same rule as step 1); `--no-lint` skips the check (`"lint": "skipped"` in the
-success JSON instead of `"lint": { "ok": true, "warnings": <n> }`).
+relabelled; `--no-lint` skips the check (`"lint": "skipped"` in the success JSON instead
+of `"lint": { "ok": true }`).
 
 Exit 0 → `{ issue, branch, base, lint }`: the push succeeded (the lock), the issue is
 assigned and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another
@@ -161,55 +156,52 @@ takes minutes, look once per pass.
 
 ## 5. Decide
 
-- Checks green **and** `review:approved` (or `type:docs`, which `land.mts` merges without
-  approval) → run `scripts/land.mts`, located the same way as the scripts above:
+- Checks green **and** an approved review (or the `type:docs` label, which `land.mts`
+  merges without one) → run `scripts/land.mts`, located the same way as the scripts
+  above:
 
   ```bash
   LAND="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/land.mts}"
   [ -f "$LAND" ] || LAND="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/land.mts' 2>/dev/null | head -1)"
   [ -f "$LAND" ] || { echo "agentic-setup: land.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-  node "$LAND" <pr> [--wait <seconds>]
+  node "$LAND" <pr>
   ```
 
-  `land.mts` re-reads the PR's live state itself and is the only thing that merges it —
-  never run `gh pr merge` by hand for this step. It **replaces** `protect-main`'s merge
-  gate for this call, it does not rely on it: that hook matches `gh pr merge` in the Bash
-  *command string* and never sees a `gh` process spawned from node, so `AGENTIC_ALLOW_MERGE`
-  has no effect here and there is no bypass for `land.mts`'s own checks
-  (`scripts/land.mts` header). On success it prints `{ merged, pr, issues, worktreeRemoved }`
-  — every closed issue is already `state:done` and its worktree already gone; there is
-  nothing left to label or remove by hand.
+  `land.mts` is the only way the orchestrator merges a PR — never run `gh pr merge` by
+  hand for this step. It refuses (exit 1, `{ refused, pr, missing }`) unless the PR is
+  `OPEN` and approved: `reviewDecision === 'APPROVED'`, or — only when the orchestrator's
+  own environment has no `AGENTIC_REVIEWER_TOKEN` set — the `review:approved` label as a
+  fallback (once that variable is set, the label is a convenience only; see
+  `docs/decisions.md` item 13). `missing` names what is wrong: `state=<x>` (not `OPEN`),
+  `review:not-approved`, or `gh-pr-view` (could not even read the PR).
 
-  A precondition failing prints `{ refused, pr, missing, rulesetChecks }`, exit 1, and
-  changes nothing. **A `refused` is never a signal to retry with `--admin`** — read
-  `missing` and decide between waiting and sending the PR back:
-  - `state=<x>` / `mergeStateStatus=<x>` (not `OPEN`/`CLEAN`) → the PR is closed, dirty or
-    behind `main`; a conflict sends it to the implementer (`git merge origin/main`),
-    anything else needs a look.
-  - `review:not-approved` → wait for the reviewer; this is not a merge failure.
-  - `checks:<name>=<status>` → that required check's latest run is not green. If it is
-    still `IN_PROGRESS`/`QUEUED`, wait or re-run with `--wait <seconds>` to poll instead of
-    refusing immediately; if it finished red, send the PR back to the implementer like any
-    other CI rejection.
-  - `checks:none-registered` → no check ran at all on this PR; investigate before waiting.
+  On a refusal that clears, it re-reads the base branch's *effective* rules (`gh api
+  repos/{owner}/{repo}/rules/branches/<base>`). When they include a
+  `required_status_checks` rule, that ruleset is the gate and `land.mts` queues the merge
+  straight away — there is no separate check read to go stale between being taken and the
+  merge happening. Otherwise (no such rule on this base branch) it falls back to `gh pr
+  checks <pr> --required` itself and refuses (`{ refused, pr, missing: ['checks:required'],
+  gate: 'client-checks' }`) if that is not green.
 
-  `mergeStateStatus` can lag behind the check runs by a few minutes after a re-run —
-  `land.mts` reads it live at the moment of the call, not from a cached view, and refuses
-  while it is still catching up. `--wait <seconds>` does not cover this case: it polls only
-  while some required check is still `IN_PROGRESS`/`QUEUED` (`scripts/land.mts` — the
-  `WAITABLE_MERGE_STATUS`/`anyPending` loop), and every check is already green here. A
-  `refused` whose only `missing` entry is `mergeStateStatus=<x>` with every required check
-  green means call `land.mts` again shortly, not `--admin`.
-
-  `{ error }` (also exit 1) means the merge command itself failed, or the PR never reached
-  `MERGED` after `gh pr merge` returned — a `gh`/`git` problem, not a verdict; stop and
-  report, touch no label or worktree.
+  On success it runs `gh pr merge <pr> --squash --auto` (it never asks `gh` itself to
+  delete the branch, and never `--admin`) and prints `{ merged: pr, gate }` if the PR is already `MERGED` by the time it
+  reads `gh pr view` back, or `{ queued: pr, gate }` if GitHub will merge it once its own
+  rules are satisfied — either way, nothing left to label or remove by hand: `Closes #N`
+  closes the issue once the merge happens, and the repository's `delete_branch_on_merge`
+  setting removes the branch (the worktree turns up in a later pass's `orphanWorktrees`).
+  If `gh pr merge` itself fails with "is in clean status" (a stale read that chose
+  "enable auto-merge" a moment after GitHub already considered the PR clean, #81),
+  `land.mts` retries once with a plain `gh pr merge <pr> --squash`; any other failure, or a
+  PR that still is not `MERGED` after a successful-looking merge call, prints `{ error }`
+  and exits 1 — a `gh`/`git` problem, not a verdict. **Never a signal to retry with
+  `--admin`, either way.**
 
   This script exists because of exactly the shortcut it forecloses: in M1 (PR #28, closing
-  #25) the orchestrator ran `gh pr merge`, the server refused it over a re-triggered check,
-  and the orchestrator labelled the issue `state:done` anyway — `reconcile.mts` caught the
-  inconsistency a minute later (`docs/decisions.md` item 11). `land.mts` only ever labels
-  after `gh pr view` itself reports `state: MERGED`.
+  #25) the orchestrator ran `gh pr merge` by hand, the server refused it over a
+  re-triggered check, and the orchestrator marked the issue done anyway — `reconcile.mts`
+  caught the inconsistency a minute later (`docs/decisions.md` item 11). Queuing
+  `--auto` instead of polling and merging by hand removes the stale-read race by
+  construction rather than closing it after the fact (item 13).
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
   summary and the reviewer's JSON (round 2; skill `safe-worktree` §C).
 - Rejected a second time → `state:blocked` + `human`, comment with the summary, move on.

@@ -6,7 +6,6 @@
   "description": "Development manifest for the agentic-setup Claude Code plugin. The plugin has no runtime dependencies and no build step: Node 22.18+ runs the .mts sources directly. This exists so `tsc` type-checks them and `npm test` runs the test suite via tests/run.mts.",
   "scripts": {
     "test": "node tests/run.mts",
-    "test:bun": "bun tests/run.mts",
     "check": "tsc -p tsconfig.json"
   },
   "devDependencies": {

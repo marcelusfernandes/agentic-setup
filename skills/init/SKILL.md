@@ -36,19 +36,35 @@ The script is idempotent. It:
 3. merges the permission deny list into `.claude/settings.json` (union; your entries stay);
 4. installs `hooks/git-pre-push` as `.git/hooks/pre-push` (a foreign pre-push is reported,
    not replaced);
-5. seeds the `state:`, `type:`, `review:approved` and `human` labels, and the milestone.
+5. turns on the repository's `allow_auto_merge` and `delete_branch_on_merge` settings
+   (`gh repo edit`; skipped, reported only, under `--dry-run`) — `land.mts` depends on
+   both: the first for `gh pr merge --auto` to have anything to enable, the second so a
+   merged branch is deleted for it;
+6. seeds the `state:`, `type:`, `review:approved` and `human` labels, and the milestone.
 
 Then, by hand — the script cannot do these:
 
-- Review `git status` and open the bootstrap PR with these files. If the repository has
-  no PR checks yet, the first merge needs `AGENTIC_ALLOW_MERGE=1` in front of
-  `gh pr merge`, and pushing the very first commit to `main` needs the message to contain
-  `[allow-push-main]` — both are declared valves, both visible in the history.
+- Review `git status` and open the bootstrap PR with these files. Pushing the very first
+  commit to `main` needs the message to contain `[allow-push-main]` (`guard-main`'s escape
+  hatch, bootstrap only, visible in the history).
 - Make `scope`, `negative-control` and your own test workflow **required checks** on
   `main`. Add a ruleset (PR required, no force-push, no deletion) if your plan allows one;
-  keep the hooks either way.
+  keep the hooks either way — they are the fallback for a repository with no ruleset yet
+  (a private repository on the free plan).
 - Add `scope:` labels that match your repository (`web`, `api`, `db`, …).
 - In `.github/workflows/agentic-checks.yml`, mirror your test workflow's toolchain setup
   in the `negative-control` job, and set `AGENTIC_TEST_CMD` if detection does not name the
   right command.
 - Tell `CLAUDE.md` what the invariants are — the reviewer checks whatever it names.
+- **For a review gate the merging identity cannot satisfy itself:** create a machine user
+  or a GitHub App installation with pull-request write, and store its token as
+  `AGENTIC_REVIEWER_TOKEN` wherever the orchestrator and reviewer run (never in this
+  repository — `init` never writes it anywhere). **Order matters:** first set the base
+  branch ruleset's `required_approving_review_count` to 1, *then* set the token. GitHub
+  only computes a PR's `reviewDecision` on a branch where a review is actually required;
+  set the token before that rule exists and `reviewDecision` stays `null` forever, so
+  every PR refuses in `land.mts` with no way to satisfy it (`scripts/land.mts`'s header
+  names this trap). Without the token, `land.mts` falls back to trusting the
+  `review:approved` label — the same identity that runs `land.mts` can write that label
+  itself, so this is meant as a bootstrap state, not a destination (`docs/decisions.md`
+  item 13).

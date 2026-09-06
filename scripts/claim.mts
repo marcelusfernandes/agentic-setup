@@ -21,9 +21,10 @@
 // pushing the exact commit a ref already points at is a silent no-op
 // success ("Everything up-to-date", exit 0), so a race between two claims
 // before either has committed anything is missed if only the push's exit
-// code is inspected; (b) `git fetch` never prunes, while `gh pr merge
-// --delete-branch` deletes branches server-side, so a stale local
-// tracking ref can report `held` for a branch that is actually free. The
+// code is inspected; (b) `git fetch` never prunes, while the repository
+// setting `delete_branch_on_merge` (enabled by `init`) deletes branches
+// server-side on merge, so a stale local tracking ref can report `held`
+// for a branch that is actually free. The
 // porcelain summary line is authoritative either way: `*` (new branch) is
 // success, `=` (up to date) is `held`; on a non-zero exit, `[rejected]` /
 // "already exists" / "cannot lock ref" also mean `held`; anything else is

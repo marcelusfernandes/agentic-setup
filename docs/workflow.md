@@ -12,8 +12,9 @@ written in English; the language you talk to the agents in is your business.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
-  committed as `test(red): …` — the Stop hook respects that prefix and does not run the
-  suite against it.
+  committed as `test(red): …` — a convention with no mechanical consumer since the Stop
+  hook was cut. `negative-control` reads the PR's diff, not any commit: it copies the
+  changed test files onto a checkout of the base and requires the suite to fail there.
 
 ## Milestones
 
@@ -25,14 +26,16 @@ parent issue is the orchestrator's job when the current one has nothing left.
 
 | group | values | who changes it |
 |---|---|---|
-| `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked`, `done` | agents |
+| `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
 | `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | whoever writes the issue |
 | `review:approved` | the reviewer returned approved | reviewer |
 | `human` | needs a person | orchestrator |
 
 `/agentic-setup:init` seeds `state:`, `type:`, `review:approved` and `human`; you add the
-`scope:` values that match your repository.
+`scope:` values that match your repository. The `state:` set above has no `done` value:
+`Closes #N` closes the linked issue when its PR merges, and a closed issue is a done
+issue — nothing left to relabel.
 
 ## Issue (one template)
 
@@ -133,13 +136,18 @@ line asking for a throwing stub instead, so the red is a runtime red.
 
 ## Merge
 
-The orchestrator merges, by squash, when: checks are green and the PR carries
-`review:approved` (`type:docs` PRs skip the reviewer). **The branch is not required to
-be up to date** — CI runs again on `main` after the merge; a conflict goes back to the
-implementer, who runs `git merge origin/main` on the published branch (rebase only
-before the first push; force-push is denied on every branch).
+Once checks are green and the PR carries an approved review (or the `type:docs` label,
+which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto` — it
+is the only way the orchestrator merges a PR, never `gh pr merge` by hand. The server
+merges the instant its own rules are satisfied: a base-branch ruleset with a
+`required_status_checks` rule when one exists, else whatever `gh pr checks --required`
+reports at the moment of the call. **The branch is not required to be up to date** — CI
+runs again on `main` after the merge; a conflict goes back to the implementer, who runs
+`git merge origin/main` on the published branch (rebase only before the first push;
+force-push is denied on every branch).
 
-`protect-main.mts` enforces the same rule on the machine: `gh pr merge` is denied
-unless every check is green and the review label (or an APPROVED review) is present.
-`AGENTIC_BOOTSTRAP=1` lifts it for the very first PRs of a repository that has no CI
-yet, and for nothing else.
+`protect-main.mts` is a fallback for a machine with no server-side ruleset yet: it denies
+a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin` — never a
+merge without green checks by itself, since the ruleset or `land.mts`'s own gate already
+covers that. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts pushing to `main` for bootstrap only; it
+never lifts deleting `main`/`master`.
