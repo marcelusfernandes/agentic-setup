@@ -37,6 +37,32 @@ const denied = [
   'echo x & git push origin main', // a lone & backgrounds the first command; the second still runs
   'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
   'git push origin main 2>&1', // a redirect after the refspec must not hide the push
+  'git push origin "+main"', // quoted force-refspec: isForcePush must read the unquoted token
+  'git push origin "+"main', // quote boundary spliced inside a force-refspec
+  'git push "-f" origin feat/1-x', // quoted -f: isForcePush must read the unquoted token
+  'git push "--force" origin feat/1-x', // regression lock: quoted --force already matched isForcePush's old raw-string regex
+  'git push origin $"main"', // $"..." locale quoting: unquote must strip it like "..."
+  'git push origin main&> /dev/null', // &> glued directly to the refspec must not swallow it into one token
+  'git push origin main >&2', // regression lock: already denied pre-#25 (a real space keeps "main" its own token)
+  'git push origin main 2>&1 | cat', // regression lock: a pipe after the redirect must still split normally
+  'echo \\>& git push origin main', // a backslash-escaped > is ordinary text; the & after it must still split
+  'git push --delete origin "main"', // regression lock: quoted --delete target already worked pre-#25
+  'git push "--delete" origin main', // quoted --delete flag itself: unquote-before-flag-check must catch it
+  'git push origin 2>/dev/null', // the whole refspec position is a redirect: bare-push-from-main fallback must still fire
+  // #25 round 2: a bare '(' nested inside $( … ) must still be a segment
+  // boundary, exactly as it is outside one — not just a depth counter. All
+  // nine reach a real push/branch-delete on main regardless of branch (the
+  // refspec is explicit), so the bare-push-from-main fallback is not what
+  // proves these; the top-level list is the right place.
+  'echo $( (git push origin main) )',
+  '$( (git push origin main) )',
+  'echo "$( (git push origin main) )"', // the substitution is inside double quotes; wasInDouble must still restore afterward
+  'echo $( (cd . ; git push origin main) )', // a ; inside the bare subshell must still split there too
+  'echo $( ( (git push origin main) ) )', // doubly-nested bare subshells
+  'echo $(true; (git push origin main))',
+  'echo $( (git push --delete origin main) )',
+  'echo $( (git branch -D main) )',
+  'echo $(echo $( (git push origin main) ))', // a bare subshell nested inside a nested $( … )
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -55,6 +81,12 @@ const allowed = [
   "echo '`git push origin main`'", // backtick inside single quotes is literal text
   'echo x >&2 && git push origin feat/1-x', // >& is a redirection, not a lone &, and doesn't hide the real &&
   'git commit -m "a & b"', // & inside a double-quoted string is not the background operator
+  // #25 negative controls: every denied-list device above, aimed at a
+  // non-main push, must still be allowed.
+  'echo ">&" && git push origin feat/1-x', // a quoted ">&" is literal text, not a redirection that could hide the &&
+  'git push origin feat/1-x > log.txt', // redirection target must be dropped, but the real refspec kept
+  'echo "$(date)" && git push origin feat/1-x', // $( … ) inside an unrelated echo must not corrupt the later push
+  'git commit -m "see $(pwd)"', // $( … ) inside a non-push command is untouched (skipped by the fast path)
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
@@ -69,6 +101,13 @@ check('protect-main allows bare push from a work branch', bash('git push', repo)
 // masking a broken split). These prove a backtick pair inside the push does
 // not sever the refspec from the command that carries it.
 const deniedFromWorkBranch = [
+  // #25: $( … ) is the $() twin of the backtick command substitution below —
+  // same masking hazard: a broken split that drops the trailing " main" but
+  // leaves current = "git push origin" would still be denied on main by the
+  // bare-push-from-main fallback, so these belong here, not in `denied`.
+  'git push origin $(echo) main',
+  'git push origin $(echo x) main',
+  'git push origin $(echo $(true)) main', // nested $( … ): a depth counter must find the *outer* close
   'git push origin `echo` main', // a backtick pair inside the command must not sever the outer push
   'git push origin `echo x` main', // same, with content in the backtick pair
   'git push origin ` ` main', // same, with only whitespace in the backtick pair
