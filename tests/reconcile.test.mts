@@ -255,6 +255,18 @@ const unpushedCommitWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-unpus
 cleanup(() => rmSync(unpushedCommitWorktreeDir, { recursive: true, force: true }));
 git(['worktree', 'add', '-q', unpushedCommitWorktreeDir, 'feat/76-unpushed-commit'], repo);
 git(['commit', '-q', '--allow-empty', '-m', 'local only'], unpushedCommitWorktreeDir);
+
+// A local branch literally named "origin/feat/76-unpushed-commit" shadows the
+// remote-tracking ref one level down, the same #48 shadow the "origin/main"
+// and "origin/feat/60-shadowed" branches above guard elsewhere — here aimed
+// at the unpushed-count computation itself. It targets the worktree's own
+// (unpushed) HEAD, not the real remote tip: an unqualified `origin/<branch>`
+// in the rev-list range would resolve to this branch first and see HEAD as
+// already fully contained (unpushed: 0), while the correct, fully-qualified
+// `refs/remotes/origin/<branch>` still sees the one commit ahead.
+const unpushedCommitSha = git(['rev-parse', 'HEAD'], unpushedCommitWorktreeDir);
+git(['branch', 'origin/feat/76-unpushed-commit', unpushedCommitSha], repo);
+
 git(
   [
     'worktree',

@@ -85,11 +85,14 @@
 // died mid-work in M4). Each `deadWorktrees[]` entry therefore also reports
 // `dirty` (`git -C <path> status --porcelain` printed anything) and
 // `unpushed` (commits on the worktree's `HEAD` not on `origin/<branch>`, via
-// `git -C <path> rev-list --count origin/<branch>..HEAD`, gated by `git -C
-// <path> rev-parse --verify --quiet refs/remotes/origin/<branch>` so a branch
-// never pushed reads `unpushed: null` rather than a nonsensical count). Both
-// `git` calls run only for entries already in `deadWorktrees` — never for a
-// live worktree, whether or not it turns out to be dirty or ahead.
+// `git -C <path> rev-list --count refs/remotes/origin/<branch>..HEAD` — fully
+// qualified, same #48 reason as `commitsAhead` below: a local branch literally
+// named `origin/<branch>` would otherwise shadow the remote-tracking ref —
+// gated by `git -C <path> rev-parse --verify --quiet
+// refs/remotes/origin/<branch>` so a branch never pushed reads `unpushed:
+// null` rather than a nonsensical count). Both `git` calls run only for
+// entries already in `deadWorktrees` — never for a live worktree, whether or
+// not it turns out to be dirty or ahead.
 //
 // GitHub data comes only from `gh` (issue list, pr list, api, pr checks);
 // worktree and branch data from `git worktree list --porcelain` and (after
@@ -305,7 +308,7 @@ function deadWorktreeWork(path: string, branch: string | null): { dirty: boolean
   const verify = spawnSync('git', ['-C', path, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { encoding: 'utf8' });
   if (verify.status !== 0) return { dirty, unpushed: null };
 
-  const count = spawnSync('git', ['-C', path, 'rev-list', '--count', `origin/${branch}..HEAD`], { encoding: 'utf8' });
+  const count = spawnSync('git', ['-C', path, 'rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], { encoding: 'utf8' });
   const unpushed = count.status === 0 ? Number.parseInt(count.stdout.trim(), 10) || 0 : null;
   return { dirty, unpushed };
 }
