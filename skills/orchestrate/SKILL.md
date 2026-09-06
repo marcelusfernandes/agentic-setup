@@ -54,6 +54,12 @@ left by the last one, for an offline check against the last fetch. Fields:
   branch → back to `state:ready`.
 - `orphanWorktrees` — paths of linked worktrees whose branch no longer exists on the
   remote → remove them (stop any local service they started first).
+- `deadWorktrees` — `{ path, branch, pid }`: linked worktrees locked by a pid that no
+  longer exists (Claude Code's lock reason is `claude agent agent-<id> (pid <N> ...)`;
+  `process.kill(N, 0)` throws `ESRCH`). Such a worktree does not count as a live agent's
+  checkout, so its issue is already reported `resumable` above, not `inProgress` — this
+  list is only for cleanup. For each entry, before step 3: `git worktree unlock <path> &&
+  git worktree remove --force <path>`; then treat its issue as `resumable`.
 
 A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
 rather than guessing the state.
