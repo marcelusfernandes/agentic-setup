@@ -323,32 +323,99 @@ for (const other of others) {
 }
 
 // --- AC4: entry-point references — files outside the issue's globs that
-// mention a covered file's path or basename. `git grep` runs with no
-// pathspec (it only ever searches tracked files) so the argument list stays
-// small even in a large repository; the outside/exclude filtering happens
-// here in Node against the hit list instead. A "new" literal path (not
-// tracked yet) is checked the same way: a tracked file that already
-// references its basename is still a warning. -------------------------------
+// mention a covered file's path or basename. Two `git grep` spawns total
+// (chunked only above PATTERN_CHUNK_SIZE patterns per call), not one per
+// covered file (#44): a single `-l` pass across every covered path/basename
+// pattern finds which files hit *some* pattern, then a single `-n` pass
+// restricted to just those hit files (via `:(literal)` pathspecs, so a hit
+// file whose name itself contains glob metacharacters like `[id].tsx` is not
+// misread as a pathspec) recovers line content to attribute each hit back to
+// the covered file(s) that own the matching pattern — `git grep -l` alone
+// only says a file matched *something*, not which pattern. `git grep` runs
+// with no pathspec restriction on the search space (it only ever searches
+// tracked files anyway) so the outside/exclude filtering happens here in
+// Node against the hit list instead — cheaper than excluding pathspecs for a
+// large covered/excluded set. A "new" literal path (not tracked yet) is
+// checked the same way: a tracked file that already references its basename
+// is still a warning. ---------------------------------------------------
+const PATTERN_CHUNK_SIZE = 2000;
+
+function chunk<T>(list: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 const coveredSet = new Set(selfMatchedFiles);
 const outsideFiles = new Set(trackedFiles.filter((f) => !coveredSet.has(f) && !matchesAny(f, EXCLUDE_GLOBS)));
-if (outsideFiles.size > 0) {
-  for (const covered of [...selfMatchedFiles, ...selfNewPaths]) {
-    const base = basename(covered);
-    const patterns = ['-e', covered];
-    if (!(base.length < 4 || /^index\./i.test(base) || base === 'README.md')) {
-      patterns.push('-e', base);
+const coveredPaths = [...selfMatchedFiles, ...selfNewPaths];
+if (outsideFiles.size > 0 && coveredPaths.length > 0) {
+  // Each covered path always contributes its own pattern; its basename joins
+  // in too unless it is too short or too generic to mean anything on its own
+  // (unchanged from the per-file version). A pattern can be owned by more
+  // than one covered path (two covered files sharing a basename).
+  const patternOwners = new Map<string, Set<string>>();
+  function addPattern(pattern: string, owner: string): void {
+    let owners = patternOwners.get(pattern);
+    if (!owners) {
+      owners = new Set();
+      patternOwners.set(pattern, owners);
     }
-    const r = spawnSync('git', ['grep', '-I', '-l', '-F', ...patterns], {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-    });
+    owners.add(owner);
+  }
+  for (const covered of coveredPaths) {
+    addPattern(covered, covered);
+    const base = basename(covered);
+    if (!(base.length < 4 || /^index\./i.test(base) || base === 'README.md')) {
+      addPattern(base, covered);
+    }
+  }
+  const patternChunks = chunk([...patternOwners.keys()], PATTERN_CHUNK_SIZE);
+
+  let grepFailed = false;
+  const hitFiles = new Set<string>();
+  for (const patterns of patternChunks) {
+    const args = patterns.flatMap((p) => ['-e', p]);
+    const r = spawnSync('git', ['grep', '-I', '-l', '-F', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     if (r.status === 0) {
       for (const hit of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
-        if (outsideFiles.has(hit)) warnings.push({ file: covered, referencedBy: hit });
+        if (outsideFiles.has(hit)) hitFiles.add(hit);
       }
     } else if (r.status !== 1 && r.status !== null) {
-      failures.push(`git grep failed while checking references to ${covered}: ${r.stderr.trim().split('\n')[0]}`);
+      failures.push(`git grep failed while checking entry-point references: ${r.stderr.trim().split('\n')[0]}`);
+      grepFailed = true;
+    }
+  }
+
+  if (!grepFailed && hitFiles.size > 0) {
+    const hitPathspecs = [...hitFiles].map((f) => `:(literal)${f}`);
+    const warningPairs = new Set<string>();
+    for (const patterns of patternChunks) {
+      const args = patterns.flatMap((p) => ['-e', p]);
+      const r = spawnSync('git', ['grep', '-n', '-I', '-F', ...args, '--', ...hitPathspecs], {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      if (r.status === 0) {
+        for (const line of r.stdout.split('\n')) {
+          if (!line) continue;
+          const match = /^(.*?):\d+:(.*)$/.exec(line);
+          if (!match) continue;
+          const [, hitFile, content] = match;
+          if (!outsideFiles.has(hitFile)) continue;
+          for (const [pattern, owners] of patternOwners) {
+            if (!content.includes(pattern)) continue;
+            for (const covered of owners) warningPairs.add(`${covered}\u0000${hitFile}`);
+          }
+        }
+      } else if (r.status !== 1 && r.status !== null) {
+        failures.push(`git grep failed while mapping entry-point references: ${r.stderr.trim().split('\n')[0]}`);
+      }
+    }
+    for (const pair of [...warningPairs].sort()) {
+      const [file, referencedBy] = pair.split('\u0000');
+      warnings.push({ file, referencedBy });
     }
   }
 }
