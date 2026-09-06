@@ -164,12 +164,18 @@ const prs = ghJson<PR[]>(
 if (!args['no-fetch']) {
   git(['fetch', '--prune', 'origin']);
 }
+// `%(refname:short)` picks the shortest name that stays unambiguous among
+// *all* local refs, not a fixed "strip refs/remotes/origin/" prefix: a local
+// branch can force it to render a tracking ref differently (down to the
+// literal "origin" for refs/remotes/origin/HEAD itself, which the old
+// `.replace(/^origin\//, '')` + `!== 'HEAD'` filter never caught). `lstrip=3`
+// always drops exactly the leading `refs/remotes/origin/` components,
+// leaving `HEAD` (then filtered) or the real branch name, slashes included.
 const remoteHeads = new Set(
-  git(['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'])
+  git(['for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin'])
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((ref) => ref.replace(/^origin\//, ''))
     .filter((ref) => ref !== 'HEAD'),
 );
 
