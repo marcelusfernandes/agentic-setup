@@ -15,11 +15,30 @@
 //      or a usage/gh/git error         -> { error }
 //   2  held by another agent (the ref already exists) -> { held }
 //
+// The lock is the push's own protocol exchange with the remote, read via
+// `git push --porcelain`, not a local pre-check: a local
+// refs/remotes/origin/<branch> pre-check has two failure modes — (a)
+// pushing the exact commit a ref already points at is a silent no-op
+// success ("Everything up-to-date", exit 0), so a race between two claims
+// before either has committed anything is missed if only the push's exit
+// code is inspected; (b) `git fetch` never prunes, while `gh pr merge
+// --delete-branch` deletes branches server-side, so a stale local
+// tracking ref can report `held` for a branch that is actually free. The
+// porcelain summary line is authoritative either way: `*` (new branch) is
+// success, `=` (up to date) is `held`; on a non-zero exit, `[rejected]` /
+// "already exists" / "cannot lock ref" also mean `held` (a diverged
+// branch — the implementer already committed — is rejected as
+// non-fast-forward, not "already exists"; that literal wording is git's
+// for tags, not branches); anything else is a real `{ error }`.
+//
 // Crash policy: never a stack trace. Refusal checks (closed, not
 // state:ready, an open blocker, no ## Files bullet) run before any push, so
 // a refusal changes nothing. The push is the lock: only a successful push
 // is followed by `gh issue edit`. Run from the repository root — git
 // commands use the current working directory. Node built-ins only.
+//
+// Note: titleType() is case-sensitive ("Feat: x" falls through to
+// "pass --type"); the issue is silent on case, so this is left as-is.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
 import { BRANCH_TYPES, hasFilesBullet, parseBlockedBy, titleType } from './lib/issues.mts';
@@ -117,25 +136,26 @@ if (!defaultBranch) errorOut('gh repo view: no default branch');
 
 git(['fetch', 'origin']);
 
-// Pushing the exact commit an existing ref already points at is a silent
-// no-op success ("Everything up-to-date"), not a rejection — so a race
-// between two claims of the same issue, before the implementer has added
-// any commit, would not be caught by inspecting the push result alone.
-// `git fetch` above just populated this remote-tracking ref if the branch
-// exists on origin at all, so check it first.
-const existing = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`], { encoding: 'utf8' });
-if (existing.status === 0) held(branch);
-
 const base = git(['rev-parse', `origin/${defaultBranch}`]).trim();
 
-const push = spawnSync('git', ['push', 'origin', `origin/${defaultBranch}:refs/heads/${branch}`], { encoding: 'utf8' });
-if (push.status !== 0) {
-  const output = `${push.stderr || ''}${push.stdout || ''}`;
+const push = spawnSync('git', ['push', '--porcelain', 'origin', `origin/${defaultBranch}:refs/heads/${branch}`], { encoding: 'utf8' });
+const dataLine = (push.stdout || '').split(/\r?\n/).find((l) => /^[*=!+\- ]\t/.test(l)) ?? '';
+
+if (push.status === 0) {
+  // The porcelain summary line is authoritative: "*" means this push
+  // created the ref (a genuine claim); "=" ("up to date") means the ref
+  // already pointed at this exact commit, so someone else already holds
+  // it — a silent no-op success, not a rejection.
+  if (!dataLine.startsWith('*')) held(branch);
+} else {
+  const output = `${push.stdout || ''}${push.stderr || ''}`;
   // A diverged remote branch (the implementer already committed) is
   // rejected as non-fast-forward, not "already exists" — either message
-  // means someone else holds the ref; anything else is a real error.
-  if (/\[rejected\]/.test(output) || /already exists/i.test(output)) held(branch);
-  errorOut(firstLine(output));
+  // (or a ref-locking race) means someone else holds the ref; anything
+  // else is a real error. Build the message from the "!" data line, not
+  // the porcelain output's first line ("To <url>").
+  if (/\[rejected\]/.test(output) || /already exists/i.test(output) || /cannot lock ref/i.test(output)) held(branch);
+  errorOut(dataLine ? dataLine.replace(/\t/g, ' ').trim() : firstLine(push.stderr || push.stdout || 'push failed'));
 }
 
 // --- 5. only now: assign and relabel ----------------------------------------
