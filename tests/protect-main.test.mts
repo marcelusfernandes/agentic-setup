@@ -37,13 +37,6 @@ const denied = [
   'echo x & git push origin main', // a lone & backgrounds the first command; the second still runs
   'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
   'git push origin main 2>&1', // a redirect after the refspec must not hide the push
-  // #25: $( … ) is the $() twin of the backtick command substitution above —
-  // the inner command must not truncate the outer one (denied on both main
-  // and a work branch, since the refspec "main" is still directly seen; no
-  // masking risk from the bare-push-from-main fallback here).
-  'git push origin $(echo) main',
-  'git push origin $(echo x) main',
-  'git push origin $(echo $(true)) main', // nested $( … ): a depth counter must find the *outer* close
   'git push origin "+main"', // quoted force-refspec: isForcePush must read the unquoted token
   'git push origin "+"main', // quote boundary spliced inside a force-refspec
   'git push "-f" origin feat/1-x', // quoted -f: isForcePush must read the unquoted token
@@ -94,6 +87,13 @@ check('protect-main allows bare push from a work branch', bash('git push', repo)
 // masking a broken split). These prove a backtick pair inside the push does
 // not sever the refspec from the command that carries it.
 const deniedFromWorkBranch = [
+  // #25: $( … ) is the $() twin of the backtick command substitution below —
+  // same masking hazard: a broken split that drops the trailing " main" but
+  // leaves current = "git push origin" would still be denied on main by the
+  // bare-push-from-main fallback, so these belong here, not in `denied`.
+  'git push origin $(echo) main',
+  'git push origin $(echo x) main',
+  'git push origin $(echo $(true)) main', // nested $( … ): a depth counter must find the *outer* close
   'git push origin `echo` main', // a backtick pair inside the command must not sever the outer push
   'git push origin `echo x` main', // same, with content in the backtick pair
   'git push origin ` ` main', // same, with only whitespace in the backtick pair
