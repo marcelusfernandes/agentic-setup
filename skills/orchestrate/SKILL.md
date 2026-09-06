@@ -57,7 +57,9 @@ left by the last one, for an offline check against the last fetch. Fields:
 - `stale` — `{ number, reason }`: in-progress issues with no open PR **and** no remote
   branch → back to `state:ready`.
 - `orphanWorktrees` — paths of linked worktrees whose branch no longer exists on the
-  remote → remove them (stop any local service they started first).
+  remote → remove them (stop any local service they started first). A path that also
+  appears in `deadWorktrees` follows that bullet's recovery (patch, push) before removal;
+  this bullet's plain removal is for worktrees with nothing left to save.
 - `deadWorktrees` — `{ path, branch, pid, dirty, unpushed }`: linked worktrees locked by a
   pid that no longer exists. Claude Code locks an agent's worktree only while that agent
   runs (`claude agent agent-<id> (pid <N> ...)`) and removes the lock on a clean exit — the
@@ -70,8 +72,10 @@ left by the last one, for an offline check against the last fetch. Fields:
   --porcelain` prints anything; `unpushed` is the count of commits on the worktree's `HEAD`
   not on `origin/<branch>`, or `null` when there is no such remote branch. Recover before
   removing, for each entry:
-  1. If `dirty`: `git -C <path> diff > <patch>` — save the patch path; it is handed to the
-     round N+1 implementer as a draft to verify, test committed first, not applied as-is.
+  1. If `dirty`: `git -C <path> add -N . && git -C <path> diff > <patch>` — the `add -N`
+     (intent-to-add) makes untracked files show up in the diff without staging their
+     content. Save the patch path; it is handed to the round N+1 implementer as a draft to
+     verify, test committed first, not applied as-is.
   2. If `unpushed > 0`: `git push origin <branch>` (fast-forward, never force).
   3. `git worktree unlock <path> && git worktree remove --force <path>`; then treat its
      issue as `resumable`.
