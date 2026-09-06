@@ -34,11 +34,9 @@ case "\${1:-} \${2:-}" in
   {"number":21,"title":"In progress stale","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":30,"title":"In review green approved","body":"","labels":[{"name":"state:in-review"}]},
   {"number":31,"title":"In review red","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":40,"title":"In review dedupe green","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":41,"title":"In review dedupe red latest failure","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":40,"title":"In review pending checks","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":41,"title":"In review gh pr checks prints non-JSON","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":42,"title":"In review cancelled check reads red","body":"","labels":[{"name":"state:in-review"}]},
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
@@ -58,36 +56,42 @@ JSON
   "pr list")
     cat <<'JSON'
 [
-  {"number":100,"headRefName":"feat/20-x","labels":[],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null},
-  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null},
-  {"number":131,"headRefName":"feat/31-z","labels":[],"statusCheckRollup":[{"state":"FAILURE"}],"reviewDecision":null},
-  {"number":140,"headRefName":"feat/40-dedupe-green","labels":[],"statusCheckRollup":[
-    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED"},
-    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS"},
-    {"name":"test (node)","status":"COMPLETED","conclusion":"SUCCESS"},
-    {"name":"test (bun)","status":"COMPLETED","conclusion":"SUCCESS"},
-    {"name":"negative-control","status":"COMPLETED","conclusion":"CANCELLED"},
-    {"name":"negative-control","status":"COMPLETED","conclusion":"SUCCESS"}
-  ],"reviewDecision":null},
-  {"number":141,"headRefName":"feat/41-dedupe-red","labels":[],"statusCheckRollup":[
-    {"name":"scope","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T00:05:00Z","completedAt":"2026-01-01T00:06:00Z"},
-    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"}
-  ],"reviewDecision":null},
-  {"number":142,"headRefName":"feat/42-dedupe-pending","labels":[],"statusCheckRollup":[
-    {"name":"test (node)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z","completedAt":"2026-01-01T00:01:00Z"},
-    {"name":"test (node)","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-01-01T00:02:00Z","completedAt":null}
-  ],"reviewDecision":null},
-  {"number":143,"headRefName":"feat/43-running-not-red","labels":[],"statusCheckRollup":[
-    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
-    {"name":"scope","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-01-01T00:02:00Z","completedAt":null}
-  ],"reviewDecision":null},
-  {"number":144,"headRefName":"feat/44-running-completes-green","labels":[],"statusCheckRollup":[
-    {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
-    {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:02:00Z","completedAt":"2026-01-01T00:04:00Z"}
-  ],"reviewDecision":null},
-  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null}
+  {"number":100,"headRefName":"feat/20-x","labels":[],"reviewDecision":null},
+  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"reviewDecision":null},
+  {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null},
+  {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
+  {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
+  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null}
 ]
 JSON
+    ;;
+  "pr checks")
+    case "\${3:-}" in
+      130)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pass"}]'
+        ;;
+      131)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"fail"}]'
+        exit 1
+        ;;
+      140)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pending"}]'
+        exit 8
+        ;;
+      141)
+        echo "gh: 1 of 2 checks still pending"
+        exit 1
+        ;;
+      142)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel"}]'
+        exit 1
+        ;;
+      *)
+        echo "fake-gh: unknown pr checks: $*" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     echo "fake-gh: unknown command: $*" >&2
@@ -115,11 +119,9 @@ for (const branch of [
   'feat/20-x',
   'feat/30-y',
   'feat/31-z',
-  'feat/40-dedupe-green',
-  'feat/41-dedupe-red',
-  'feat/42-dedupe-pending',
-  'feat/43-running-not-red',
-  'feat/44-running-completes-green',
+  'feat/40-pending-checks',
+  'feat/41-nonjson-checks',
+  'feat/42-cancelled-check',
   'feat/50-prune-target',
   'feat/60-shadowed',
 ]) {
@@ -380,39 +382,29 @@ const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
 check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
 check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.checks === 'red' && inReview31?.reviewApproved === false, JSON.stringify(inReview31));
 
-// --- AC1/AC2: dedupe superseded check runs before classifying --------------
+// --- AC1: checks comes from `gh pr checks <pr> --json name,bucket`, not the
+// `gh pr list` rollup. `bucket` is the five-way classification (pass, fail,
+// pending, skipping, cancel) `gh` itself computes from the raw per-check
+// state — reconcile reads that instead of re-deriving green/red/pending from
+// raw CheckConclusionState strings (SUCCESS, FAILURE, ...) the way the old
+// rollup code did. -----------------------------------------------------------
 const inReview40 = (out?.inReview ?? []).find((i: any) => i.number === 40);
 const inReview41 = (out?.inReview ?? []).find((i: any) => i.number === 41);
 const inReview42 = (out?.inReview ?? []).find((i: any) => i.number === 42);
 check(
-  'in-review dedupes superseded CANCELLED runs to green (the raw #20 rollup)',
-  inReview40?.pr === 140 && inReview40?.checks === 'green',
+  'in-review reads pending when gh pr checks reports a check still pending',
+  inReview40?.pr === 140 && inReview40?.checks === 'pending',
   JSON.stringify(inReview40),
 );
 check(
-  'in-review reads red when the latest run of a check is FAILURE, even though an older run of the same check succeeded',
-  inReview41?.pr === 141 && inReview41?.checks === 'red',
+  'in-review reads pending when gh pr checks exits non-zero with non-JSON stdout, instead of erroring the whole pass',
+  inReview41?.pr === 141 && inReview41?.checks === 'pending',
   JSON.stringify(inReview41),
 );
 check(
-  'in-review reads pending when the latest run of a check is still IN_PROGRESS',
-  inReview42?.pr === 142 && inReview42?.checks === 'pending',
+  'in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")',
+  inReview42?.pr === 142 && inReview42?.checks === 'red',
   JSON.stringify(inReview42),
-);
-
-// --- AC1/AC2 (#24): order by startedAt, not completedAt, so a running check
-// never reads red because of the cancelled predecessor it replaced ---------
-const inReview43 = (out?.inReview ?? []).find((i: any) => i.number === 43);
-const inReview44 = (out?.inReview ?? []).find((i: any) => i.number === 44);
-check(
-  'in-review reads pending for a running check whose cancelled predecessor completed later than it started',
-  inReview43?.pr === 143 && inReview43?.checks === 'pending',
-  JSON.stringify(inReview43),
-);
-check(
-  'in-review reads green once the running check succeeds, still after its cancelled predecessor completed later than it started',
-  inReview44?.pr === 144 && inReview44?.checks === 'green',
-  JSON.stringify(inReview44),
 );
 
 const orphanRealpath = realpathSync(worktreeDir);
