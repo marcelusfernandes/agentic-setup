@@ -21,20 +21,31 @@ One Claude Code session at the repository root (not in a worktree), running
    in-progress with no PR and no remote branch → ready (`stale`)
    in-review with green CI and review:approved → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
-1. read state:ready issues of the current milestone with no open dependency
-2. pick up to 4 whose globs do not intersect
-3. for each: push the remote branch <type>/<n>-<slug> (the lock; skip if it exists),
-   assign, label in-progress, launch an `implementer` in its own worktree with the
-   whole issue in the prompt
+1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
+   dispatch only `ok: true` (`--strict` folds its `warnings` into `ok` for
+   type:feature/type:bug); a `failures` entry drops the candidate, a `sequenced`
+   overlap does not
+2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
+   already checked this against the milestone's other in-flight issues)
+3. for each: `scripts/claim.mts <n> --slug <slug>` pushes the remote branch
+   <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
+   in-progress, then launch an `implementer` in its own worktree with the whole
+   issue in the prompt
 4. PR opened → launch a `reviewer` (read-only) and wait for CI
-5. green checks + review:approved → squash merge → label done → back to 1
+5. green checks + review:approved (or type:docs) → `scripts/land.mts <pr>` re-reads
+   the PR live and merges only if it will be accepted, labelling done and removing
+   the worktree only after `gh pr view` itself reports MERGED → back to 1
+   `land.mts` refused → read `missing`: a still-running required check waits
+   (`--wait <seconds>`); anything else (stale branch, red check, no approval) sends
+   the PR back — never a retry with `--admin`
    rejected (CI or reviewer) → back to the implementer with the summary (round 2)
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
    a published branch)
    second rejection → state:blocked + human, comment with the summary, move on
      (exception: a mechanical defect with the exact fix named by the reviewer earns
       one short extra round; a rejection with judgment pending blocks)
-6. docs-only PR (`docs/**`, `CLAUDE.md`, `.claude/**`) → merge on green CI, no reviewer
+6. docs-only PR (`docs/**`, `CLAUDE.md`, `.claude/**`) → `land.mts` merges on green
+   CI, no reviewer required
 7. pass with nothing to do → summary of what is blocked on the parent issue;
    milestone with no open issue → open the next milestone's parent issue
 ```
@@ -121,4 +132,11 @@ production-affecting decision; a product decision the docs do not cover; **an is
   disjoint globs is the practical number.
 - The implementer does not wait on CI. Polling CI burns tokens; the reviewer follows the
   checks and the orchestrator reconciles.
+- **The check re-run window.** A label change (or a push) re-triggers `agentic-checks`, so
+  a PR the orchestrator saw as green a moment earlier can have a required check back to
+  `IN_PROGRESS` by the time it acts. `land.mts` reads the state at the moment of its own
+  call (`gh pr view`, evaluated fresh, not the reconcile snapshot) and refuses rather than
+  acting on stale information — this is what closed the M1 gap where the orchestrator
+  relabelled an issue `state:done` on read state the server no longer agreed with
+  (`docs/decisions.md` item 11).
 - Agent Teams do not isolate in worktrees; the loop does not use them.
