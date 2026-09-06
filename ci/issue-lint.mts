@@ -20,7 +20,9 @@
 // AC5 (`Blocked by:` numbers exist) always calls `gh issue view` for each
 // number, in both modes — a fake `gh` on PATH covers it in tests.
 //
-// Output: JSON `{ issue, ok, failures, warnings }` on stdout by default;
+// Output: JSON `{ issue, ok, failures, warnings, globs, sequenced }` on
+// stdout by default — `globs`/`sequenced` are additive to the four keys
+// AC6 names, reporting AC2's `new` status and AC3's blocked-by exception.
 // `failures`/`warnings` entries are either a plain string or, for AC3
 // (glob overlap) and AC4 (entry-point reference), the object shape the
 // issue's acceptance criteria name. --markdown prints a Markdown rendering
@@ -42,9 +44,20 @@ const MARKER = '<!-- agentic-issue-lint -->';
 const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
 const EXCLUDE_GLOBS = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock*', 'docs/research/**'];
 
+const GH_LIST_LIMIT = '500'; // gh defaults to 30; a milestone can hold more in-flight issues
+
 type Failure = string | { issue: number; files: string[] };
 type Warning = { file: string; referencedBy: string };
-type Result = { issue: number | null; ok: boolean; failures: Failure[]; warnings: Warning[] };
+type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number };
+type Sequenced = { issue: number; files: string[] };
+type Result = {
+  issue: number | null;
+  ok: boolean;
+  failures: Failure[];
+  warnings: Warning[];
+  globs: GlobReport[];
+  sequenced: Sequenced[];
+};
 
 const args = parseArgs(process.argv.slice(2));
 const rawArgv = process.argv.slice(2);
@@ -115,7 +128,7 @@ if (typeof args['issue-body-file'] === 'string') {
   if (!milestoneTitle) {
     others = [];
   } else {
-    const listRaw = gh(['issue', 'list', '--milestone', milestoneTitle, '--state', 'open', '--json', 'number,labels,body']);
+    const listRaw = gh(['issue', 'list', '--milestone', milestoneTitle, '--state', 'open', '--limit', GH_LIST_LIMIT, '--json', 'number,labels,body']);
     let list: any[];
     try {
       list = JSON.parse(listRaw);
@@ -175,6 +188,7 @@ function parentExists(glob: string): boolean {
   }
 }
 
+const globs: GlobReport[] = [];
 for (const glob of issueGlobs) {
   let regex: RegExp;
   try {
@@ -184,13 +198,18 @@ for (const glob of issueGlobs) {
     continue;
   }
   const matches = trackedFiles.filter((f) => regex.test(f));
-  if (matches.length === 0 && !parentExists(glob)) {
+  if (matches.length > 0) {
+    globs.push({ glob, status: 'matched', matches: matches.length });
+  } else if (parentExists(glob)) {
+    globs.push({ glob, status: 'new', matches: 0 });
+  } else {
     failures.push(`glob matches no tracked file and has no existing parent directory: ${glob}`);
   }
 }
 
 // --- AC3: disjointness against issues in flight in the same milestone -----
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, issueGlobs));
+const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
   const otherGlobs = parseIssueGlobs(other.body);
@@ -198,29 +217,33 @@ for (const other of others) {
   const overlapFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
   if (overlapFiles.length === 0) continue;
   const otherBlockedBy = blockedBy(other.body) ?? [];
-  const sequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
-  if (!sequenced) failures.push({ issue: other.number, files: overlapFiles });
+  const isSequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
+  if (isSequenced) sequenced.push({ issue: other.number, files: overlapFiles });
+  else failures.push({ issue: other.number, files: overlapFiles });
 }
 
 // --- AC4: entry-point references — files outside the issue's globs that
-// mention a covered file's path or basename -------------------------------
+// mention a covered file's path or basename. `git grep` runs with no
+// pathspec (it only ever searches tracked files) so the argument list stays
+// small even in a large repository; the outside/exclude filtering happens
+// here in Node against the hit list instead. -------------------------------
 const coveredSet = new Set(selfMatchedFiles);
-const outsideFiles = trackedFiles.filter((f) => !coveredSet.has(f) && !matchesAny(f, EXCLUDE_GLOBS));
-if (outsideFiles.length > 0) {
+const outsideFiles = new Set(trackedFiles.filter((f) => !coveredSet.has(f) && !matchesAny(f, EXCLUDE_GLOBS)));
+if (outsideFiles.size > 0) {
   for (const covered of selfMatchedFiles) {
     const base = basename(covered);
     const patterns = ['-e', covered];
     if (!(base.length < 4 || /^index\./i.test(base) || base === 'README.md')) {
       patterns.push('-e', base);
     }
-    const r = spawnSync('git', ['grep', '-I', '-l', '-F', ...patterns, '--', ...outsideFiles], {
+    const r = spawnSync('git', ['grep', '-I', '-l', '-F', ...patterns], {
       cwd: root,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
     });
     if (r.status === 0) {
       for (const hit of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
-        warnings.push({ file: covered, referencedBy: hit });
+        if (outsideFiles.has(hit)) warnings.push({ file: covered, referencedBy: hit });
       }
     } else if (r.status !== 1 && r.status !== null) {
       failures.push(`git grep failed while checking references to ${covered}: ${r.stderr.trim().split('\n')[0]}`);
@@ -254,8 +277,19 @@ function renderMarkdown(result: Result): string {
     for (const w of result.warnings) lines.push(`- \`${w.file}\` is referenced by \`${w.referencedBy}\``);
     lines.push('');
   }
+  if (result.sequenced.length > 0) {
+    lines.push('**Sequenced** (overlap accepted — a Blocked-by relation orders these issues):', '');
+    for (const s of result.sequenced) lines.push(`- #${s.issue}: ${s.files.map((x) => `\`${x}\``).join(', ')}`);
+    lines.push('');
+  }
+  const newGlobs = result.globs.filter((g) => g.status === 'new');
+  if (newGlobs.length > 0) {
+    lines.push('**New** (glob names no tracked file yet, but its parent directory exists):', '');
+    for (const g of newGlobs) lines.push(`- \`${g.glob}\``);
+    lines.push('');
+  }
   return lines.join('\n');
 }
 
 const ok = failures.length === 0 && (!strict || warnings.length === 0);
-output({ issue: issueNumber, ok, failures, warnings });
+output({ issue: issueNumber, ok, failures, warnings, globs, sequenced });

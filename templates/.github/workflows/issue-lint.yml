@@ -19,6 +19,10 @@ on:
   issues:
     types: [opened, edited, milestoned]
 
+concurrency:
+  group: issue-lint-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   issues: write
@@ -42,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$ISSUE_BODY" > issue-body.md
-          gh issue list --milestone "$MILESTONE" --state open --json number,labels,body > milestone-issues.json
+          gh issue list --milestone "$MILESTONE" --state open --limit 500 --json number,labels,body > milestone-issues.json
       - name: issue-lint
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,8 +64,11 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
-          existing="$(gh issue view "$ISSUE" --json comments \
-            --jq '[.comments[] | select(.body | startswith("<!-- agentic-issue-lint -->"))][0].id // empty')"
+          [ -f comment.md ] || exit 0
+          # REST, not `gh issue view --json comments` (GraphQL node ids), so
+          # the id matches what the PATCH below (also REST) expects.
+          existing="$(gh api "repos/{owner}/{repo}/issues/$ISSUE/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- agentic-issue-lint -->"))][0].id // empty')"
           if [ -n "$existing" ]; then
             gh api -X PATCH "repos/{owner}/{repo}/issues/comments/$existing" -F body=@comment.md
           else

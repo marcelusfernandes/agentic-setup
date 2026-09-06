@@ -124,7 +124,21 @@ check('## Dependencies with no "Blocked by:" line fails', noBlockedByLine.status
 
 // --- AC2: globs must parse and match something -----------------------------
 const newFile = lint(107, issueBody({ files: '## Files\n- `tests/newfile.mts`\n' }));
+const newFileOut = parse(newFile.out);
 check('a glob matching no tracked file, but whose parent dir exists, passes ("new")', newFile.status === 0, newFile.out);
+check(
+  'the "new" glob is reported in globs: [{ glob, status: "new" }]',
+  Array.isArray(newFileOut?.globs) && newFileOut.globs.some((g: any) => g.glob === 'tests/newfile.mts' && g.status === 'new'),
+  newFile.out,
+);
+
+const matchedGlob = lint(1070, issueBody());
+const matchedGlobOut = parse(matchedGlob.out);
+check(
+  'a glob matching tracked files is reported in globs: [{ glob, status: "matched", matches }]',
+  Array.isArray(matchedGlobOut?.globs) && matchedGlobOut.globs.some((g: any) => g.glob === 'tests/**' && g.status === 'matched' && g.matches >= 1),
+  matchedGlob.out,
+);
 
 const noParent = lint(108, issueBody({ files: '## Files\n- `nonexistent-dir/file.ts`\n' }));
 check('a glob matching no tracked file and with no existing parent dir fails', noParent.status === 1, noParent.out);
@@ -147,6 +161,11 @@ const sequencedOut = parse(sequenced.out);
 check(
   'two ready issues that overlap are not a failure when one is blocked by the other (sequenced)',
   sequenced.status === 0 && !(sequencedOut?.failures ?? []).some((f: any) => f?.issue === 201),
+  sequenced.out,
+);
+check(
+  'the sequenced overlap is reported in sequenced: [{ issue, files }] instead of failures',
+  Array.isArray(sequencedOut?.sequenced) && sequencedOut.sequenced.some((s: any) => s?.issue === 201 && s?.files?.includes('tests/smoke.mts')),
   sequenced.out,
 );
 
