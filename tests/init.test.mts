@@ -45,6 +45,10 @@ const zero = '0'.repeat(40);
 check('pre-push refuses a push to main', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`).status === 1);
 check('pre-push allows a new work branch', pre(`refs/heads/feat/1-x ${sha} refs/heads/feat/1-x ${zero}\n`).status === 0);
 check('pre-push honours the bootstrap valve', pre(`refs/heads/main ${sha} refs/heads/main ${zero}\n`, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0);
+// #72: the bootstrap valve lifts "push to main" only, never "delete main" —
+// a zero local sha against refs/heads/main is a remote deletion.
+check('pre-push valve does not cover deleting main', pre(`refs/heads/main ${zero} refs/heads/main ${sha}\n`, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 1);
+check('pre-push allows deleting a work branch', pre(`refs/heads/feat/1-x ${zero} refs/heads/feat/1-x ${sha}\n`).status === 0);
 
 // --dry-run: an adopter previews what init would do; nothing is written, and
 // the report of the dry run matches the report of the real run that follows.
