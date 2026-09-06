@@ -37,15 +37,17 @@ left by the last one, for an offline check against the last fetch. Fields:
   `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
   step 1's candidate list — no separate query needed.
 - `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
-  that are not `resumable` (below) — an open PR, a branch checked out in a local
-  worktree of this checkout (an agent of this checkout may be alive), or no remote
-  branch at all. `pr` is the open PR's number on that branch, or `null`.
+  that are not `resumable` (below) — an open PR, a branch checked out in a *live* local
+  worktree of this checkout (an agent of this checkout may be alive — a worktree in
+  `deadWorktrees` does not count), or no remote branch at all. `pr` is the open PR's
+  number on that branch, or `null`.
 - `resumable` — `{ number, branch, commitsAheadOfMain }`: `state:in-progress` issues with
-  a remote branch, no open PR, and no local worktree checked out on that branch. A fresh
-  orchestrator session has no live agents by definition, so this is not "an implementer
-  is working right now" — it is round N+1 of that issue, resumed from `origin/<branch>`
-  (skill `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer
-  never pushed past the lock branch's starting point.
+  a remote branch, no open PR, and no *live* local worktree checked out on that branch
+  (a worktree in `deadWorktrees` does not count as a checkout). A fresh orchestrator
+  session has no live agents by definition, so this is not "an implementer is working
+  right now" — it is round N+1 of that issue, resumed from `origin/<branch>` (skill
+  `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer never
+  pushed past the lock branch's starting point.
 - `inReview` — `{ number, pr, checks, reviewApproved }`: `state:in-review` issues.
   `checks` is `'green'`, `'red'` or `'pending'` from the PR's status rollup;
   `reviewApproved` is the `review:approved` label or an `APPROVED` review. Checks green
@@ -54,6 +56,18 @@ left by the last one, for an offline check against the last fetch. Fields:
   branch → back to `state:ready`.
 - `orphanWorktrees` — paths of linked worktrees whose branch no longer exists on the
   remote → remove them (stop any local service they started first).
+- `deadWorktrees` — `{ path, branch, pid }`: linked worktrees locked by a pid that no
+  longer exists. Claude Code locks an agent's worktree only while that agent runs
+  (`claude agent agent-<id> (pid <N> ...)`) and removes the lock on a clean exit — the
+  worktree stays, unlocked; a killed session leaves the lock behind, still naming the
+  now-dead pid. When `process.kill(N, 0)` throws `ESRCH`, the worktree does not count as
+  a live agent's checkout, so its issue is already reported `resumable` above, not
+  `inProgress` — this list is only for cleanup. For each entry, before step 3: `git
+  worktree unlock <path> && git worktree remove --force <path>`; then treat its issue as
+  `resumable`. This narrows, but does not close, the restart gap (`docs/orchestration.md`,
+  Known limits): an unlocked
+  leftover worktree (its agent finished without a PR, in a session since dead) still
+  reads `inProgress` and needs a person, or a future liveness signal, to resolve.
 
 A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
 rather than guessing the state.

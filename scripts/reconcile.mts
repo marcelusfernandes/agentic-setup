@@ -23,11 +23,14 @@
 //     inProgress: [{ number, branch, hasRemoteBranch, pr }],  // pr: number | null
 //     resumable: [{ number, branch, commitsAheadOfMain }],    // in-progress, remote
 //                                                              // branch, no open PR, not
-//                                                              // checked out in any local
-//                                                              // worktree of this checkout
+//                                                              // checked out in any *live*
+//                                                              // local worktree of this
+//                                                              // checkout (dead-locked ones
+//                                                              // don't count)
 //     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved }],
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
+//     deadWorktrees: [{ path, branch, pid }],                  // locked by a pid that no longer exists
 //   }
 //
 // A fresh orchestrator session has no live agents by definition, so an
@@ -36,8 +39,26 @@
 // it is resumable: round N+1 from `origin/<branch>` (skills/safe-worktree
 // §C). Classification order for an in-progress issue: open PR -> inProgress
 // (with pr); else no remote branch -> stale; else branch checked out in a
-// local worktree of this checkout -> inProgress (pr: null); else ->
+// *live* local worktree of this checkout -> inProgress (pr: null); else ->
 // resumable, and it is removed from inProgress.
+//
+// Claude Code locks an agent worktree only while that agent runs, with a
+// reason of the form `claude agent agent-<id> (pid <N> start <date>)`; it
+// removes the lock on a clean exit (the worktree stays, unlocked), but a
+// killed session leaves the lock behind, still naming the now-dead pid. A
+// worktree whose lock names a pid that `process.kill(N, 0)` reports gone
+// (ESRCH) does not count as a live agent's checkout, so its branch does not
+// block `resumable` — the worktree is instead listed in `deadWorktrees` for
+// the orchestrator to remove (`git worktree unlock` then `remove --force`)
+// before dispatching round N+1. A worktree with no lock, a lock with no pid
+// in its reason (or `pid <= 0`, which signals nothing and proves nothing),
+// or a lock whose pid is alive (or whose signal fails with EPERM — no
+// permission to signal it is not evidence it is gone) is treated exactly as
+// before: alive, still "checked out". This narrows, but does not close, the
+// #46 restart gap: an agent that finished *without* opening a PR, in a
+// session that has since died, leaves an unlocked worktree indistinguishable
+// from a live session's paused agent — that residual still reads
+// `inProgress` and needs a person, or a future liveness signal, to resolve.
 //
 // GitHub data comes only from `gh` (issue list, pr list, api); worktree and
 // branch data from `git worktree list --porcelain` and (after `git fetch
@@ -208,16 +229,48 @@ function defaultBranchName(): string {
 }
 const defaultBranch = defaultBranchName();
 
-// 6. worktrees; the first block from `git worktree list` is always the main one.
+// A `pid <N>` a Claude Code lock reason names, tested against the live
+// process table: no throw -> alive; ESRCH -> gone; anything else (EPERM: no
+// permission to signal it, or an unexpected errno) -> alive, fail safe —
+// never remove a worktree that might still be in use (AC4).
+function isPidAlive(pid: number): boolean {
+  // A `\d+` capture cannot itself produce a negative or non-numeric pid, but
+  // guard anyway: `pid <= 0` (a bare "pid 0", or a NaN from an unparsable
+  // capture) is not a real, signalable process — signal 0 to pid 0 hits the
+  // caller's own process group and proves nothing, so treat it as no
+  // evidence rather than asking `process.kill` to answer a question it was
+  // never asked. No evidence -> alive, same as a lock with no pid at all.
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+// 6. worktrees; the first block from `git worktree list` is always the main
+// one. A `locked` line with no reason on it, or a reason with no `pid <N>` in
+// it, is treated as alive: no evidence the process is gone.
 const worktrees = git(['worktree', 'list', '--porcelain'])
   .split(/\n{2,}/)
   .map((b) => b.trim())
   .filter(Boolean)
-  .map((block) => ({
-    path: block.match(/^worktree\s+(.*)$/m)?.[1] ?? '',
-    branch: block.match(/^branch\s+refs\/heads\/(.*)$/m)?.[1] ?? null,
-  }));
+  .map((block) => {
+    const lockedLine = block.match(/^locked(?:[ \t]+(.*))?$/m);
+    const pidMatch = lockedLine?.[1]?.match(/pid\s+(\d+)/);
+    const pid = pidMatch ? Number.parseInt(pidMatch[1], 10) : null;
+    return {
+      path: block.match(/^worktree\s+(.*)$/m)?.[1] ?? '',
+      branch: block.match(/^branch\s+refs\/heads\/(.*)$/m)?.[1] ?? null,
+      dead: lockedLine !== null && pid !== null && !isPidAlive(pid),
+      pid,
+    };
+  });
 const linkedWorktrees = worktrees.slice(1);
+const deadWorktrees = linkedWorktrees
+  .filter((w) => w.dead)
+  .map((w) => ({ path: w.path, branch: w.branch, pid: w.pid as number }));
 
 function branchFor(number: number): string | null {
   const re = new RegExp(`^[a-z]+/${number}-`);
@@ -233,10 +286,16 @@ const ready = issues
   .map((i) => ({ number: i.number, title: i.title, blockedBy: parseBlockedBy(i.body ?? '') }))
   .filter((i) => i.blockedBy.every((n) => closedNumbers.has(n)));
 
-// Branches checked out in any local worktree of this checkout (the main
-// worktree included) — an issue whose lock branch is checked out here may
-// have a live agent, even before it has opened a PR.
-const checkedOutBranches = new Set(worktrees.map((w) => w.branch).filter((b): b is string => b !== null));
+// Branches checked out in any *live* local worktree of this checkout (the
+// main worktree included) — an issue whose lock branch is checked out here
+// may have a live agent, even before it has opened a PR. A worktree whose
+// lock names a dead pid does not count: no evidence an agent is alive there.
+const checkedOutBranches = new Set(
+  worktrees
+    .filter((w) => !w.dead)
+    .map((w) => w.branch)
+    .filter((b): b is string => b !== null),
+);
 
 // Fully-qualified `refs/remotes/origin/...` on both sides, not the short
 // `origin/<x>` form: git's revision resolution for a short name prefers a
@@ -258,8 +317,9 @@ const inProgressAll = issues
     return { number: i.number, branch, hasRemoteBranch: branch !== null, pr: pr ? pr.number : null };
   });
 
-// Resumable: a remote branch, no open PR, not checked out in any local
-// worktree of this checkout — see the header comment for the classification
+// Resumable: a remote branch, no open PR, not checked out in any *live*
+// local worktree of this checkout (checkedOutBranches already excludes
+// dead-locked worktrees) — see the header comment for the classification
 // order and rationale.
 const resumable = inProgressAll
   .filter((i) => i.pr === null && i.branch !== null && !checkedOutBranches.has(i.branch))
@@ -287,4 +347,4 @@ const stale = inProgress
 
 const orphanWorktrees = linkedWorktrees.filter((w) => w.branch && !remoteHeads.has(w.branch)).map((w) => w.path);
 
-console.log(JSON.stringify({ milestone, ready, inProgress, resumable, inReview, stale, orphanWorktrees }, null, 2));
+console.log(JSON.stringify({ milestone, ready, inProgress, resumable, inReview, stale, orphanWorktrees, deadWorktrees }, null, 2));

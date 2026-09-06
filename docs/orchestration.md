@@ -148,7 +148,20 @@ production-affecting decision; a product decision the docs do not cover; **an is
   one by label state alone.** If the orchestrator process dies (an OS kill, low memory)
   mid-pass, every issue it had claimed stays `state:in-progress` with a pushed lock
   branch and no PR — indistinguishable, from labels alone, from an implementer still
-  working. `reconcile.mts`'s `resumable` list narrows this gap: a fresh session has no
-  live agents by definition, so an in-progress issue whose branch is not checked out in
-  any local worktree of this checkout is resumed as round N+1 from `origin/<branch>`,
-  not reclaimed.
+  working. A local worktree checked out on that branch is not proof either, but it is
+  evidence with a known shape: Claude Code locks an agent's worktree only while that
+  agent runs, with a reason of the form `claude agent agent-<id> (pid <N> start
+  <date>)`; it removes the lock on a clean exit (the worktree stays, unlocked), but a
+  killed session leaves the lock behind, still naming the now-dead pid — exactly the
+  incident above. `reconcile.mts`'s `resumable` list narrows this gap: it reads that
+  lock and signals the pid it names (`process.kill(N, 0)`); when it is gone (`ESRCH`)
+  the worktree does not count as a live checkout — its issue is `resumable` and the
+  worktree itself is listed in `deadWorktrees` for the orchestrator to remove. A
+  worktree with no lock, no pid in its lock reason (or `pid <= 0`, which proves
+  nothing), or a pid that is still alive (or cannot be signalled for permission reasons
+  — fail safe) is treated as a live checkout, so its issue stays `inProgress`. The gap
+  the lock cannot narrow: an agent that finished *without* opening a PR, in a session
+  that has since died, leaves its worktree unlocked — indistinguishable, by this rule,
+  from a live session's paused agent. That residual still reads `inProgress` and needs
+  a person, or a future liveness signal, to resolve. Either way, a `resumable` issue is
+  resumed as round N+1 from `origin/<branch>`, not reclaimed.
