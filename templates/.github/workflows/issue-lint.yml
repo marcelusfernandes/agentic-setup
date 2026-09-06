@@ -58,13 +58,13 @@ jobs:
             --milestone-issues-file milestone-issues.json \
             --markdown > comment.md
       - name: comment
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
-          [ -f comment.md ] || exit 0
+          [ -s comment.md ] || exit 0
           # REST, not `gh issue view --json comments` (GraphQL node ids), so
           # the id matches what the PATCH below (also REST) expects.
           existing="$(gh api "repos/{owner}/{repo}/issues/$ISSUE/comments" --paginate \

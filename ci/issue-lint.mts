@@ -71,7 +71,12 @@ function output(result: Result): never {
 }
 
 function fail(message: string): never {
-  console.log(JSON.stringify({ error: message }));
+  // Always starts with MARKER under --markdown, same as a normal result: a
+  // workflow run that dies here (bad milestone-issues.json, git ls-files
+  // failure, gh unreachable) still leaves a comment the next run's
+  // `startswith` lookup finds, instead of posting a marker-less orphan that
+  // duplicates on the next run.
+  console.log(markdown ? `${MARKER}\n### issue-lint: ERROR\n\n${message}\n` : JSON.stringify({ error: message }));
   process.exit(1);
 }
 
@@ -188,6 +193,20 @@ function parentExists(glob: string): boolean {
   }
 }
 
+/** globs that fail to parse are excluded here (already a failure of their
+ * own); a malformed glob from this issue, or from another issue's body,
+ * must never crash `matchesAny` downstream (AC3/AC4). */
+function validGlobsOnly(list: string[]): string[] {
+  return list.filter((g) => {
+    try {
+      globToRegExp(g);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 const globs: GlobReport[] = [];
 for (const glob of issueGlobs) {
   let regex: RegExp;
@@ -206,13 +225,14 @@ for (const glob of issueGlobs) {
     failures.push(`glob matches no tracked file and has no existing parent directory: ${glob}`);
   }
 }
+const validSelfGlobs = validGlobsOnly(issueGlobs);
 
 // --- AC3: disjointness against issues in flight in the same milestone -----
-const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, issueGlobs));
+const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, validSelfGlobs));
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
-  const otherGlobs = parseIssueGlobs(other.body);
+  const otherGlobs = validGlobsOnly(parseIssueGlobs(other.body));
   if (otherGlobs.length === 0) continue;
   const overlapFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
   if (overlapFiles.length === 0) continue;

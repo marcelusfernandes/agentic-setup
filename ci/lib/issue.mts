@@ -38,9 +38,11 @@ export function checkboxes(section: string | null): Checkbox[] {
  * `Blocked by: #3, #4` (or `none`) from the issue body's `## Dependencies`
  * section (falling back to the whole body if the section itself is
  * missing, so a malformed heading still yields an answer for this one
- * check). Returns `null` when no `Blocked by:` line exists at all — the
- * caller treats that as a missing-section failure, distinct from an empty
- * array (`none`, or a line with no `#N` in it).
+ * check). A bare number (`Blocked by: 32`, no `#`) is accepted too — the
+ * `#` is a formatting convention, not the signal. Returns `null` when no
+ * `Blocked by:` line exists at all — the caller treats that as a
+ * missing-section failure, distinct from an empty array (`none`, or a line
+ * with no number in it).
  */
 export function blockedBy(body: string): number[] | null {
   const section = extractSection(body, 'Dependencies') ?? body;
@@ -51,5 +53,5 @@ export function blockedBy(body: string): number[] | null {
   if (!line) return null;
   const rest = line.replace(/^blocked by:/i, '').trim();
   if (/^none\b/i.test(rest)) return [];
-  return [...rest.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
+  return [...rest.matchAll(/#?(\d+)/g)].map((m) => Number(m[1]));
 }
