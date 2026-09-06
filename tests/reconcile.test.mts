@@ -39,7 +39,8 @@ case "\${1:-} \${2:-}" in
   {"number":42,"title":"In review dedupe pending latest in-progress","body":"","labels":[{"name":"state:in-review"}]},
   {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
   {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
-  {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -78,7 +79,8 @@ JSON
   {"number":144,"headRefName":"feat/44-running-completes-green","labels":[],"statusCheckRollup":[
     {"name":"scope","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T00:01:00Z","completedAt":"2026-01-01T00:03:00Z"},
     {"name":"scope","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T00:02:00Z","completedAt":"2026-01-01T00:04:00Z"}
-  ],"reviewDecision":null}
+  ],"reviewDecision":null},
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"statusCheckRollup":[{"state":"SUCCESS"}],"reviewDecision":null}
 ]
 JSON
     ;;
@@ -114,11 +116,30 @@ for (const branch of [
   'feat/43-running-not-red',
   'feat/44-running-completes-green',
   'feat/50-prune-target',
+  'feat/60-shadowed',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
 }
 git(['checkout', '-q', 'main'], repo);
+
+// A real clone sets refs/remotes/origin/HEAD; `git init` + `remote add`
+// (used above) never does on its own, so recreate it explicitly.
+git(['push', '-q', 'origin', 'main'], repo);
+git(['fetch', '-q', 'origin'], repo);
+git(['remote', 'set-head', 'origin', 'main'], repo);
+
+// A plain local branch that shadows a remote-tracking ref one level down:
+// `refs/heads/origin/feat/60-shadowed` next to `refs/remotes/origin/feat/
+// 60-shadowed`. `%(refname:short)` picks the *shortest unambiguous* form —
+// with this shadow present it renders the tracking ref as
+// "remotes/origin/feat/60-shadowed" instead of "origin/feat/60-shadowed",
+// so the code's `.replace(/^origin\//, '')` no longer strips the prefix.
+// (A branch literally named "origin" cannot reproduce the closely related
+// origin/HEAD finding this way: its mere existence makes git disambiguate
+// origin/HEAD to "origin/HEAD" instead of the bogus "origin", which is
+// exactly the scenario git's own disambiguation is designed to avoid.)
+git(['branch', 'origin/feat/60-shadowed', 'main'], repo);
 
 const worktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-worktree-')), 'wt');
 cleanup(() => rmSync(worktreeDir, { recursive: true, force: true }));
@@ -167,6 +188,17 @@ check('in-progress with a remote branch and a PR', inProgress20?.branch === 'fea
 check('in-progress with neither PR nor remote branch', inProgress21?.branch === null && inProgress21?.hasRemoteBranch === false && inProgress21?.pr === null, JSON.stringify(inProgress21));
 
 check('stale lists only the issue with no PR and no remote branch', (out?.stale ?? []).length === 1 && out.stale[0].number === 21, JSON.stringify(out?.stale));
+
+// --- AC3: a remote-tracking ref shadowed by a same-named local branch one
+// level down must still resolve to its real (slash-bearing) branch name, not
+// leak `remotes/origin/...` (or worse, drop out entirely) because
+// `%(refname:short)` shortened it to a longer, ambiguity-avoiding form -----
+const inProgress60 = (out?.inProgress ?? []).find((i: any) => i.number === 60);
+check(
+  'in-progress resolves a remote branch whose tracking ref is shadowed by a same-named local branch one level down',
+  inProgress60?.branch === 'feat/60-shadowed' && inProgress60?.hasRemoteBranch === true && inProgress60?.pr === 160,
+  JSON.stringify(inProgress60),
+);
 
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
