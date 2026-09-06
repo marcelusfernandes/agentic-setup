@@ -336,6 +336,74 @@ check(
   newDirOverlap.out,
 );
 
+// AC4 (round 2 of #41): two issues each declaring a wildcard under the same
+// brand-new directory — neither glob matches a tracked file, and neither
+// declares a literal path, so comparing only matched tracked files and new
+// literal paths (as above) misses this entirely: both lint ok: true on the
+// unfixed branch. The fix compares each new wildcard's fixed directory
+// prefix too; two issues both declaring `newmod/**` share the same prefix
+// (`newmod/`), reported here (not the raw glob) as the overlapping path.
+const wildcardVsWildcardMilestone = milestoneFile([{ number: 207, labels: ['state:ready'], body: '## Files\n- `newmod/**`\n' }]);
+const wildcardVsWildcardOverlap = lint(1122, issueBody({ files: '## Files\n- `newmod/**`\n' }), { milestone: wildcardVsWildcardMilestone });
+const wildcardVsWildcardOverlapOut = parse(wildcardVsWildcardOverlap.out);
+check(
+  'two issues both declaring a wildcard over the same new directory overlap, with ok: false',
+  wildcardVsWildcardOverlap.status === 1 && wildcardVsWildcardOverlapOut?.ok === false,
+  wildcardVsWildcardOverlap.out,
+);
+check(
+  'the wildcard-vs-wildcard overlap carries { issue, files } naming the other issue and the shared new-directory prefix',
+  Array.isArray(wildcardVsWildcardOverlapOut?.failures) &&
+    wildcardVsWildcardOverlapOut.failures.some((f: any) => f?.issue === 207 && Array.isArray(f?.files) && f.files.includes('newmod/')),
+  wildcardVsWildcardOverlap.out,
+);
+
+// AC4 (round 2 of #41): the same hole, one directory level down — `newmod/**`
+// vs `newmod/sub/*.ts`. Neither glob matches a tracked file (both prefixes
+// are new), so this also lints ok: true on the unfixed branch. The narrower
+// prefix (`newmod/sub/`) is a subdirectory of the wider one (`newmod/`); the
+// fix's overlap rule is "one prefix startsWith the other", reporting both
+// prefixes.
+const wildcardVsNestedWildcardMilestone = milestoneFile([{ number: 208, labels: ['state:ready'], body: '## Files\n- `newmod/sub/*.ts`\n' }]);
+const wildcardVsNestedWildcardOverlap = lint(1123, issueBody({ files: '## Files\n- `newmod/**`\n' }), { milestone: wildcardVsNestedWildcardMilestone });
+const wildcardVsNestedWildcardOverlapOut = parse(wildcardVsNestedWildcardOverlap.out);
+check(
+  'a new-directory wildcard and a wildcard under one of its new subdirectories overlap, with ok: false',
+  wildcardVsNestedWildcardOverlap.status === 1 && wildcardVsNestedWildcardOverlapOut?.ok === false,
+  wildcardVsNestedWildcardOverlap.out,
+);
+check(
+  'the nested wildcard-vs-wildcard overlap carries { issue, files } naming the other issue and both new-directory prefixes',
+  Array.isArray(wildcardVsNestedWildcardOverlapOut?.failures) &&
+    wildcardVsNestedWildcardOverlapOut.failures.some(
+      (f: any) => f?.issue === 208 && Array.isArray(f?.files) && f.files.includes('newmod/') && f.files.includes('newmod/sub/'),
+    ),
+  wildcardVsNestedWildcardOverlap.out,
+);
+
+// AC3 (round 2 of #41): the same wildcard-vs-wildcard pair is not a failure
+// when one issue is blocked by the other — `sequenced` still applies to a
+// new-directory-prefix overlap, not just a matched-file or new-literal-path
+// one.
+const sequencedWildcardMilestone = milestoneFile([{ number: 209, labels: ['state:ready'], body: '## Files\n- `newmod/**`\n' }]);
+const sequencedWildcardOverlap = lint(
+  1124,
+  issueBody({ files: '## Files\n- `newmod/**`\n', deps: '## Dependencies\nBlocked by: #209\n' }),
+  { milestone: sequencedWildcardMilestone },
+);
+const sequencedWildcardOverlapOut = parse(sequencedWildcardOverlap.out);
+check(
+  'two wildcards over the same new directory are not a failure when one is blocked by the other (sequenced)',
+  sequencedWildcardOverlap.status === 0 && !(sequencedWildcardOverlapOut?.failures ?? []).some((f: any) => f?.issue === 209),
+  sequencedWildcardOverlap.out,
+);
+check(
+  'the sequenced wildcard-vs-wildcard overlap is reported in sequenced: [{ issue, files }] instead of failures',
+  Array.isArray(sequencedWildcardOverlapOut?.sequenced) &&
+    sequencedWildcardOverlapOut.sequenced.some((s: any) => s?.issue === 209 && s?.files?.includes('newmod/')),
+  sequencedWildcardOverlap.out,
+);
+
 // --- AC4: entry-point references (the #3 shape) -----------------------------
 // tests/** covers tests/smoke.mts, which .github/workflows/test.yml
 // references by path — the check that would have caught #3.
