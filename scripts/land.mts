@@ -5,42 +5,42 @@
 // read (rulesets, rollup dedupe, --wait polling) that can go stale between
 // being taken and the merge happening (#25's incident by construction).
 // `Closes #N` closes the linked issue when the PR merges — closed is done,
-// nothing left here to relabel. The worktree becomes an orphan once
-// --delete-branch runs; the next claim already removes orphaned worktrees.
+// nothing left here to relabel. The worktree becomes an orphan once GitHub
+// deletes the branch on merge (delete_branch_on_merge, init-enabled;
+// --delete-branch below is inert under --auto until then); the next claim
+// already removes orphaned worktrees.
 //
 //   node scripts/land.mts <pr>
 //
-// Refuses (exit 1, { refused, pr, missing }) unless the PR is OPEN and
-// carries review:approved / an APPROVED review, unless it is type:docs.
-// Then, only if the repository has no ruleset targeting branches (`gh api
-// repos/{owner}/{repo}/rulesets?targets=branch` returns none -- "any branch
-// ruleset exists" is the whole signal, no per-rule inspection), runs
-// `gh pr checks <pr> --required` and refuses if it is red or pending: the
-// free-plan fallback, where `--auto` alone would queue an ungated merge.
+// Refuses (exit 1, { refused, pr, missing }) unless OPEN and approved (or
+// type:docs). Then gate='ruleset' iff the PR base branch's *effective*
+// rules (`gh api repos/{owner}/{repo}/rules/branches/<baseRefName>`,
+// flattened and enforcement-aware -- unlike the ruleset *list*, summaries
+// only, which cannot tell a required_status_checks ruleset from a
+// deletion-only one) include a required_status_checks rule. Otherwise runs
+// `gh pr checks <pr> --required`, refusing if it is red/pending: the
+// fallback for a branch with no such rule, where `--auto` alone would
+// queue an ungated merge.
 //
 // On success: `gh pr merge <pr> --squash --delete-branch --auto` (never
-// --admin); prints { queued: pr, gate }. If that merge command itself fails
-// (e.g. auto-merge disabled on the repository), prints { error } with gh's
-// message and exits 1. No polling, no relabel, no worktree removal either way.
+// --admin); prints { queued: pr, gate }. If that fails (e.g. auto-merge
+// disabled), prints { error } with gh's message, exit 1. No polling, no
+// relabel, no worktree removal either way.
 import { spawnSync } from 'node:child_process';
 
 type Label = { name: string };
-type PRView = { state: string; labels: Label[]; reviewDecision: string | null };
+type PRView = { state: string; labels: Label[]; reviewDecision: string | null; baseRefName: string };
 
 function fail(shape: Record<string, unknown>): never {
   console.log(JSON.stringify(shape));
   process.exit(1);
 }
 
-function hasLabel(labels: Label[] | undefined, name: string): boolean {
-  return (labels ?? []).some((l) => l.name === name);
-}
-
-function gh(args: string[]): { status: number; stdout: string; stderr: string } {
+const hasLabel = (labels: Label[] | undefined, name: string): boolean => (labels ?? []).some((l) => l.name === name);
+const gh = (args: string[]): { status: number; stdout: string; stderr: string } => {
   const r = spawnSync('gh', args, { encoding: 'utf8' });
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
-
+};
 function ghJson<T>(args: string[], fallback: T): T {
   const out = gh(args);
   if (out.status !== 0 || !out.stdout.trim()) return fallback;
@@ -55,7 +55,7 @@ const prArg = process.argv[2];
 const pr = Number(prArg);
 if (!prArg || !Number.isInteger(pr) || pr <= 0) fail({ error: 'usage: node scripts/land.mts <pr>' });
 
-const view = ghJson<PRView | null>(['pr', 'view', String(pr), '--json', 'state,labels,reviewDecision'], null);
+const view = ghJson<PRView | null>(['pr', 'view', String(pr), '--json', 'state,labels,reviewDecision,baseRefName'], null);
 if (!view) fail({ refused: `could not read PR #${pr} from gh.`, pr, missing: ['gh-pr-view'] });
 
 const missing: string[] = [];
@@ -65,8 +65,8 @@ const approved = hasLabel(view.labels, 'review:approved') || view.reviewDecision
 if (!isDocs && !approved) missing.push('review:not-approved');
 if (missing.length) fail({ refused: `PR #${pr} is not ready to merge: ${missing.join(', ')}.`, pr, missing });
 
-const rulesets = ghJson<unknown[]>(['api', 'repos/{owner}/{repo}/rulesets?targets=branch'], []);
-const gate: 'ruleset' | 'client-checks' = rulesets.length > 0 ? 'ruleset' : 'client-checks';
+const rules = ghJson<Array<{ type?: string }>>(['api', `repos/{owner}/{repo}/rules/branches/${view.baseRefName}`], []);
+const gate: 'ruleset' | 'client-checks' = rules.some((r) => r.type === 'required_status_checks') ? 'ruleset' : 'client-checks';
 
 if (gate === 'client-checks' && gh(['pr', 'checks', String(pr), '--required']).status !== 0) {
   fail({ refused: `PR #${pr}: required checks are not green.`, pr, missing: ['checks:required'], gate });

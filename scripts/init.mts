@@ -159,19 +159,30 @@ if (useGh) {
   if (!auth.ok) {
     say('  ! gh is not authenticated; skipped labels and milestone (run again, or --no-gh)');
   } else {
-    // auto-merge: reading is allowed even in dry-run (it decides "=" vs
-    // "+"); the write itself is skipped under --dry-run, same gate as the
-    // milestone below.
-    const repoView = run('gh', ['repo', 'view', '--json', 'autoMergeAllowed'], root);
-    let autoMergeAllowed = false;
-    try {
-      autoMergeAllowed = JSON.parse(repoView.out || '{}').autoMergeAllowed === true;
-    } catch {}
+    // auto-merge and delete-branch-on-merge: reading is allowed even in
+    // dry-run (it decides "=" vs "+"); the write itself is skipped under
+    // --dry-run, same gate as the milestone below. `repo view --json` has
+    // no autoMergeAllowed/deleteBranchOnMerge field -- these are read via
+    // `gh api` instead, the fields' real names on the repository object.
+    const ghBool = (jqField: string): boolean => run('gh', ['api', 'repos/{owner}/{repo}', '--jq', jqField], root).out.trim() === 'true';
+
+    const autoMergeAllowed = ghBool('.allow_auto_merge');
     if (autoMergeAllowed) say('  = auto-merge already enabled');
     else if (dryRun) say('  + auto-merge enabled');
     else {
       const r = run('gh', ['repo', 'edit', '--enable-auto-merge'], root);
       say(r.ok ? '  + auto-merge enabled' : `  ! auto-merge: ${r.err.split('\n')[0]}`);
+    }
+
+    // `--delete-branch` in land.mts's `gh pr merge --auto` is a no-op under
+    // auto-merge (gh skips deletion until the merge actually happens); only
+    // this repository setting deletes the branch once GitHub merges.
+    const deleteBranchOnMerge = ghBool('.delete_branch_on_merge');
+    if (deleteBranchOnMerge) say('  = delete-branch-on-merge already enabled');
+    else if (dryRun) say('  + delete-branch-on-merge enabled');
+    else {
+      const r = run('gh', ['repo', 'edit', '--delete-branch-on-merge'], root);
+      say(r.ok ? '  + delete-branch-on-merge enabled' : `  ! delete-branch-on-merge: ${r.err.split('\n')[0]}`);
     }
 
     if (dryRun) {

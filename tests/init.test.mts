@@ -91,7 +91,7 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // delete-branch-on-merge get enabled -----------------------------------
 // A fake `gh` on PATH mocking the real contract: `auth status` always
 // succeeds; `api repos/{owner}/{repo} --jq .allow_auto_merge` /
-// `--jq .delete_branch_on_merge` each report a state-dir marker (unset gh
+// `--jq .delete_branch_on_merge` each report a state-dir marker (real gh
 // does not have an `autoMergeAllowed` field on `repo view --json`, so that
 // command is deliberately left unmocked -- it falls to the catch-all);
 // `repo edit --enable-auto-merge` / `--delete-branch-on-merge` create the
