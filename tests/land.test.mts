@@ -71,13 +71,13 @@ JSON
             n=$((n+1))
             echo "$n" > "$count_file"
             if [ "$n" -lt 3 ]; then
-              echo '{"number":20,"state":"OPEN","headRefName":"feat/20-poll","body":"Closes #920","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"test (node)","status":"IN_PROGRESS","conclusion":null},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
+              echo '{"number":20,"state":"OPEN","headRefName":"feat/20-poll","body":"Closes #920","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"test (node)","status":"IN_PROGRESS","conclusion":"","completedAt":"0001-01-01T00:00:00Z"},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
             else
               echo '{"number":20,"state":"OPEN","headRefName":"feat/20-poll","body":"Closes #920","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS"},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
             fi
             ;;
           21)
-            echo '{"number":21,"state":"OPEN","headRefName":"feat/21-stuck","body":"Closes #921","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"test (node)","status":"IN_PROGRESS","conclusion":null},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
+            echo '{"number":21,"state":"OPEN","headRefName":"feat/21-stuck","body":"Closes #921","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"name":"test (node)","status":"QUEUED","conclusion":"","completedAt":"0001-01-01T00:00:00Z"},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
             ;;
           30)
             echo '{"number":30,"state":"OPEN","headRefName":"feat/30-missing-check","body":"Closes #930","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS"}]}'
@@ -102,6 +102,9 @@ JSON
             ;;
           91)
             echo '{"number":91,"state":"OPEN","headRefName":"feat/91-dedupe-red","body":"Closes #991","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"},{"name":"test (node)","conclusion":"FAILURE","startedAt":"2026-01-01T00:05:00Z"},{"name":"test (bun)","conclusion":"SUCCESS","startedAt":"2026-01-01T00:00:00Z"}]}'
+            ;;
+          36)
+            echo '{"number":36,"state":"OPEN","headRefName":"feat/36-flags-order","body":"Closes #936","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"test (node)","conclusion":"SUCCESS"},{"name":"test (bun)","conclusion":"SUCCESS"}]}'
             ;;
           *)
             echo "fake-gh: unknown pr $pr" >&2
@@ -175,17 +178,21 @@ function worktreeExists(wt: { dir: string; real: string }): boolean {
 }
 
 // --- runner ------------------------------------------------------------------
-function land(pr: number, args: string[] = [], env: Record<string, string> = {}) {
+function landRaw(argv: string[], env: Record<string, string> = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'agentic-land-state-'));
   cleanup(() => rmSync(stateDir, { recursive: true, force: true }));
   writeFileSync(join(stateDir, 'gh-argv.log'), '');
-  const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'land.mts'), String(pr), ...args], {
+  const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'land.mts'), ...argv], {
     cwd: repo,
     encoding: 'utf8',
     env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
   });
   const log = existsSync(join(stateDir, 'gh-argv.log')) ? readFileSync(join(stateDir, 'gh-argv.log'), 'utf8') : '';
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, log };
+}
+
+function land(pr: number, args: string[] = [], env: Record<string, string> = {}) {
+  return landRaw([String(pr), ...args], env);
 }
 
 function parse(stdout: string): any {
@@ -220,6 +227,12 @@ const cOut = parse(c.stdout);
 check('AC2 timeout reports refused with pr and missing', typeof cOut?.refused === 'string' && cOut?.pr === 21 && Array.isArray(cOut?.missing) && cOut.missing.length > 0, c.stdout);
 check('AC2 timeout never invoked gh pr merge', !/pr merge 21/.test(c.log), c.log);
 check('AC2 timeout left the worktree in place', worktreeExists(wt21));
+// A QUEUED check with an empty-string conclusion (the real gh shape) must
+// still be recognised as pending: --wait actually polls PR#21's state
+// several times before giving up, rather than refusing after a single
+// evaluation (which would make this case pass for the wrong reason).
+const c21Evaluations = (c.log.match(/^pr view 21 --json/gm) || []).length;
+check('AC2 timeout actually polled PR#21 more than once before giving up', c21Evaluations > 1, `${c21Evaluations}\n${c.log}`);
 
 // --- D: approved, CLEAN, but a required check is missing from the rollup ---
 const d = land(30);
@@ -287,5 +300,15 @@ check('merge exiting non-zero but already MERGED still succeeds (exit 0)', k.sta
 const kOut = parse(k.stdout);
 check('already-merged-despite-nonzero-exit reports the merge and relabels the linked issue', kOut?.merged === 'sha-51' && kOut?.pr === 51 && JSON.stringify(kOut?.issues) === '[951]', k.stdout);
 check('already-merged-despite-nonzero-exit removed its worktree', !worktreeExists(wt51));
+
+// --- L: a flag with a value ahead of the positional PR argument ------------
+// `node scripts/land.mts --wait 30 36` must land PR 36, not the flag's
+// value (30): the positional PR is whichever token parseArgs did not
+// consume as a flag or a flag's value, wherever it falls in argv.
+const l = landRaw(['--wait', '30', '36']);
+check('flags-before-positional (`--wait 30 36`) lands PR 36, not 30 (exit 0)', l.status === 0, `${l.stdout}\n${l.stderr}`);
+const lOut = parse(l.stdout);
+check('flags-before-positional targets PR 36', lOut?.pr === 36 && lOut?.merged === 'sha-36', l.stdout);
+check('flags-before-positional never read or merged PR 30', !/^pr (view|merge) 30\b/m.test(l.log), l.log);
 
 finish();
