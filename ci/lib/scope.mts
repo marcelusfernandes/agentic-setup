@@ -6,15 +6,29 @@
 import { matchesAny } from './globs.mts';
 
 /**
+ * The line indices of `lines` that sit under `## <heading>` up to the next
+ * `## `: `start` is the first line after the heading, `end` is exclusive.
+ * `null` when the heading is absent. Shared by `extractSection` and
+ * `findMisplacedAuthorisedLines` so both agree on where a section starts
+ * and ends.
+ */
+function sectionLineRange(lines: string[], heading: string): { start: number; end: number } | null {
+  const headingIndex = lines.findIndex((l) => new RegExp(`^##\\s+${heading}\\s*$`, 'i').test(l.trim()));
+  if (headingIndex === -1) return null;
+  const rest = lines.slice(headingIndex + 1);
+  const relativeEnd = rest.findIndex((l) => /^##\s+\S/.test(l.trim()));
+  const end = relativeEnd === -1 ? lines.length : headingIndex + 1 + relativeEnd;
+  return { start: headingIndex + 1, end };
+}
+
+/**
  * The text under `## <heading>` up to the next `## `.
  */
 export function extractSection(body: string | null | undefined, heading: string): string | null {
   const lines = String(body ?? '').split(/\r?\n/);
-  const start = lines.findIndex((l) => new RegExp(`^##\\s+${heading}\\s*$`, 'i').test(l.trim()));
-  if (start === -1) return null;
-  const rest = lines.slice(start + 1);
-  const end = rest.findIndex((l) => /^##\s+\S/.test(l.trim()));
-  return (end === -1 ? rest : rest.slice(0, end)).join('\n');
+  const range = sectionLineRange(lines, heading);
+  if (range === null) return null;
+  return lines.slice(range.start, range.end).join('\n');
 }
 
 function backticked(text: string): string[] {
@@ -69,10 +83,20 @@ export function parseAuthorisedGlobs(prBody: string): string[] {
 /**
  * The `authorised:` lines (trimmed, bullet marker removed) that appear
  * outside the PR's `## Files` section — `parseAuthorisedGlobs` never sees
- * these, so a grant written here silently doesn't count. See #83.
+ * these, so a grant written here silently doesn't count. When the PR body
+ * has no `## Files` section at all, every `authorised:` line is outside it.
+ * See #83.
  */
 export function findMisplacedAuthorisedLines(prBody: string): string[] {
-  throw new Error('not implemented');
+  const lines = String(prBody ?? '').split(/\r?\n/);
+  const range = sectionLineRange(lines, 'Files');
+  const misplaced: string[] = [];
+  lines.forEach((raw, i) => {
+    if (range !== null && i >= range.start && i < range.end) return;
+    const line = raw.trim().replace(/^[-*]\s+/, '');
+    if (/^authorised:\s*\S/i.test(line)) misplaced.push(line);
+  });
+  return misplaced;
 }
 
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {

@@ -31,7 +31,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
 
@@ -164,14 +164,24 @@ const authorisedGlobs = parseAuthorisedGlobs(prBody);
 const result = checkScope({ files, issueGlobs, authorisedGlobs });
 const dangling = danglingReferences(removed, files, [...issueGlobs, ...authorisedGlobs]);
 const ok = result.ok && dangling.length === 0;
+// A grant written outside ## Files never reaches parseAuthorisedGlobs, so
+// it silently doesn't count; only worth surfacing once the check actually
+// fails on something it might have covered.
+const misplacedAuthorised = ok ? [] : findMisplacedAuthorisedLines(prBody);
 
-console.log(JSON.stringify({ ...result, ok, danglingReferences: dangling }, null, 2));
+console.log(JSON.stringify({ ...result, ok, danglingReferences: dangling, ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}) }, null, 2));
 appendSummary(
   [
     '## scope',
     '',
     result.ok ? `${files.length} file(s), all inside the linked issues' globs.` : '**FAILED** — outside the linked issues\' globs:',
     ...(result.ok ? [] : result.violations.map((f) => `- \`${f}\``)),
+    ...(misplacedAuthorised.length
+      ? [
+          'An authorised: line outside ## Files does not count — move it into that section.',
+          ...misplacedAuthorised.map((l) => `- \`${l}\``),
+        ]
+      : []),
     '',
     'Globs by linked issue:',
     ...linkedGlobs.map(({ issue, globs }) => `- #${issue ?? '?'}: ${globs.length ? globs.map((g) => `\`${g}\``).join(', ') : '(none)'}`),
