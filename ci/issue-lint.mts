@@ -179,6 +179,17 @@ function isLiteralPath(glob: string): boolean {
   return !glob.includes('*');
 }
 
+/** For a wildcard glob, the directory its fixed prefix (the part before the
+ * first `*`) is rooted in — e.g. `src/newmod/**` → `src/newmod/`,
+ * `src/**\/*.zig` → `src/`. Empty when the glob has no fixed directory
+ * prefix at all (e.g. `**\/*.foo`, which starts with `*`). */
+function fixedDirPrefix(glob: string): string {
+  const starIndex = glob.indexOf('*');
+  const prefix = starIndex === -1 ? glob : glob.slice(0, starIndex);
+  const slash = prefix.lastIndexOf('/');
+  return slash === -1 ? '' : prefix.slice(0, slash + 1);
+}
+
 /** globs that fail to parse are excluded here (already a failure of their
  * own); a malformed glob from this issue, or from another issue's body,
  * must never crash `matchesAny` downstream (AC3/AC4). */
@@ -212,7 +223,18 @@ for (const glob of issueGlobs) {
     // matches nothing is treated as a mistake.
     globs.push({ glob, status: 'new', matches: 0 });
   } else {
-    failures.push(`wildcard glob matches no tracked file: ${glob}`);
+    // A wildcard that matches nothing is "new" too, but only when its fixed
+    // prefix names a directory that does not exist anywhere in the tracked
+    // tree — the natural way to declare a whole new directory (#41). A
+    // wildcard whose prefix directory does exist, or that has no fixed
+    // directory prefix at all, matching nothing is still a mistake.
+    const dirPrefix = fixedDirPrefix(glob);
+    const dirExists = dirPrefix !== '' && trackedFiles.some((f) => f.startsWith(dirPrefix));
+    if (dirPrefix !== '' && !dirExists) {
+      globs.push({ glob, status: 'new', matches: 0 });
+    } else {
+      failures.push(`wildcard glob matches no tracked file: ${glob}`);
+    }
   }
 }
 const validSelfGlobs = validGlobsOnly(issueGlobs);
