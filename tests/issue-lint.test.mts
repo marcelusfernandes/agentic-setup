@@ -203,6 +203,27 @@ check(
   newDirWildcard.out,
 );
 
+// AC1 (of #41), the literal shape from the issue: a wildcard glob naming a
+// new subdirectory *under an existing tracked directory* — `tests/` is
+// tracked, `tests/newmod/` is not — is still "new", not a failure. This is
+// the actual discriminator against AC2 (`tests/*.zig`, where the prefix
+// directory `tests/` exists and the wildcard matches within it): here the
+// prefix directory `tests/newmod/` itself does not exist anywhere in the
+// tracked tree, even though its parent does.
+const newSubDirWildcard = lint(1084, issueBody({ files: '## Files\n- `tests/newmod/**`\n' }));
+const newSubDirWildcardOut = parse(newSubDirWildcard.out);
+check(
+  'a wildcard glob naming a new subdirectory under an existing tracked directory passes ("new")',
+  newSubDirWildcard.status === 0 && newSubDirWildcardOut?.ok === true,
+  newSubDirWildcard.out,
+);
+check(
+  'the new-subdirectory wildcard is reported in globs: [{ glob, status: "new" }]',
+  Array.isArray(newSubDirWildcardOut?.globs) &&
+    newSubDirWildcardOut.globs.some((g: any) => g.glob === 'tests/newmod/**' && g.status === 'new'),
+  newSubDirWildcard.out,
+);
+
 // AC3 (of #41): a wildcard glob with no fixed prefix at all (it starts with
 // `*`) that matches nothing is still a failure — there is no directory to
 // call "new".
