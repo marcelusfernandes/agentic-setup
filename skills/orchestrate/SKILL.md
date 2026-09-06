@@ -193,6 +193,14 @@ takes minutes, look once per pass.
     other CI rejection.
   - `checks:none-registered` → no check ran at all on this PR; investigate before waiting.
 
+  `mergeStateStatus` can lag behind the check runs by a few minutes after a re-run —
+  `land.mts` reads it live at the moment of the call, not from a cached view, and refuses
+  while it is still catching up. `--wait <seconds>` does not cover this case: it polls only
+  while some required check is still `IN_PROGRESS`/`QUEUED` (`scripts/land.mts` — the
+  `WAITABLE_MERGE_STATUS`/`anyPending` loop), and every check is already green here. A
+  `refused` whose only `missing` entry is `mergeStateStatus=<x>` with every required check
+  green means call `land.mts` again shortly, not `--admin`.
+
   `{ error }` (also exit 1) means the merge command itself failed, or the PR never reached
   `MERGED` after `gh pr merge` returned — a `gh`/`git` problem, not a verdict; stop and
   report, touch no label or worktree.
