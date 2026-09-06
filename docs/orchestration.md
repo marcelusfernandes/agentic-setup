@@ -78,8 +78,10 @@ lost. Labels, branches and PRs are not. Every pass starts by reading them.
 2. Prove you can write (a throwaway edit). The write guard complains now, not on the
    third edit.
 3. Read the issue and everything it links.
-4. Write the failing test. Commit it as `test(red): …`. That commit is the negative
-   control CI will verify; without it the PR fails.
+4. Write the failing test. Commit it as `test(red): …` — the convention that keeps
+   the red test visible in history. `negative-control` reads the PR's diff, not the
+   commit: the changed test files are copied onto a checkout of the base and the
+   suite must fail there, so the PR's diff must add or change a test file.
 5. Implement until the test command is green. Commit at every green.
 6. Run the project's check command (types, lint, fast scans). Green.
 7. Open the PR with the template (a closing keyword — `Closes`/`Fixes`/`Resolves #N`,

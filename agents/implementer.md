@@ -19,8 +19,10 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    header for the full list and order), or what `CLAUDE.md` says.
 
 ## Cycle
-4. Write the failing test. Commit `test(red): <what it covers>`. That commit is the
-   negative control CI verifies; without it the PR fails.
+4. Write the failing test. Commit `test(red): <what it covers>` — the convention that
+   keeps the red test visible in history. `negative-control` reads the PR's diff, not
+   the commit: the changed test files are copied onto a checkout of the base and the
+   suite must fail there, so the PR's diff must add or change a test file.
 5. Implement until the test command is green. Commit at every green
    (`<type>(<scope>): <imperative>`).
 6. Run the check command (types, lint). Green.

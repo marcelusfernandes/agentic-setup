@@ -99,8 +99,9 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
   this itself, against every other `state:ready`/`state:in-progress`/`state:in-review`
   issue in the same milestone, unless a `Blocked by:` relation orders the two (then it is
   reported as `sequenced`, not a failure).
-- **Proof** names the test command and what it covers; the negative control is the
-  `test(red):` commit.
+- **Proof** names the test command and what it covers; `negative-control` reads the PR's
+  diff, not the `test(red):` commit — the changed test files are copied onto the base
+  and the suite must fail there.
 - **Dependencies** as `Blocked by: #N`; the orchestrator does not dispatch a blocked issue.
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.
 - An issue that adds an entry point to an existing table, menu or list **names that file in
