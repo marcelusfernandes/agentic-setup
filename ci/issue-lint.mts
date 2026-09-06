@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 // issue-lint — validates an issue's contract before it is dispatched:
-// sections present, globs that match something, globs disjoint from the
-// issues already in flight in the same milestone, and every file the
-// issue's globs cover checked for other tracked files that reference it
-// by path or basename (the check that would have caught #3: an issue that
-// renames an entry point without naming the file that references it).
+// sections present, globs that parse and match something (or are `new`),
+// globs disjoint from the issues already in flight in the same milestone,
+// and every `Blocked by: #N` number in the issue actually exists. It never
+// reads a diff — the mechanical form of the #3 guard (a rename that drops a
+// path without updating the file that referenced it) moved to PR time,
+// `scope`'s dangling-reference rule (#51), where a diff exists to check it
+// against. issue-lint used to also warn about entry-point references — a
+// `git grep` across every covered path/basename that would have caught #3
+// at issue time — but it could not tell a rename from an in-place edit, so
+// it fired on every ordinary import, doc, or workflow mention of a covered
+// path (audit finding 3); that check, and its `--strict` flag (already
+// retired from the card by #45 for the same reason), are gone.
 //
-//   node ci/issue-lint.mts <n> [--strict] [--markdown] [--root <path>]
+//   node ci/issue-lint.mts <n> [--markdown] [--root <path>]
 //   node ci/issue-lint.mts --issue <n> --issue-body-file <path> \
-//     [--milestone-issues-file <path>] [--strict] [--markdown] [--root <path>]
+//     [--milestone-issues-file <path>] [--markdown] [--root <path>]
 //
 // <n> (or --issue) is the issue number. Without --issue-body-file, the
 // issue's body and milestone come from `gh issue view`, and the other
@@ -20,21 +27,24 @@
 // AC5 (`Blocked by:` numbers exist) always calls `gh issue view` for each
 // number, in both modes — a fake `gh` on PATH covers it in tests.
 //
-// Output: JSON `{ issue, ok, failures, warnings, globs, sequenced }` on
-// stdout by default — `globs`/`sequenced` are additive to the four keys
-// AC6 names, reporting AC2's `new` status and AC3's blocked-by exception.
-// `failures`/`warnings` entries are either a plain string or, for AC3
-// (glob overlap) and AC4 (entry-point reference), the object shape the
-// issue's acceptance criteria name. --markdown prints a Markdown rendering
-// instead (for the workflow's issue comment), starting with the
-// `<!-- agentic-issue-lint -->` marker the workflow greps for. --strict
-// makes AC4 warnings count toward `ok`/exit code. Exit 0 when `ok`, 1
-// otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot answer
-// for the issue/milestone lookups themselves (not for a single missing
-// `Blocked by:` number, which is a normal failure entry).
+// Output: JSON `{ issue, ok, failures, globs, sequenced }` on stdout by
+// default — no `warnings` key any more. `globs`/`sequenced` are additive to
+// the four keys the contract names, reporting AC2's `new` status and AC3's
+// blocked-by exception. `failures` entries are either a plain string or,
+// for AC3 (glob overlap), the object shape the issue's acceptance criteria
+// name. --markdown prints a Markdown rendering instead (for the workflow's
+// issue comment), starting with the `<!-- agentic-issue-lint -->` marker
+// the workflow greps for; it no longer has a Warnings section. Exit 0 when
+// `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
+// answer for the issue/milestone lookups themselves (not for a single
+// missing `Blocked by:` number, which is a normal failure entry). Any flag
+// this script does not know — including `--strict` from a caller not yet
+// migrated (`scripts/claim.mts`'s own `--strict` passthrough is retired in
+// a later issue of this milestone) — is ignored, with a one-line note on
+// stderr; it never changes stdout or the exit code, so an old caller keeps
+// working.
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { basename } from 'node:path';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
 import { parseIssueGlobs } from './lib/scope.mts';
@@ -42,19 +52,16 @@ import { blockedBy, checkboxes, REQUIRED_SECTIONS, sections } from './lib/issue.
 
 const MARKER = '<!-- agentic-issue-lint -->';
 const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
-const EXCLUDE_GLOBS = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock*', 'docs/research/**'];
 
 const GH_LIST_LIMIT = '500'; // gh defaults to 30; a milestone can hold more in-flight issues
 
 type Failure = string | { issue: number; files: string[] };
-type Warning = { file: string; referencedBy: string };
 type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number };
 type Sequenced = { issue: number; files: string[] };
 type Result = {
   issue: number | null;
   ok: boolean;
   failures: Failure[];
-  warnings: Warning[];
   globs: GlobReport[];
   sequenced: Sequenced[];
 };
@@ -62,8 +69,14 @@ type Result = {
 const args = parseArgs(process.argv.slice(2));
 const rawArgv = process.argv.slice(2);
 const root = typeof args.root === 'string' ? args.root : process.cwd();
-const strict = args.strict === true || args.strict === 'true';
 const markdown = args.markdown === true || args.markdown === 'true';
+
+// Flags this version reads. Anything else on argv — most notably a caller
+// still passing --strict — is ignored rather than rejected; see the header.
+const KNOWN_FLAGS = new Set(['root', 'markdown', 'issue', 'issue-body-file', 'milestone-issues-file']);
+for (const key of Object.keys(args)) {
+  if (!KNOWN_FLAGS.has(key)) console.error(`issue-lint: ignoring unknown flag --${key}`);
+}
 
 function output(result: Result): never {
   console.log(markdown ? renderMarkdown(result) : JSON.stringify(result));
@@ -147,7 +160,6 @@ if (typeof args['issue-body-file'] === 'string') {
 }
 
 const failures: Failure[] = [];
-const warnings: Warning[] = [];
 
 // --- AC1: sections present, with the per-section minimum content ----------
 const sec = sections(body);
@@ -304,104 +316,6 @@ for (const other of others) {
   else failures.push({ issue: other.number, files: overlapFiles });
 }
 
-// --- AC4: entry-point references — files outside the issue's globs that
-// mention a covered file's path or basename. Two `git grep` spawns total
-// (chunked only above PATTERN_CHUNK_SIZE patterns per call), not one per
-// covered file (#44): a single `-l` pass across every covered path/basename
-// pattern finds which files hit *some* pattern, then a single `-n` pass
-// restricted to just those hit files (via `:(literal)` pathspecs, so a hit
-// file whose name itself contains glob metacharacters like `[id].tsx` is not
-// misread as a pathspec) recovers line content to attribute each hit back to
-// the covered file(s) that own the matching pattern — `git grep -l` alone
-// only says a file matched *something*, not which pattern. `git grep` runs
-// with no pathspec restriction on the search space (it only ever searches
-// tracked files anyway) so the outside/exclude filtering happens here in
-// Node against the hit list instead — cheaper than excluding pathspecs for a
-// large covered/excluded set. A "new" literal path (not tracked yet) is
-// checked the same way: a tracked file that already references its basename
-// is still a warning. ---------------------------------------------------
-const PATTERN_CHUNK_SIZE = 2000;
-
-function chunk<T>(list: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
-  return out;
-}
-
-const coveredSet = new Set(selfMatchedFiles);
-const outsideFiles = new Set(trackedFiles.filter((f) => !coveredSet.has(f) && !matchesAny(f, EXCLUDE_GLOBS)));
-const coveredPaths = [...selfMatchedFiles, ...selfNewPaths];
-if (outsideFiles.size > 0 && coveredPaths.length > 0) {
-  // Each covered path always contributes its own pattern; its basename joins
-  // in too unless it is too short or too generic to mean anything on its own
-  // (unchanged from the per-file version). A pattern can be owned by more
-  // than one covered path (two covered files sharing a basename).
-  const patternOwners = new Map<string, Set<string>>();
-  function addPattern(pattern: string, owner: string): void {
-    let owners = patternOwners.get(pattern);
-    if (!owners) {
-      owners = new Set();
-      patternOwners.set(pattern, owners);
-    }
-    owners.add(owner);
-  }
-  for (const covered of coveredPaths) {
-    addPattern(covered, covered);
-    const base = basename(covered);
-    if (!(base.length < 4 || /^index\./i.test(base) || base === 'README.md')) {
-      addPattern(base, covered);
-    }
-  }
-  const patternChunks = chunk([...patternOwners.keys()], PATTERN_CHUNK_SIZE);
-
-  let grepFailed = false;
-  const hitFiles = new Set<string>();
-  for (const patterns of patternChunks) {
-    const args = patterns.flatMap((p) => ['-e', p]);
-    const r = spawnSync('git', ['grep', '-I', '-l', '-F', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    if (r.status === 0) {
-      for (const hit of r.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
-        if (outsideFiles.has(hit)) hitFiles.add(hit);
-      }
-    } else if (r.status !== 1 && r.status !== null) {
-      failures.push(`git grep failed while checking entry-point references: ${r.stderr.trim().split('\n')[0]}`);
-      grepFailed = true;
-    }
-  }
-
-  if (!grepFailed && hitFiles.size > 0) {
-    const hitPathspecs = [...hitFiles].map((f) => `:(literal)${f}`);
-    const warningPairs = new Set<string>();
-    for (const patterns of patternChunks) {
-      const args = patterns.flatMap((p) => ['-e', p]);
-      const r = spawnSync('git', ['grep', '-n', '-I', '-F', ...args, '--', ...hitPathspecs], {
-        cwd: root,
-        encoding: 'utf8',
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      if (r.status === 0) {
-        for (const line of r.stdout.split('\n')) {
-          if (!line) continue;
-          const match = /^(.*?):\d+:(.*)$/.exec(line);
-          if (!match) continue;
-          const [, hitFile, content] = match;
-          if (!outsideFiles.has(hitFile)) continue;
-          for (const [pattern, owners] of patternOwners) {
-            if (!content.includes(pattern)) continue;
-            for (const covered of owners) warningPairs.add(`${covered}\u0000${hitFile}`);
-          }
-        }
-      } else if (r.status !== 1 && r.status !== null) {
-        failures.push(`git grep failed while mapping entry-point references: ${r.stderr.trim().split('\n')[0]}`);
-      }
-    }
-    for (const pair of [...warningPairs].sort()) {
-      const [file, referencedBy] = pair.split('\u0000');
-      warnings.push({ file, referencedBy });
-    }
-  }
-}
-
 // --- AC5: every "Blocked by: #N" number must exist -------------------------
 if (selfBlockedBy) {
   for (const n of selfBlockedBy) {
@@ -423,11 +337,6 @@ function renderMarkdown(result: Result): string {
     }
   }
   lines.push('');
-  if (result.warnings.length > 0) {
-    lines.push('**Warnings** (entry-point references outside `## Files`):', '');
-    for (const w of result.warnings) lines.push(`- \`${w.file}\` is referenced by \`${w.referencedBy}\``);
-    lines.push('');
-  }
   if (result.sequenced.length > 0) {
     lines.push('**Sequenced** (overlap accepted — a Blocked-by relation orders these issues):', '');
     for (const s of result.sequenced) lines.push(`- #${s.issue}: ${s.files.map((x) => `\`${x}\``).join(', ')}`);
@@ -442,5 +351,5 @@ function renderMarkdown(result: Result): string {
   return lines.join('\n');
 }
 
-const ok = failures.length === 0 && (!strict || warnings.length === 0);
-output({ issue: issueNumber, ok, failures, warnings, globs, sequenced });
+const ok = failures.length === 0;
+output({ issue: issueNumber, ok, failures, globs, sequenced });
