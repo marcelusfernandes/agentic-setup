@@ -3,14 +3,15 @@
 // relabel, only after the push succeeds. Replaces the three hand-typed
 // commands in step 3 of skills/orchestrate/SKILL.md ("Claim").
 //
-//   node scripts/claim.mts <n> --slug <slug> [--type <type>]
+//   node scripts/claim.mts <n> --slug <slug> [--type <type>] [--strict] [--no-lint]
 //
 // <type> comes from the title prefix ("feat(ci): …" -> feat) when --type is
 // omitted; the set is feat|fix|refactor|chore|docs|test|ci|deps. Branch is
-// <type>/<n>-<slug>.
+// <type>/<n>-<slug>. --strict and --no-lint control the ci/issue-lint.mts
+// gate below.
 //
 // Exit codes:
-//   0  claimed — prints { issue, branch, base }
+//   0  claimed — prints { issue, branch, base, lint }
 //   1  refused (issue not claimable) -> { refused }
 //      or a usage/gh/git error         -> { error }
 //   2  held by another agent (the ref already exists) -> { held }
@@ -39,14 +40,28 @@
 // the `[rejected]` fallback.
 //
 // Crash policy: never a stack trace. Refusal checks (closed, not
-// state:ready, an open blocker, no ## Files bullet) run before any push, so
-// a refusal changes nothing. The push is the lock: only a successful push
-// is followed by `gh issue edit`. Run from the repository root — git
-// commands use the current working directory. Node built-ins only.
+// state:ready, an open blocker, no ## Files bullet, issue-lint) run before
+// any push, so a refusal changes nothing. The push is the lock: only a
+// successful push is followed by `gh issue edit`. Run from the repository
+// root — git commands use the current working directory. Node built-ins
+// only.
+//
+// issue-lint gate: the last refusal check before the push. ci/issue-lint.mts
+// is resolved relative to this file's own location (not a hard-coded
+// relative path from the caller's cwd) and spawned with `process.execPath`
+// — the same node/bun running this script — with `cwd` left at this
+// process's own (the repository root, same as every other git/gh call
+// here). `--strict` is NOT applied by issue type: it is an explicit opt-in
+// flag on claim.mts itself, passed through verbatim when given. `--no-lint`
+// skips the check entirely (`"lint": "skipped"` in the success JSON). A
+// lint result that isn't `ok: true` — a normal failure, or the lint's own
+// `{ error }` shape when it could not even run — refuses the claim either
+// way: fail closed rather than let an unreadable lint result through.
 //
 // Note: titleType() is case-sensitive ("Feat: x" falls through to
 // "pass --type"); the issue is silent on case, so this is left as-is.
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from '../ci/lib/args.mts';
 import { BRANCH_TYPES, hasFilesBullet, parseBlockedBy, titleType } from './lib/issues.mts';
 
@@ -56,6 +71,11 @@ type RepoView = { defaultBranchRef: { name: string } | null };
 
 function refuse(reason: string): never {
   console.log(JSON.stringify({ refused: reason }));
+  process.exit(1);
+}
+
+function refuseLint(lint: unknown): never {
+  console.log(JSON.stringify({ refused: 'issue-lint failed', lint }));
   process.exit(1);
 }
 
@@ -98,7 +118,7 @@ function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
 }
 
-// --- 1. argv: <n> --slug <slug> [--type <type>] -----------------------------
+// --- 1. argv: <n> --slug <slug> [--type <type>] [--strict] [--no-lint] -----
 const [numberArg, ...rest] = process.argv.slice(2);
 const flags = parseArgs(rest);
 
@@ -134,7 +154,39 @@ for (const blocker of parseBlockedBy(issue.body ?? '')) {
 
 if (!hasFilesBullet(issue.body ?? '')) refuse('missing ## Files section');
 
-// --- 4. lock: fetch, then push the new branch from the default branch -------
+// --- 4. issue-lint gate, the last refusal check before the push -------------
+type LintField = 'skipped' | { ok: true; warnings: number };
+
+const skipLint = flags['no-lint'] === true || flags['no-lint'] === 'true';
+const strict = flags.strict === true || flags.strict === 'true';
+
+let lintField: LintField;
+if (skipLint) {
+  lintField = 'skipped';
+} else {
+  const lintScript = fileURLToPath(new URL('../ci/issue-lint.mts', import.meta.url));
+  const lintArgs = [lintScript, String(number)];
+  if (strict) lintArgs.push('--strict');
+  const lintRun = spawnSync(process.execPath, lintArgs, { encoding: 'utf8' });
+  if (lintRun.error) errorOut(`issue-lint: ${lintRun.error.message}`);
+
+  let lintResult: any;
+  try {
+    lintResult = JSON.parse((lintRun.stdout || '').trim());
+  } catch {
+    errorOut(`issue-lint: could not parse output: ${firstLine(lintRun.stderr || lintRun.stdout || 'failed')}`);
+  }
+
+  // Fail closed: anything other than an explicit `ok: true` refuses the
+  // claim — a normal lint failure (`ok: false`) and the lint's own
+  // `{ error }` shape (it could not even run) are refused the same way.
+  if (!lintResult || lintResult.ok !== true) refuseLint(lintResult);
+
+  const warnings = Array.isArray(lintResult.warnings) ? lintResult.warnings.length : 0;
+  lintField = { ok: true, warnings };
+}
+
+// --- 5. lock: fetch, then push the new branch from the default branch -------
 const branch = `${type}/${number}-${slug}`;
 
 const repoView = ghJson<RepoView>(['repo', 'view', '--json', 'defaultBranchRef']);
@@ -183,7 +235,7 @@ if (push.status === 0) {
   errorOut(dataLine ? dataLine.replace(/\t/g, ' ').trim() : firstLine(push.stderr || push.stdout || 'push failed'));
 }
 
-// --- 5. only now: assign and relabel ----------------------------------------
+// --- 6. only now: assign and relabel ----------------------------------------
 gh(['issue', 'edit', String(number), '--add-assignee', '@me', '--add-label', 'state:in-progress', '--remove-label', 'state:ready']);
 
-console.log(JSON.stringify({ issue: number, branch, base }));
+console.log(JSON.stringify({ issue: number, branch, base, lint: lintField }));
