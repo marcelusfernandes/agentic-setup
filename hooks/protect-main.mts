@@ -28,17 +28,20 @@ const HOOK = 'protect-main';
 const PROTECTED = /^(?:refs\/heads\/)?(?:main|master)$/;
 const GREEN = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
 
-function isForcePush(args: string): boolean {
-  return /--force\b/.test(args) || /(?:^|\s)-[A-Za-z]*f[A-Za-z]*(?=\s|$)/.test(args) || /\s\+\S/.test(args);
+/** `tokens` are already unquoted, so a quoted "-f", "+main" or "--force" is caught too. */
+function isForcePush(tokens: string[]): boolean {
+  return tokens.some((t) => t.startsWith('--force') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t) || (t.startsWith('+') && t.length > 1));
 }
 
 function checkPush(args: string, cwd: string, command: string): void {
-  if (isForcePush(args)) deny(HOOK, 'force-push is forbidden on every branch.');
-  const tokens = args.trim().split(/\s+/).filter(Boolean);
+  // Unquote every token up front — flags ("-f", "+main", "--delete") and
+  // refspecs alike — so a quoted form of any of them is still recognised;
+  // startsWith('-') below then reads the real flag, not a leading quote char.
+  const tokens = args.trim().split(/\s+/).filter(Boolean).map(unquote);
+  if (isForcePush(tokens)) deny(HOOK, 'force-push is forbidden on every branch.');
   const deleting = tokens.includes('--delete') || tokens.includes('-d');
-  // [0] is the remote; unquote each refspec (both sides of a possible `:`
-  // ride along, since the split below runs on the already-unquoted string).
-  const refspecs = tokens.filter((t) => !t.startsWith('-')).slice(1).map(unquote);
+  // [0] is the remote; both sides of a possible `:` ride along as one token.
+  const refspecs = tokens.filter((t) => !t.startsWith('-')).slice(1);
   const targetsMain =
     refspecs.some((r) => PROTECTED.test(r.includes(':') ? r.split(':').pop() ?? '' : r)) ||
     ((refspecs.length === 0 || refspecs.every((r) => r === 'HEAD')) && PROTECTED.test(currentBranch(cwd)));
