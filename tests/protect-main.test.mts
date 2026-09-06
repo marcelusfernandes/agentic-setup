@@ -37,6 +37,25 @@ const denied = [
   'echo x & git push origin main', // a lone & backgrounds the first command; the second still runs
   'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
   'git push origin main 2>&1', // a redirect after the refspec must not hide the push
+  // #25: $( … ) is the $() twin of the backtick command substitution above —
+  // the inner command must not truncate the outer one (denied on both main
+  // and a work branch, since the refspec "main" is still directly seen; no
+  // masking risk from the bare-push-from-main fallback here).
+  'git push origin $(echo) main',
+  'git push origin $(echo x) main',
+  'git push origin $(echo $(true)) main', // nested $( … ): a depth counter must find the *outer* close
+  'git push origin "+main"', // quoted force-refspec: isForcePush must read the unquoted token
+  'git push origin "+"main', // quote boundary spliced inside a force-refspec
+  'git push "-f" origin feat/1-x', // quoted -f: isForcePush must read the unquoted token
+  'git push "--force" origin feat/1-x', // regression lock: quoted --force already matched isForcePush's old raw-string regex
+  'git push origin $"main"', // $"..." locale quoting: unquote must strip it like "..."
+  'git push origin main&> /dev/null', // &> glued directly to the refspec must not swallow it into one token
+  'git push origin main >&2', // regression lock: already denied pre-#25 (a real space keeps "main" its own token)
+  'git push origin main 2>&1 | cat', // regression lock: a pipe after the redirect must still split normally
+  'echo \\>& git push origin main', // a backslash-escaped > is ordinary text; the & after it must still split
+  'git push --delete origin "main"', // regression lock: quoted --delete target already worked pre-#25
+  'git push "--delete" origin main', // quoted --delete flag itself: unquote-before-flag-check must catch it
+  'git push origin 2>/dev/null', // the whole refspec position is a redirect: bare-push-from-main fallback must still fire
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -55,6 +74,12 @@ const allowed = [
   "echo '`git push origin main`'", // backtick inside single quotes is literal text
   'echo x >&2 && git push origin feat/1-x', // >& is a redirection, not a lone &, and doesn't hide the real &&
   'git commit -m "a & b"', // & inside a double-quoted string is not the background operator
+  // #25 negative controls: every denied-list device above, aimed at a
+  // non-main push, must still be allowed.
+  'echo ">&" && git push origin feat/1-x', // a quoted ">&" is literal text, not a redirection that could hide the &&
+  'git push origin feat/1-x > log.txt', // redirection target must be dropped, but the real refspec kept
+  'echo "$(date)" && git push origin feat/1-x', // $( … ) inside an unrelated echo must not corrupt the later push
+  'git commit -m "see $(pwd)"', // $( … ) inside a non-push command is untouched (skipped by the fast path)
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
