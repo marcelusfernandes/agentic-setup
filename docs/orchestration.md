@@ -109,7 +109,7 @@ merges, never offers to fix.
 |---|---|---|
 | PreToolUse Bash | `protect-main.mts` | denies push to `main`/`master`, deleting them, and `gh pr merge` without green checks and the review label. Force-push, `reset --hard`, `clean`, `stash` and `--admin` merges are also denied declaratively by the permission deny list `/agentic-setup:init` writes — the hook catches the forms a prefix pattern cannot |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
-| Stop | `stop-gate.mts` | runs the detected check + test commands before an agent on a `<type>/<n>-<slug>` branch may stop, **except** when the last commit is `test(red):`. On `main`, on an unrecognised branch, or with no detectable test command it skips with a note on stderr; the real gate is CI |
+| Stop, SubagentStop | `stop-gate.mts` | runs the detected check + test commands before an agent on a `<type>/<n>-<slug>` branch may stop, **except** when the last commit is `test(red):`. On `main`, on an unrecognised branch, or with no detectable test command it skips with a note on stderr; the real gate is CI. Registered under both events (`hooks/hooks.json`) — an implementer runs as a subagent, so its stop fires `SubagentStop`, not `Stop`; on `SubagentStop` the payload's `cwd` is the subagent's own worktree (verified live, 2026-09-06) |
 
 Hooks run with Claude Code's environment (`${CLAUDE_PLUGIN_ROOT}` resolves to the plugin,
 the payload's `cwd` to the agent's worktree). A change to a hook takes effect after the
