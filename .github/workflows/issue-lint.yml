@@ -1,0 +1,69 @@
+# issue-lint — validates an issue's contract before it can be dispatched:
+# sections present, globs that parse and match something, globs disjoint
+# from the issues already in flight in the same milestone, and every file
+# the issue's globs cover checked for other tracked files that reference it
+# by path or basename. Runs only once the issue carries a milestone (a
+# milestone is set right after triage; running before that would just fail
+# AC1's "not applicable yet" cases with noise).
+#
+# Fetches the other open issues in the same milestone with `gh`, then runs
+# the lint with the file-flag inputs (no further `gh` needed except AC5's
+# per-number existence check), and creates or updates its own comment on
+# the issue — found by the `<!-- agentic-issue-lint -->` marker the lint's
+# `--markdown` output starts with, so an edit never produces a second
+# comment.
+
+name: issue-lint
+
+on:
+  issues:
+    types: [opened, edited, milestoned]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  lint:
+    if: github.event.issue.milestone != null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22 # 22.18+ runs the .mts scripts directly
+      - name: gather milestone issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MILESTONE: ${{ github.event.issue.milestone.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ISSUE_BODY" > issue-body.md
+          gh issue list --milestone "$MILESTONE" --state open --json number,labels,body > milestone-issues.json
+      - name: issue-lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          node ci/issue-lint.mts --issue "$ISSUE" \
+            --issue-body-file issue-body.md \
+            --milestone-issues-file milestone-issues.json \
+            --markdown > comment.md
+      - name: comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue view "$ISSUE" --json comments \
+            --jq '[.comments[] | select(.body | startswith("<!-- agentic-issue-lint -->"))][0].id // empty')"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/{owner}/{repo}/issues/comments/$existing" -F body=@comment.md
+          else
+            gh issue comment "$ISSUE" --body-file comment.md
+          fi
