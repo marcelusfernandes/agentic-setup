@@ -37,9 +37,9 @@ left by the last one, for an offline check against the last fetch. Fields:
   `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
   step 1's candidate list — no separate query needed.
 - `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
-  with an open PR, or with their branch checked out in a local worktree of this checkout
-  (an agent of this checkout may be alive). `pr` is the open PR's number on that branch,
-  or `null`.
+  that are not `resumable` (below) — an open PR, a branch checked out in a local
+  worktree of this checkout (an agent of this checkout may be alive), or no remote
+  branch at all. `pr` is the open PR's number on that branch, or `null`.
 - `resumable` — `{ number, branch, commitsAheadOfMain }`: `state:in-progress` issues with
   a remote branch, no open PR, and no local worktree checked out on that branch. A fresh
   orchestrator session has no live agents by definition, so this is not "an implementer

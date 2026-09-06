@@ -15,11 +15,13 @@ One Claude Code session at the repository root (not in a worktree), running
 
 ```
 0. `scripts/reconcile.mts` prints the loop's state as one JSON document (`milestone`,
-   `ready`, `inProgress`, `inReview`, `stale`, `orphanWorktrees` — see
+   `ready`, `inProgress`, `resumable`, `inReview`, `stale`, `orphanWorktrees` — see
    `skills/orchestrate/SKILL.md` step 0 for the invocation and what each field means),
    instead of reconciling from memory. It fetches `origin` with prune itself first
    (`--no-fetch` reads the local refs left by the last fetch, for an offline check):
    in-progress with no PR and no remote branch → ready (`stale`)
+   in-progress with a remote branch, no PR and no local worktree on it → dispatch as
+   round N+1 from origin/<branch>, no re-claim (`resumable`)
    in-review with green CI and review:approved → merge (`inReview`)
    local worktree with no remote branch → delete (`orphanWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
@@ -31,7 +33,8 @@ One Claude Code session at the repository root (not in a worktree), running
 3. for each: `scripts/claim.mts <n> --slug <slug>` pushes the remote branch
    <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
    in-progress, then launch an `implementer` in its own worktree with the whole
-   issue in the prompt
+   issue in the prompt; a `resumable` issue skips `claim.mts` — the lock is already
+   held — and launches straight to an implementer as round N+1 from origin/<branch>
 4. PR opened → launch a `reviewer` (read-only) and wait for CI
 5. green checks + review:approved (or type:docs) → `scripts/land.mts <pr>` re-reads
    the PR live and merges only if it will be accepted, labelling done and removing
@@ -145,7 +148,7 @@ production-affecting decision; a product decision the docs do not cover; **an is
   one by label state alone.** If the orchestrator process dies (an OS kill, low memory)
   mid-pass, every issue it had claimed stays `state:in-progress` with a pushed lock
   branch and no PR — indistinguishable, from labels alone, from an implementer still
-  working. `reconcile.mts`'s `resumable` list closes this gap: a fresh session has no
+  working. `reconcile.mts`'s `resumable` list narrows this gap: a fresh session has no
   live agents by definition, so an in-progress issue whose branch is not checked out in
   any local worktree of this checkout is resumed as round N+1 from `origin/<branch>`,
   not reclaimed.
