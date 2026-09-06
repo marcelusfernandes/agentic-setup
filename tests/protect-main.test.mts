@@ -41,6 +41,7 @@ const allowed = [
   'gh pr merge 1', // fail-closed is gone: no --admin, the server decides
   'gh pr merge 1 --squash',
   'git push origin main:refs/heads/feat/x', // AC2/AC3: local side matches, remote side does not
+  'git push origin refs/heads/main:feat/x', // AC2: local side is refs/heads/main, remote side does not match
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
