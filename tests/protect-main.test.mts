@@ -73,6 +73,12 @@ const deniedFromWorkBranch = [
   'git push origin `echo x` main', // same, with content in the backtick pair
   'git push origin ` ` main', // same, with only whitespace in the backtick pair
   'git push --delete origin `x` main', // same, on a --delete push
+  'git push origin `# x` main', // a # comment inside backticks must end at the closing backtick, not swallow it
+  'git push origin `# \\` x` main', // an escaped backtick inside the comment does not close it early
+  'echo a `# x` && git push origin main', // the comment ends at the backtick; a real && still splits after
+  'echo a `#` && git push origin main', // the comment can be empty and still end right at the backtick
+  'echo a `# x`; git push origin main', // same, with a ; after the backtick pair instead of &&
+  'git push --delete origin `# x` main', // same comment-in-backticks case, on a --delete push
 ];
 for (const command of deniedFromWorkBranch) {
   const r = bash(command, repo);
