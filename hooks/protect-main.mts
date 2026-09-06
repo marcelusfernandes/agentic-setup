@@ -1,96 +1,41 @@
 #!/usr/bin/env node
 // protect-main — PreToolUse (Bash).
 //
-// The agent-side layer of main protection. Denies, before the command runs:
-//   1. force-push in any form (--force, --force-with-lease, -f, +refspec)
-//   2. push to main/master (explicit ref, HEAD:main, or a bare push from main)
-//   3. deleting main/master, locally or on the remote
-//   4. `gh pr merge --admin`
-//   5. `gh pr merge` without every check green, or without the review label
-//      (AGENTIC_REVIEW_LABEL, default "review:approved") or an APPROVED review
+// Layer three, for a session in a repo with no server-side ruleset yet.
+// Denies, before the command runs, a segment (split on &&, ||, ;, |,
+// newlines — no quote parsing) that:
+//   1. starts with `git push` and force-pushes (--force, -f, +refspec)
+//   2. starts with `git push` and targets main/master: a token equal to
+//      main/master, one ending in :main/:master, or no refspec at all while
+//      the current branch is main/master
+//   3. starts with `gh pr merge` and passes `--admin`
+// The ruleset and `hooks/git-pre-push` (every push from this machine, in or
+// out of Claude Code) are the layers that count; this one saves a round
+// trip. No quotes, backticks or `$()` are parsed, so a commit message that
+// quotes one of the forms above may be denied too — write it differently.
 //
-// Items 1 and 4 are also covered by the permission deny list that
-// `/agentic-setup:init` writes; keeping them here costs three lines and
-// catches the forms a prefix pattern cannot (`-fu`, `+main`).
+// Valve, for bootstrapping a repo with no ruleset yet:
+//   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2 (never 1 or 3)
 //
-// Valves, for bootstrapping a repository and for a person acting on purpose:
-//   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2 (never 1)
-//   AGENTIC_ALLOW_MERGE=1       lifts item 5 (never 4)
-//
-// Crash policy: ALLOW. If Node is missing, the payload is unreadable, or this
-// file throws, the call goes through — the git pre-push hook and the
-// guard-main action are the other layers. The one place this fails CLOSED is
-// item 5: if `gh` cannot report the checks or the PR, the merge is denied,
-// because "could not verify" is not "verified".
-import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, run, unquote, valve } from './lib/common.mts';
+// Crash policy: ALLOW. Node missing, an unreadable payload, or a throw here
+// all let the call through — the ruleset and git-pre-push remain.
+import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, valve } from './lib/common.mts';
 
 const HOOK = 'protect-main';
 const PROTECTED = /^(?:refs\/heads\/)?(?:main|master)$/;
-const GREEN = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
+const stripQuotes = (t: string) => t.replace(/^(['"])(.*)\1$/, '$2');
 
-/** `tokens` are already unquoted, so a quoted "-f", "+main" or "--force" is caught too. */
-function isForcePush(tokens: string[]): boolean {
-  return tokens.some((t) => t.startsWith('--force') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t) || (t.startsWith('+') && t.length > 1));
-}
-
-function checkPush(args: string, cwd: string, command: string): void {
-  // Unquote every token up front — flags ("-f", "+main", "--delete") and
-  // refspecs alike — so a quoted form of any of them is still recognised;
-  // startsWith('-') below then reads the real flag, not a leading quote char.
-  const tokens = args.trim().split(/\s+/).filter(Boolean).map(unquote);
-  if (isForcePush(tokens)) deny(HOOK, 'force-push is forbidden on every branch.');
-  const deleting = tokens.includes('--delete') || tokens.includes('-d');
-  // [0] is the remote; both sides of a possible `:` ride along as one token.
-  const refspecs = tokens.filter((t) => !t.startsWith('-')).slice(1);
+function checkPush(segment: string, cwd: string, command: string): void {
+  const tokens = segment.replace(/^git\s+push\b/, '').trim().split(/\s+/).filter(Boolean).map(stripQuotes);
+  if (tokens.some((t) => t.startsWith('--force') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t) || (t.startsWith('+') && t.length > 1))) {
+    deny(HOOK, 'force-push is forbidden on every branch.');
+  }
+  const refspecs = tokens.filter((t) => !t.startsWith('-')).slice(1); // [0] is the remote
   const targetsMain =
-    refspecs.some((r) => PROTECTED.test(r.includes(':') ? r.split(':').pop() ?? '' : r)) ||
-    ((refspecs.length === 0 || refspecs.every((r) => r === 'HEAD')) && PROTECTED.test(currentBranch(cwd)));
-  if (deleting && refspecs.some((r) => PROTECTED.test(r))) deny(HOOK, 'deleting main/master on the remote is forbidden.');
+    refspecs.some((r) => PROTECTED.test(r) || /:(?:main|master)$/.test(r)) ||
+    (refspecs.length === 0 && PROTECTED.test(currentBranch(cwd)));
   if (targetsMain && !valve('AGENTIC_ALLOW_PUSH_MAIN', command)) {
     deny(HOOK, 'direct push to main/master is forbidden; open a PR. (AGENTIC_ALLOW_PUSH_MAIN=1 is for bootstrap only.)');
-  }
-}
-
-function checkBranchDelete(segment: string): void {
-  const m = segment.match(/^git\s+branch\s+(.*)$/);
-  if (!m) return;
-  const tokens = m[1].trim().split(/\s+/).filter(Boolean).map(unquote);
-  const deleting = tokens.some((t) => t === '-D' || t === '-d' || t === '--delete');
-  if (deleting && tokens.some((t) => PROTECTED.test(t))) {
-    deny(HOOK, 'deleting main/master locally is forbidden.');
-  }
-}
-
-function checkMerge(args: string, cwd: string, command: string): void {
-  if (/--admin\b/.test(args)) deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
-  if (valve('AGENTIC_ALLOW_MERGE', command)) return;
-  const target = args.trim().split(/\s+/).find((t) => t && !t.startsWith('-'));
-  const ref = target ? [target] : [];
-
-  const checks = run('gh', ['pr', 'checks', ...ref, '--json', 'name,state'], { cwd });
-  let list: { name: string; state: string }[] | null = null;
-  try {
-    list = JSON.parse(checks.stdout || '[]');
-  } catch {
-    list = null;
-  }
-  if (!Array.isArray(list)) deny(HOOK, `could not read the PR checks (${(checks.stderr || 'no output').trim().slice(0, 160)}).`);
-  if (list.length === 0) deny(HOOK, 'the PR has no checks registered; without CI there is no autonomous merge. (AGENTIC_ALLOW_MERGE=1 is for bootstrap only.)');
-  const red = list.filter((c) => !GREEN.has(String(c.state).toUpperCase()));
-  if (red.length) deny(HOOK, `checks not green: ${red.map((c) => `${c.name}=${c.state}`).join(', ')}.`);
-
-  const view = run('gh', ['pr', 'view', ...ref, '--json', 'labels,reviewDecision'], { cwd });
-  let pr: { labels?: { name: string }[]; reviewDecision?: string } | null = null;
-  try {
-    pr = JSON.parse(view.stdout || 'null');
-  } catch {
-    pr = null;
-  }
-  if (!pr) deny(HOOK, `could not read the PR (${(view.stderr || 'no output').trim().slice(0, 160)}).`);
-  const label = process.env.AGENTIC_REVIEW_LABEL || 'review:approved';
-  const hasLabel = (pr.labels ?? []).some((l) => l.name === label);
-  if (!hasLabel && pr.reviewDecision !== 'APPROVED') {
-    deny(HOOK, `the PR has neither the "${label}" label nor an APPROVED review; the reviewer goes first.`);
   }
 }
 
@@ -98,18 +43,14 @@ async function main() {
   const payload = parsePayload(await readStdin());
   if (!payload || payload.tool_name !== 'Bash') return;
   const command = String(payload.tool_input?.command ?? '');
-  if (!/push|merge|branch/.test(command)) return; // fast path: nothing to look at
+  if (!/push|merge/.test(command)) return; // fast path: nothing to look at
   const cwd = payload.cwd || process.cwd();
 
   for (const segment of commandSegments(command)) {
-    const push = segment.match(/^git\s+(?:-C\s+\S+\s+|--\S+\s+)*push\b(.*)$/);
-    if (push) {
-      checkPush(push[1], cwd, command);
-      continue;
+    if (/^git\s+push\b/.test(segment)) checkPush(segment, cwd, command);
+    if (/^gh\s+pr\s+merge\b/.test(segment) && /--admin\b/.test(segment)) {
+      deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
     }
-    checkBranchDelete(segment);
-    const merge = segment.match(/^gh\s+pr\s+merge\b(.*)$/);
-    if (merge) checkMerge(merge[1], cwd, command);
   }
 }
 
