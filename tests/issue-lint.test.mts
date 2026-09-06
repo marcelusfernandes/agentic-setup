@@ -5,7 +5,8 @@
 // `gh` on PATH for AC5 (the only check that always shells out, in both
 // modes). Everything else runs through --issue-body-file /
 // --milestone-issues-file, so no other `gh` call is needed.
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, tempRepo } from './lib/harness.mts';
@@ -521,6 +522,100 @@ check(
     Array.isArray(strictReferenceOut?.failures) &&
     strictReferenceOut.failures.length === 0,
   strictReference.out,
+);
+
+// --- #44: the AC4 reference check runs one `git grep` for the whole covered
+// set (plus one more to map hits back to the covered file(s) that own each
+// pattern), not one spawn per covered file. A `git` shim first on PATH logs
+// every invocation's argv (then execs the real git found via `which git` in
+// this process, whose own PATH is untouched) so the spawn count is
+// observable from outside the script. ---------------------------------------
+const REAL_GIT = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+const gitShimDir = mkdtempSync(join(tmpdir(), 'agentic-issuelint-gitshim-'));
+cleanup(() => rmSync(gitShimDir, { recursive: true, force: true }));
+const gitInvocationLog = join(gitShimDir, 'git-invocations.log');
+writeFileSync(gitInvocationLog, '');
+writeFileSync(join(gitShimDir, 'git'), `#!/usr/bin/env bash\necho "$@" >> ${gitInvocationLog}\nexec ${REAL_GIT} "$@"\n`);
+chmodSync(join(gitShimDir, 'git'), 0o755);
+const PATH_WITH_GIT_SHIM = `${gitShimDir}:${PATH_WITH_FAKE_GH}`;
+
+function grepSpawnCount(): number {
+  return readFileSync(gitInvocationLog, 'utf8')
+    .split('\n')
+    .filter((l) => /^grep(\s|$)/.test(l)).length;
+}
+
+// AC3: 300 covered files (well under any chunk limit) plus one uncovered
+// file that references one covered file's basename. A per-file loop would
+// spawn 300 `git grep`s here; the batched check spawns at most 2 regardless.
+const bigRepo = tempRepo();
+const bigRepoFiles: Record<string, string> = {};
+for (let i = 0; i < 300; i++) bigRepoFiles[`src/gen/f${i}.mts`] = 'export {};\n';
+bigRepoFiles['docs/notes.md'] = 'See f0.mts for details.\n';
+commit(bigRepo, bigRepoFiles, 'chore: base');
+writeFileSync(gitInvocationLog, '');
+const bigBody = issueBody({ files: '## Files\n- `src/**`\n' });
+const bigResult = ci('issue-lint.mts', ['--issue', '900', '--issue-body-file', bodyFile(bigBody)], {
+  cwd: bigRepo,
+  env: { PATH: PATH_WITH_GIT_SHIM },
+});
+const bigOut = parse(bigResult.out);
+const bigSpawnCount = grepSpawnCount();
+check(
+  'the reference check spawns at most two `git grep`s for 300 covered files',
+  bigSpawnCount <= 2,
+  `spawns: ${bigSpawnCount}`,
+);
+check('the 300-file reference check still reports ok: true', bigResult.status === 0 && bigOut?.ok === true, bigResult.out);
+check(
+  'the 300-file reference check still finds the real warning',
+  Array.isArray(bigOut?.warnings) && bigOut.warnings.some((w: any) => w.file === 'src/gen/f0.mts' && w.referencedBy === 'docs/notes.md'),
+  bigResult.out,
+);
+
+// AC2: the batched check's warnings match the exact set (and, after sorting,
+// order) the old per-file `git grep -l` loop produced. This fixture exercises
+// the two places the batched design differs from a naive "one grep per hit
+// file" rewrite: (a) two covered files sharing a basename referenced by the
+// same outside file must both warn, and (b) one outside file referencing the
+// same covered file twice (once by path, once by basename) must warn once,
+// not twice. It also re-checks the untouched rules: a <4-char basename never
+// becomes its own pattern, and an excluded file (package-lock.json) is never
+// a `referencedBy`.
+const refRepo = tempRepo();
+commit(
+  refRepo,
+  {
+    'modA/util.mts': 'export {};\n',
+    'modB/util.mts': 'export {};\n',
+    'pkg/thing.mts': 'export {};\n',
+    'pkg/abc': 'export {};\n',
+    'notes.md': 'See util.mts for details.\n',
+    'outside/refs.md': 'Path: pkg/thing.mts\nAlso just thing.mts here.\n',
+    'outside/abcnote.md': 'abc appears here but not the covered path.\n',
+    'package-lock.json': '{"note": "pkg/thing.mts"}\n',
+  },
+  'chore: base',
+);
+const refBody = issueBody({ files: '## Files\n- `modA/**`\n- `modB/**`\n- `pkg/**`\n' });
+const refResult = ci('issue-lint.mts', ['--issue', '901', '--issue-body-file', bodyFile(refBody)], {
+  cwd: refRepo,
+  env: { PATH: PATH_WITH_FAKE_GH },
+});
+const refOut = parse(refResult.out);
+const sortedWarnings = (Array.isArray(refOut?.warnings) ? [...refOut.warnings] : []).sort((a: any, b: any) =>
+  a.file === b.file ? (a.referencedBy < b.referencedBy ? -1 : a.referencedBy > b.referencedBy ? 1 : 0) : a.file < b.file ? -1 : 1,
+);
+const expectedWarnings = [
+  { file: 'modA/util.mts', referencedBy: 'notes.md' },
+  { file: 'modB/util.mts', referencedBy: 'notes.md' },
+  { file: 'pkg/thing.mts', referencedBy: 'outside/refs.md' },
+];
+check('the reference check reports ok: true for the shared-basename fixture', refResult.status === 0 && refOut?.ok === true, refResult.out);
+check(
+  'the reference check reports exactly the expected { file, referencedBy } pairs, sorted, no duplicates',
+  JSON.stringify(sortedWarnings) === JSON.stringify(expectedWarnings),
+  `got: ${JSON.stringify(sortedWarnings)}`,
 );
 
 // --- AC5: Blocked-by numbers must exist -------------------------------------
