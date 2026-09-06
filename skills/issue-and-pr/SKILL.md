@@ -30,10 +30,11 @@ not a local pre-check, decides whether it held.
 Before that push, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses when
 the result is not `ok: true` — a normal failure, or the lint's own `{ error }` when it
 could not even run: `{ refused: "issue-lint failed", lint: <the lint JSON> }`, exit 1,
-nothing pushed or relabelled. `--strict` is passed through verbatim when given — an opt-in
-flag, not something `claim.mts` applies by issue type (see "Write sub-issues" below);
-`--no-lint` skips the check entirely, and the success JSON then reports `"lint": "skipped"`
-instead of `"lint": { "ok": true, "warnings": <n> }`.
+nothing pushed or relabelled. `issue-lint` checks the contract only — sections, globs,
+`Blocked by:` numbers — and has nothing else to pass through: the entry-point-reference
+warning it used to run, and its `--strict` flag, were both removed in #62 (see "Write
+sub-issues" below); `--no-lint` skips the check entirely, and the success JSON then
+reports `"lint": "skipped"` instead of `"lint": { "ok": true }`.
 
 Exit 0 → `{ issue, branch, base, lint }`: pushed, assigned `@me`, relabelled
 `state:in-progress`. Exit 2 → `{ held }`: the branch already exists, another agent has it
@@ -92,7 +93,7 @@ gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$
 `issue.md` follows `.github/ISSUE_TEMPLATE/task.md`. An issue is not dispatchable until
 `ci/issue-lint.mts <n>` reports `ok: true` (run it, or wait for the `issue-lint` workflow's
 comment, before it reaches `state:ready`) — see `skills/orchestrate` step 1 for the exact
-invocation and what `--strict` does. What CI, and now `issue-lint`, will hold the issue to:
+invocation. What CI, and `issue-lint`, will hold the issue to:
 - **Files** are globs; the `scope` check compares `git diff --name-only` against them. Two
   issues in flight cannot have intersecting globs — `issue-lint` fails a sub-issue over
   this itself, against every other `state:ready`/`state:in-progress`/`state:in-review`
@@ -104,19 +105,17 @@ invocation and what `--strict` does. What CI, and now `issue-lint`, will hold th
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.
 - An issue that adds an entry point to an existing table, menu or list **names that file in
   `## Files` from the start**, not only the new feature's directory — otherwise the
-  orchestrator ends up granting `authorised:` after the fact. `issue-lint` warns about
-  exactly this gap: for every file the issue's globs cover, it `git grep`s every other
-  tracked file for that path or basename and reports a hit as `{ file, referencedBy }` in
-  `warnings`. This is the check #3's shape needed and didn't have: its globs covered
-  `tests/**` to rename the entry point (`tests/smoke.mts` → `tests/run.mts`), while
-  `.github/workflows/test.yml` referenced the old path by name from outside `## Files` —
-  fixed inside the same PR under an `authorised:` grant on the workflow file, not caught by
-  any check before dispatch. A warning alone does not fail the lint unless `--strict` was
-  passed — an opt-in flag, never something the orchestrator applies by issue type: the
-  same `git grep` fires on an in-place edit or import, not only a rename or removal, and
-  folding it into `ok` by default would block every such change (`docs/decisions.md` item
-  12). Either way, widen `## Files` to cover the referencing file up front rather than
-  needing the grant.
+  orchestrator ends up granting `authorised:` after the fact. `issue-lint` cannot catch a
+  missing one itself any more: it used to `git grep` every covered path/basename against
+  the rest of the tree and warn on a hit, but that fired on any ordinary import, doc or
+  workflow mention of a covered path (not only a rename or removal), so it was removed in
+  #62 along with its `--strict` flag — `issue-lint` checks the contract only now (sections,
+  globs, `Blocked by:` numbers). The mechanical form of this gap — a path a PR removes or
+  renames while another tracked file outside the diff still names it, the shape #3 needed
+  — moved to PR time instead, where a diff exists to tell a rename from an in-place edit:
+  the `scope` job fails on it unless the referencing file sits inside the linked issue's
+  globs or is granted with `authorised:` (#51). Widen `## Files` to cover the referencing
+  file up front rather than relying on that check or the grant.
 
 ## Labels
 
