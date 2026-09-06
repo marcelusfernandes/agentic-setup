@@ -24,8 +24,10 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
 5. Implement until the test command is green. Commit at every green
    (`<type>(<scope>): <imperative>`).
 6. Run the check command (types, lint). Green.
-7. Open the PR with the template (`Closes #N` in plain text, test summary, globs touched).
-   Label `state:in-review`; copy the issue's `type:` and `scope:` labels onto the PR.
+7. Open the PR with the template (a closing keyword in plain text — `Closes`, `Fixes` or
+   `Resolves #N`, several may be linked and their globs unioned, never inside backticks
+   or a fence — test summary, globs touched). Label `state:in-review`; copy the issue's
+   `type:` and `scope:` labels onto the PR.
 8. Stop. Do not wait on CI. Do not merge. If CI or the reviewer sends it back, fix in the
    same worktree and update the PR.
 

@@ -30,8 +30,9 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 4. **Detection is a default, never a contract.** New stacks go in `ci/lib/detect.mts` with an
    env override path; no config file.
 5. **The parsers stay strict.** `## Files` reads bullets only; `authorised:` is one glob per
-   line; `Closes #N` is plain text. Loosening a parser needs a test for the exact prose
-   that used to break it.
+   line; the closing-keyword line (`Closes`/`Fixes`/`Resolves #N`, several allowed) is
+   plain text — a keyword inside backticks or a fence is ignored. Loosening a parser
+   needs a test for the exact prose that used to break it.
 6. **Tests spawn the real script.** A case for a hook, a CI script or the installer runs
    the actual file against a real git repository; nothing is mocked. Pure functions in
    `ci/lib/` (`detect`, `scope`, `globs`) may be imported and tested directly.
@@ -43,4 +44,5 @@ by CI and a reviewing agent. This repository runs its own loop — the plugin do
 
 `docs/workflow.md` and `docs/orchestration.md` are the contract; `skills/issue-and-pr` is
 the operating card. Branch `<type>/<n>-<slug>`; commit `test(red):` first; PR with
-`Closes #N`; the orchestrator merges on green checks + `review:approved`.
+`Closes`/`Fixes`/`Resolves #N` (several issues may be linked, globs unioned); the
+orchestrator merges on green checks + `review:approved`.

@@ -32,8 +32,13 @@ gh issue edit $n --add-label state:in-review --remove-label state:in-progress
 ```
 
 `pr.md` follows `.github/pull_request_template.md`: `Closes #N` in plain text (no bold, no
-link), the test summary, the globs touched, risks. Copy the issue's `type:` and `scope:`
-labels — the checks read the **PR's** labels, never the issue's. Never `gh pr merge`.
+link) as the first line — `Fixes #N` and `Resolves #N` (and their close/closed, fix/fixed,
+resolve/resolved forms) are also accepted, and a PR may link several issues this way, in
+which case `scope` checks the diff against the union of every linked issue's globs. A
+keyword inside backticks or a fenced code block is ignored, so never quote one as a
+formatted example. Then the test summary, the globs touched, risks. Copy the issue's
+`type:` and `scope:` labels — the checks read the **PR's** labels, never the issue's.
+Never `gh pr merge`.
 
 **The implementer stops here.** It does not wait on CI and does not poll the PR; the
 orchestrator launches the reviewer and watches the checks. If CI or the reviewer sends
