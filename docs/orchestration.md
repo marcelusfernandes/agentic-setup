@@ -14,10 +14,13 @@ One Claude Code session at the repository root (not in a worktree), running
   It never implements.
 
 ```
-0. RECONCILE from GitHub (never from memory):
-   in-progress with no PR and no remote branch → ready
-   in-review with green CI and review:approved → merge
-   local worktree with no remote branch → delete
+0. `scripts/reconcile.mts` prints the loop's state as one JSON document (`milestone`,
+   `ready`, `inProgress`, `inReview`, `stale`, `orphanWorktrees` — see
+   `skills/orchestrate/SKILL.md` step 0 for the invocation and what each field means),
+   instead of reconciling from memory:
+   in-progress with no PR and no remote branch → ready (`stale`)
+   in-review with green CI and review:approved → merge (`inReview`)
+   local worktree with no remote branch → delete (`orphanWorktrees`)
 1. read state:ready issues of the current milestone with no open dependency
 2. pick up to 4 whose globs do not intersect
 3. for each: push the remote branch <type>/<n>-<slug> (the lock; skip if it exists),
@@ -52,7 +55,9 @@ lost. Labels, branches and PRs are not. Every pass starts by reading them.
    control CI will verify; without it the PR fails.
 5. Implement until the test command is green. Commit at every green.
 6. Run the project's check command (types, lint, fast scans). Green.
-7. Open the PR with the template (`Closes #N`, test summary, globs touched). Label
+7. Open the PR with the template (a closing keyword — `Closes`/`Fixes`/`Resolves #N`,
+   several may be linked, the diff must fit the union of their globs, never quote a
+   keyword inside backticks or a fence — test summary, globs touched). Label
    `state:in-review`. Copy the issue's `type:`/`scope:` labels onto the PR.
 8. Stop. Do not merge. If CI or the reviewer sends it back, fix in the same worktree
    and update the PR.

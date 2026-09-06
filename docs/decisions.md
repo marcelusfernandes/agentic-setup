@@ -29,7 +29,9 @@ force-push, which is denied everywhere.
 
 ## 4. Merge without a human
 
-PR to `main` with `Closes #N`; squash when the checks pass and the reviewer returns
+PR to `main` with `Closes`/`Fixes`/`Resolves #N` (several issues may be linked; the diff
+must stay inside the union of their globs; a keyword inside backticks or a fence is
+ignored); squash when the checks pass and the reviewer returns
 approved. **No up-to-date-branch requirement** — CI runs again on `main` after the
 merge; rebase only on conflict. Two failed rounds become `state:blocked` **with the
 `human` label**, and the orchestrator moves on.
