@@ -42,7 +42,9 @@ case "\${1:-} \${2:-}" in
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":72,"title":"In progress worktree locked by a dead pid","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -165,6 +167,49 @@ const resumableWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-resumable-
 cleanup(() => rmSync(resumableWorktreeDir, { recursive: true, force: true }));
 git(['worktree', 'add', '-q', resumableWorktreeDir, 'feat/71-resumable-worktree'], repo);
 
+// --- AC1/AC2/AC4 (#56): a worktree locked by a dead pid does not count as a
+// live agent. #72's worktree is locked with a reason naming a pid that does
+// not exist: the branch must not count as "checked out" for classification
+// purposes, so the issue is resumable and the worktree is reported in
+// deadWorktrees. #73's worktree is locked with this test process's own
+// (live) pid: it must count exactly like an unlocked checkout (AC4, fail
+// safe) — inProgress, not resumable, and absent from deadWorktrees.
+function findDeadPid(): number {
+  for (let pid = 99999; pid < 999999; pid++) {
+    try {
+      process.kill(pid, 0);
+    } catch (err: any) {
+      if (err && err.code === 'ESRCH') return pid;
+    }
+  }
+  throw new Error('could not find a pid that does not exist on this machine');
+}
+const DEAD_PID = findDeadPid();
+
+git(['checkout', '-q', '-b', 'feat/72-dead-locked-worktree', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/72-dead-locked-worktree'], repo);
+git(['checkout', '-q', 'main'], repo);
+
+const deadLockedWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-dead-locked-worktree-')), 'wt');
+cleanup(() => rmSync(deadLockedWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', deadLockedWorktreeDir, 'feat/72-dead-locked-worktree'], repo);
+git(
+  ['worktree', 'lock', deadLockedWorktreeDir, '--reason', `claude agent agent-dead (pid ${DEAD_PID} start Sat Sep  5 19:34:36 2026)`],
+  repo,
+);
+
+git(['checkout', '-q', '-b', 'feat/73-live-locked-worktree', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/73-live-locked-worktree'], repo);
+git(['checkout', '-q', 'main'], repo);
+
+const liveLockedWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-live-locked-worktree-')), 'wt');
+cleanup(() => rmSync(liveLockedWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', liveLockedWorktreeDir, 'feat/73-live-locked-worktree'], repo);
+git(
+  ['worktree', 'lock', liveLockedWorktreeDir, '--reason', `claude agent agent-live (pid ${process.pid} start Sat Sep  5 19:34:36 2026)`],
+  repo,
+);
+
 // A local branch literally named "origin/main" shadows the remote-tracking
 // ref "origin/main" one level down, the same way "origin/feat/60-shadowed"
 // does above (#48) — except here it targets `commitsAheadOfMain`'s own
@@ -252,6 +297,44 @@ check(
   'a worktree-checked-out issue is never reported as resumable',
   (out?.resumable ?? []).every((i: any) => i.number !== 71),
   JSON.stringify(out?.resumable),
+);
+
+// --- AC1/AC2/AC4 (#56): a dead-pid lock does not count as a live agent -----
+const resumable72 = (out?.resumable ?? []).find((i: any) => i.number === 72);
+check(
+  'a worktree locked by a dead pid does not count as checked out: its issue is resumable (AC1/AC2)',
+  resumable72?.branch === 'feat/72-dead-locked-worktree',
+  JSON.stringify(resumable72),
+);
+check(
+  'a dead-pid-locked issue is removed from inProgress',
+  (out?.inProgress ?? []).every((i: any) => i.number !== 72),
+  JSON.stringify(out?.inProgress),
+);
+
+const deadWorktrees: any[] = out?.deadWorktrees ?? [];
+const deadWorktree72 = deadWorktrees.find((w) => w.branch === 'feat/72-dead-locked-worktree');
+check(
+  'deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)',
+  deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && typeof deadWorktree72.path === 'string' && deadWorktree72.path.length > 0,
+  JSON.stringify(deadWorktree72),
+);
+
+const inProgress73 = (out?.inProgress ?? []).find((i: any) => i.number === 73);
+check(
+  'a worktree locked by a live pid still counts as checked out: its issue stays inProgress (AC4, fail safe)',
+  inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null,
+  JSON.stringify(inProgress73),
+);
+check(
+  'a live-pid-locked issue is never reported as resumable',
+  (out?.resumable ?? []).every((i: any) => i.number !== 73),
+  JSON.stringify(out?.resumable),
+);
+check(
+  'deadWorktrees does not list a worktree locked by a live pid',
+  !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'),
+  JSON.stringify(deadWorktrees),
 );
 
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
