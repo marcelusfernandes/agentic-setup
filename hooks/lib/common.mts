@@ -229,8 +229,19 @@ export function commandSegments(command: string): string[] {
     // Outside any quote.
     if (ch === '#' && (current === '' || /\s$/.test(current))) {
       let j = i + 1;
-      while (j < str.length && str[j] !== '\n') j++;
-      i = j - 1; // the loop's i++ lands on the newline (or end of string) next
+      while (j < str.length && str[j] !== '\n') {
+        if (backtickOuter !== null) {
+          // Bash ends a comment inside backquotes at the matching (unescaped)
+          // backquote — it doesn't run past it to the next newline.
+          if (str[j] === '\\' && j + 1 < str.length) {
+            j += 2;
+            continue;
+          }
+          if (str[j] === '`') break;
+        }
+        j++;
+      }
+      i = j - 1; // the loop's i++ lands on the boundary (backtick, newline, or end) next
       continue;
     }
     if (ch === '\\' && i + 1 < str.length) {
@@ -291,6 +302,9 @@ export function commandSegments(command: string): string[] {
     }
     current += ch;
   }
+  // An unterminated backtick pair: keep the outer text as one segment rather
+  // than losing it (the shell would refuse this command anyway).
+  if (backtickOuter !== null) current = backtickOuter + current;
   segments.push(current);
 
   return segments
