@@ -26,11 +26,15 @@ const denied = [
   "git status  # let's see\ngit push origin main", // a # comment must not let its apostrophe swallow the newline
   "echo $'it\\'s' && git push origin main", // $'...' ANSI-C quoting: backslash escapes even in single quotes
   'git push origin "main"', // double-quoted refspec token
+  "git push origin 'main'", // single-quoted refspec token
+  "git push origin $'main'", // $'...' ANSI-C quoted refspec token
   "git push origin mai'n'", // single quotes spliced inside a bare word
   'git push origin ma"in"', // double quotes spliced inside a bare word
   'git branch -D "main"', // quoted branch name in a delete
+  'git branch -D feat/1-x main', // main is not the first name after -D, but is still deleted
   'echo `git push origin main`', // backtick command substitution, outside quotes
   'echo "`git push origin main`"', // backtick command substitution, inside double quotes
+  'echo x & git push origin main', // a lone & backgrounds the first command; the second still runs
   'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
   'git push origin main 2>&1', // a redirect after the refspec must not hide the push
 ];
