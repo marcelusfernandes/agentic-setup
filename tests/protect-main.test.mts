@@ -49,6 +49,20 @@ const denied = [
   'git push --delete origin "main"', // regression lock: quoted --delete target already worked pre-#25
   'git push "--delete" origin main', // quoted --delete flag itself: unquote-before-flag-check must catch it
   'git push origin 2>/dev/null', // the whole refspec position is a redirect: bare-push-from-main fallback must still fire
+  // #25 round 2: a bare '(' nested inside $( … ) must still be a segment
+  // boundary, exactly as it is outside one — not just a depth counter. All
+  // nine reach a real push/branch-delete on main regardless of branch (the
+  // refspec is explicit), so the bare-push-from-main fallback is not what
+  // proves these; the top-level list is the right place.
+  'echo $( (git push origin main) )',
+  '$( (git push origin main) )',
+  'echo "$( (git push origin main) )"', // the substitution is inside double quotes; wasInDouble must still restore afterward
+  'echo $( (cd . ; git push origin main) )', // a ; inside the bare subshell must still split there too
+  'echo $( ( (git push origin main) ) )', // doubly-nested bare subshells
+  'echo $(true; (git push origin main))',
+  'echo $( (git push --delete origin main) )',
+  'echo $( (git branch -D main) )',
+  'echo $(echo $( (git push origin main) ))', // a bare subshell nested inside a nested $( … )
 ];
 for (const command of denied) {
   const r = bash(command, repo);
