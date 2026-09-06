@@ -25,6 +25,18 @@ const denied = [
   'git commit -m "x" && git push origin main', // a cleanly closed string still lets a real operator split after it
   "git status  # let's see\ngit push origin main", // a # comment must not let its apostrophe swallow the newline
   "echo $'it\\'s' && git push origin main", // $'...' ANSI-C quoting: backslash escapes even in single quotes
+  'git push origin "main"', // double-quoted refspec token
+  "git push origin 'main'", // single-quoted refspec token
+  "git push origin $'main'", // $'...' ANSI-C quoted refspec token
+  "git push origin mai'n'", // single quotes spliced inside a bare word
+  'git push origin ma"in"', // double quotes spliced inside a bare word
+  'git branch -D "main"', // quoted branch name in a delete
+  'git branch -D feat/1-x main', // main is not the first name after -D, but is still deleted
+  'echo `git push origin main`', // backtick command substitution, outside quotes
+  'echo "`git push origin main`"', // backtick command substitution, inside double quotes
+  'echo x & git push origin main', // a lone & backgrounds the first command; the second still runs
+  'git push origin main & echo done', // a lone & backgrounds the first command but still runs it
+  'git push origin main 2>&1', // a redirect after the refspec must not hide the push
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -40,6 +52,9 @@ const allowed = [
   'echo "a && git push origin main"', // one segment, starting with echo
   "git commit -m 'x; git push --force'", // one segment, starting with git commit
   'echo "a \\" && git push origin main && b"', // escaped quote doesn't end the string; still one segment
+  "echo '`git push origin main`'", // backtick inside single quotes is literal text
+  'echo x >&2 && git push origin feat/1-x', // >& is a redirection, not a lone &, and doesn't hide the real &&
+  'git commit -m "a & b"', // & inside a double-quoted string is not the background operator
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
@@ -47,6 +62,29 @@ for (const command of allowed) {
 }
 git(['checkout', '-q', '-b', 'feat/1-x'], repo);
 check('protect-main allows bare push from a work branch', bash('git push', repo).status === 0);
+
+// From a non-main branch, a bare "git push origin" with no refspec is allowed
+// (the earlier "bare push" case above never proves this: on branch main a
+// severed head segment is *also* denied by the bare-push-from-main fallback,
+// masking a broken split). These prove a backtick pair inside the push does
+// not sever the refspec from the command that carries it.
+const deniedFromWorkBranch = [
+  'git push origin `echo` main', // a backtick pair inside the command must not sever the outer push
+  'git push origin `echo x` main', // same, with content in the backtick pair
+  'git push origin ` ` main', // same, with only whitespace in the backtick pair
+  'git push --delete origin `x` main', // same, on a --delete push
+  'git push origin `# x` main', // a # comment inside backticks must end at the closing backtick, not swallow it
+  'git push origin `# \\` x` main', // an escaped backtick inside the comment does not close it early
+  'echo a `# x` && git push origin main', // the comment ends at the backtick; a real && still splits after
+  'echo a `#` && git push origin main', // the comment can be empty and still end right at the backtick
+  'echo a `# x`; git push origin main', // same, with a ; after the backtick pair instead of &&
+  'git push --delete origin `# x` main', // same comment-in-backticks case, on a --delete push
+];
+for (const command of deniedFromWorkBranch) {
+  const r = bash(command, repo);
+  check(`protect-main denies from a work branch: ${command}`, r.status === 2 && /permissionDecision":"deny/.test(r.stdout), r.stderr);
+}
+
 check('protect-main fails CLOSED on merge when gh cannot read the PR', bash('gh pr merge 1 --squash', repo).status === 2);
 check('protect-main ignores non-Bash tools', hook('protect-main.mts', { tool_name: 'Edit', tool_input: { command: 'git push origin main' } }).status === 0);
 check('protect-main allows on unreadable payload', hook('protect-main.mts', '{not json').status === 0);
