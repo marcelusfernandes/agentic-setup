@@ -36,8 +36,16 @@ left by the last one, for an offline check against the last fetch. Fields:
 - `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose
   `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
   step 1's candidate list — no separate query needed.
-- `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues.
-  `pr` is the open PR's number on that branch, or `null`.
+- `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
+  that are not `resumable` (below) — an open PR, a branch checked out in a local
+  worktree of this checkout (an agent of this checkout may be alive), or no remote
+  branch at all. `pr` is the open PR's number on that branch, or `null`.
+- `resumable` — `{ number, branch, commitsAheadOfMain }`: `state:in-progress` issues with
+  a remote branch, no open PR, and no local worktree checked out on that branch. A fresh
+  orchestrator session has no live agents by definition, so this is not "an implementer
+  is working right now" — it is round N+1 of that issue, resumed from `origin/<branch>`
+  (skill `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer
+  never pushed past the lock branch's starting point.
 - `inReview` — `{ number, pr, checks, reviewApproved }`: `state:in-review` issues.
   `checks` is `'green'`, `'red'` or `'pending'` from the PR's status rollup;
   `reviewApproved` is the `review:approved` label or an `APPROVED` review. Checks green
@@ -106,6 +114,12 @@ report rather than guessing.
 
 Then launch the `implementer` agent with **the whole issue body in the prompt** (subagents
 do not see this conversation). One agent per issue, in parallel.
+
+For each issue in reconcile's `resumable` list, do not claim it again — the lock is
+already held by this orchestrator's own `state:in-progress` label and remote branch.
+Dispatch it straight to an implementer as round N+1: tell it to start from
+`origin/<branch>` (skill `safe-worktree` §C), that the previous agent is gone, and to
+verify what is already pushed, finish the work, and open the PR.
 
 ## 4. PR opened → review
 

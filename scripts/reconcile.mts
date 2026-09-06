@@ -21,10 +21,23 @@
 //     milestone: string,
 //     ready: [{ number, title, blockedBy: number[] }],       // Blocked-by all closed
 //     inProgress: [{ number, branch, hasRemoteBranch, pr }],  // pr: number | null
+//     resumable: [{ number, branch, commitsAheadOfMain }],    // in-progress, remote
+//                                                              // branch, no open PR, not
+//                                                              // checked out in any local
+//                                                              // worktree of this checkout
 //     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved }],
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
 //   }
+//
+// A fresh orchestrator session has no live agents by definition, so an
+// in-progress issue with a remote branch, no open PR, and no local worktree
+// checked out on that branch is not "an implementer is working right now" —
+// it is resumable: round N+1 from `origin/<branch>` (skills/safe-worktree
+// §C). Classification order for an in-progress issue: open PR -> inProgress
+// (with pr); else no remote branch -> stale; else branch checked out in a
+// local worktree of this checkout -> inProgress (pr: null); else ->
+// resumable, and it is removed from inProgress.
 //
 // GitHub data comes only from `gh` (issue list, pr list, api); worktree and
 // branch data from `git worktree list --porcelain` and (after `git fetch
@@ -179,6 +192,22 @@ const remoteHeads = new Set(
     .filter((ref) => ref !== 'HEAD'),
 );
 
+// `origin/<default>` for the resumable count below. `refs/remotes/origin/HEAD`
+// is set by a real clone, and the test fixture sets it explicitly (`git
+// remote set-head origin <default>`) after its first fetch, so this resolves
+// offline from local refs — no extra `gh` call. Only if that symbolic ref is
+// missing (an `origin` added by hand, never fetched with a HEAD) does this
+// fall back to `gh repo view`, the same source `claim.mts`/`land.mts` use.
+function defaultBranchName(): string {
+  const symref = spawnSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' });
+  if (symref.status === 0) {
+    return symref.stdout.trim().replace(/^refs\/remotes\/origin\//, '');
+  }
+  const repoInfo = ghJson<{ defaultBranchRef?: { name?: string } }>(['repo', 'view', '--json', 'defaultBranchRef'], {});
+  return repoInfo.defaultBranchRef?.name ?? 'main';
+}
+const defaultBranch = defaultBranchName();
+
 // 6. worktrees; the first block from `git worktree list` is always the main one.
 const worktrees = git(['worktree', 'list', '--porcelain'])
   .split(/\n{2,}/)
@@ -204,13 +233,40 @@ const ready = issues
   .map((i) => ({ number: i.number, title: i.title, blockedBy: parseBlockedBy(i.body ?? '') }))
   .filter((i) => i.blockedBy.every((n) => closedNumbers.has(n)));
 
-const inProgress = issues
+// Branches checked out in any local worktree of this checkout (the main
+// worktree included) — an issue whose lock branch is checked out here may
+// have a live agent, even before it has opened a PR.
+const checkedOutBranches = new Set(worktrees.map((w) => w.branch).filter((b): b is string => b !== null));
+
+// Fully-qualified `refs/remotes/origin/...` on both sides, not the short
+// `origin/<x>` form: git's revision resolution for a short name prefers a
+// local branch (`refs/heads/origin/<x>`) over the remote-tracking ref
+// (`refs/remotes/origin/<x>`) of the same name — the exact shadow #48 fixed
+// for `for-each-ref`. A local branch literally named `origin/main` or
+// `origin/<lock-branch>` would otherwise make this resolve to the wrong
+// commit and silently misreport the count instead of failing loudly.
+function commitsAhead(branch: string): number {
+  const out = git(['rev-list', `refs/remotes/origin/${defaultBranch}..refs/remotes/origin/${branch}`, '--count']).trim();
+  return Number.parseInt(out, 10) || 0;
+}
+
+const inProgressAll = issues
   .filter((i) => hasLabel(i.labels, 'state:in-progress'))
   .map((i) => {
     const branch = branchFor(i.number);
     const pr = prFor(branch);
     return { number: i.number, branch, hasRemoteBranch: branch !== null, pr: pr ? pr.number : null };
   });
+
+// Resumable: a remote branch, no open PR, not checked out in any local
+// worktree of this checkout — see the header comment for the classification
+// order and rationale.
+const resumable = inProgressAll
+  .filter((i) => i.pr === null && i.branch !== null && !checkedOutBranches.has(i.branch))
+  .map((i) => ({ number: i.number, branch: i.branch as string, commitsAheadOfMain: commitsAhead(i.branch as string) }));
+const resumableNumbers = new Set(resumable.map((i) => i.number));
+
+const inProgress = inProgressAll.filter((i) => !resumableNumbers.has(i.number));
 
 const inReview = issues
   .filter((i) => hasLabel(i.labels, 'state:in-review'))
@@ -231,4 +287,4 @@ const stale = inProgress
 
 const orphanWorktrees = linkedWorktrees.filter((w) => w.branch && !remoteHeads.has(w.branch)).map((w) => w.path);
 
-console.log(JSON.stringify({ milestone, ready, inProgress, inReview, stale, orphanWorktrees }, null, 2));
+console.log(JSON.stringify({ milestone, ready, inProgress, resumable, inReview, stale, orphanWorktrees }, null, 2));

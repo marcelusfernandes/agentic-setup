@@ -40,7 +40,9 @@ case "\${1:-} \${2:-}" in
   {"number":43,"title":"In review running check must not read red from cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
   {"number":44,"title":"In review running check completes green after cancelled predecessor","body":"","labels":[{"name":"state:in-review"}]},
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -145,6 +147,33 @@ const worktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-worktree-')), 'wt')
 cleanup(() => rmSync(worktreeDir, { recursive: true, force: true }));
 git(['worktree', 'add', '-q', '-b', 'feat/99-orphan', worktreeDir, 'main'], repo);
 
+// --- AC1/AC2/AC3 (#46): resumable — a remote branch, no open PR, no local
+// worktree checked out on it. #70 has two commits pushed beyond `origin/main`
+// and no worktree: resumable, with commitsAheadOfMain === 2. #71 has a
+// worktree checked out on its branch (an agent of this checkout may be
+// alive), so it must stay `inProgress` instead of moving to `resumable`.
+git(['checkout', '-q', '-b', 'feat/70-resumable-ahead', 'main'], repo);
+git(['commit', '-q', '--allow-empty', '-m', 'ahead 1'], repo);
+git(['commit', '-q', '--allow-empty', '-m', 'ahead 2'], repo);
+git(['push', '-q', 'origin', 'feat/70-resumable-ahead'], repo);
+
+git(['checkout', '-q', '-b', 'feat/71-resumable-worktree', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/71-resumable-worktree'], repo);
+git(['checkout', '-q', 'main'], repo);
+
+const resumableWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-resumable-worktree-')), 'wt');
+cleanup(() => rmSync(resumableWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', resumableWorktreeDir, 'feat/71-resumable-worktree'], repo);
+
+// A local branch literally named "origin/main" shadows the remote-tracking
+// ref "origin/main" one level down, the same way "origin/feat/60-shadowed"
+// does above (#48) — except here it targets `commitsAheadOfMain`'s own
+// `origin/<default>..origin/<branch>` computation. Point it at #70's tip
+// (not main's), so a resolution that picks this local branch instead of the
+// real `refs/remotes/origin/main` shows up as a wrong count (0, since the
+// range would run from #70's tip to itself), not a coincidentally right one.
+git(['branch', 'origin/main', 'feat/70-resumable-ahead'], repo);
+
 function reconcile(...args: string[]) {
   return spawnSync(RUNTIME, [join(ROOT, 'scripts', 'reconcile.mts'), ...args], {
     cwd: repo,
@@ -200,6 +229,31 @@ check(
   JSON.stringify(inProgress60),
 );
 
+// --- AC1/AC2/AC3 (#46): resumable vs. still-inProgress ----------------------
+const resumable70 = (out?.resumable ?? []).find((i: any) => i.number === 70);
+check(
+  'resumable: remote branch, no PR, no worktree checkout, reports commits ahead of main',
+  resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2,
+  JSON.stringify(resumable70),
+);
+check(
+  'a resumable issue is removed from inProgress (AC1)',
+  (out?.inProgress ?? []).every((i: any) => i.number !== 70),
+  JSON.stringify(out?.inProgress),
+);
+
+const inProgress71 = (out?.inProgress ?? []).find((i: any) => i.number === 71);
+check(
+  'in-progress: remote branch, no PR, but checked out in a local worktree stays inProgress (AC2)',
+  inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null,
+  JSON.stringify(inProgress71),
+);
+check(
+  'a worktree-checked-out issue is never reported as resumable',
+  (out?.resumable ?? []).every((i: any) => i.number !== 71),
+  JSON.stringify(out?.resumable),
+);
+
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
 check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
@@ -249,11 +303,13 @@ check(
 );
 check('orphanWorktrees does not list the main worktree', !orphans.some((p) => realpathSync(p) === realpathSync(repo)));
 
-const inProgress50 = (out?.inProgress ?? []).find((i: any) => i.number === 50);
+// #50 has a remote branch, no PR and no worktree checkout, so it now starts
+// out `resumable` (AC1), not `inProgress` — see the negative control below.
+const resumable50 = (out?.resumable ?? []).find((i: any) => i.number === 50);
 check(
-  'in-progress prune target starts with a remote branch',
-  inProgress50?.branch === 'feat/50-prune-target' && inProgress50?.hasRemoteBranch === true,
-  JSON.stringify(inProgress50),
+  'resumable prune target starts with a remote branch (no PR, no worktree checkout), no commits pushed beyond main',
+  resumable50?.branch === 'feat/50-prune-target' && resumable50?.commitsAheadOfMain === 0,
+  JSON.stringify(resumable50),
 );
 
 // --- AC1/AC2/AC3: default fetch (--prune) sees a branch deleted on the real
@@ -266,19 +322,20 @@ check(
 git(['branch', '-D', 'feat/50-prune-target'], remoteDir);
 
 const outNoFetch: any = JSON.parse(reconcile('--milestone', 'M1', '--no-fetch').stdout);
-const noFetch50 = (outNoFetch?.inProgress ?? []).find((i: any) => i.number === 50);
+const noFetchResumable50 = (outNoFetch?.resumable ?? []).find((i: any) => i.number === 50);
 check(
-  '--no-fetch still reports the stale local ref as a remote branch (AC2)',
-  noFetch50?.hasRemoteBranch === true,
-  JSON.stringify(noFetch50),
+  '--no-fetch still reports the stale local ref as a resumable remote branch (AC2)',
+  noFetchResumable50 !== undefined,
+  JSON.stringify(noFetchResumable50),
 );
 
 const outFetched: any = JSON.parse(reconcile('--milestone', 'M1').stdout);
-const fetched50 = (outFetched?.inProgress ?? []).find((i: any) => i.number === 50);
+const fetchedResumable50 = (outFetched?.resumable ?? []).find((i: any) => i.number === 50);
+const fetchedStale50 = (outFetched?.stale ?? []).find((i: any) => i.number === 50);
 check(
-  'the default run fetches with --prune first and no longer sees the deleted branch (AC1/AC3)',
-  fetched50?.hasRemoteBranch === false,
-  JSON.stringify(fetched50),
+  'the default run fetches with --prune first and no longer sees the deleted branch, so it is stale instead of resumable (AC1/AC3)',
+  fetchedResumable50 === undefined && fetchedStale50 !== undefined,
+  JSON.stringify({ fetchedResumable50, fetchedStale50 }),
 );
 
 // --- default milestone: lowest-numbered open milestone, no --milestone -----
