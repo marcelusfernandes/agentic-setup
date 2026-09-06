@@ -230,6 +230,57 @@ git(
   repo,
 );
 
+// --- AC1 (#88): dead worktrees report whether they still hold work worth
+// saving. #72 above (already dead-locked, no changes beyond the pushed
+// branch) doubles as the clean case: dirty: false, unpushed: 0.
+
+// #75: an uncommitted file in a dead-locked worktree -> dirty: true.
+git(['checkout', '-q', '-b', 'feat/75-dirty-worktree', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/75-dirty-worktree'], repo);
+git(['checkout', '-q', 'main'], repo);
+const dirtyWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-dirty-worktree-')), 'wt');
+cleanup(() => rmSync(dirtyWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', dirtyWorktreeDir, 'feat/75-dirty-worktree'], repo);
+writeFileSync(join(dirtyWorktreeDir, 'untracked.txt'), 'uncommitted work\n');
+git(
+  ['worktree', 'lock', dirtyWorktreeDir, '--reason', `claude agent agent-dirty (pid ${DEAD_PID} start Sat Sep  5 19:34:36 2026)`],
+  repo,
+);
+
+// #76: a local commit never pushed -> unpushed: 1.
+git(['checkout', '-q', '-b', 'feat/76-unpushed-commit', 'main'], repo);
+git(['push', '-q', 'origin', 'feat/76-unpushed-commit'], repo);
+git(['checkout', '-q', 'main'], repo);
+const unpushedCommitWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-unpushed-commit-worktree-')), 'wt');
+cleanup(() => rmSync(unpushedCommitWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', unpushedCommitWorktreeDir, 'feat/76-unpushed-commit'], repo);
+git(['commit', '-q', '--allow-empty', '-m', 'local only'], unpushedCommitWorktreeDir);
+git(
+  [
+    'worktree',
+    'lock',
+    unpushedCommitWorktreeDir,
+    '--reason',
+    `claude agent agent-unpushed (pid ${DEAD_PID} start Sat Sep  5 19:34:36 2026)`,
+  ],
+  repo,
+);
+
+// #77: a branch never pushed to origin at all -> unpushed: null.
+const noRemoteWorktreeDir = join(mkdtempSync(join(tmpdir(), 'agentic-no-remote-worktree-')), 'wt');
+cleanup(() => rmSync(noRemoteWorktreeDir, { recursive: true, force: true }));
+git(['worktree', 'add', '-q', '-b', 'feat/77-no-remote-branch', noRemoteWorktreeDir, 'main'], repo);
+git(
+  [
+    'worktree',
+    'lock',
+    noRemoteWorktreeDir,
+    '--reason',
+    `claude agent agent-noremote (pid ${DEAD_PID} start Sat Sep  5 19:34:36 2026)`,
+  ],
+  repo,
+);
+
 // A local branch literally named "origin/main" shadows the remote-tracking
 // ref "origin/main" one level down, the same way "origin/feat/60-shadowed"
 // does above (#48) — except here it targets `commitsAheadOfMain`'s own
@@ -339,6 +390,32 @@ check(
   'deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)',
   deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath,
   JSON.stringify(deadWorktree72),
+);
+check(
+  'a clean dead worktree (no uncommitted changes, nothing unpushed) reports dirty: false, unpushed: 0 (#88 AC1)',
+  deadWorktree72?.dirty === false && deadWorktree72?.unpushed === 0,
+  JSON.stringify(deadWorktree72),
+);
+
+const deadWorktree75 = deadWorktrees.find((w) => w.branch === 'feat/75-dirty-worktree');
+check(
+  'a dead worktree with an uncommitted file reports dirty: true, unpushed: 0 (#88 AC1)',
+  deadWorktree75?.dirty === true && deadWorktree75?.unpushed === 0,
+  JSON.stringify(deadWorktree75),
+);
+
+const deadWorktree76 = deadWorktrees.find((w) => w.branch === 'feat/76-unpushed-commit');
+check(
+  'a dead worktree with one local commit never pushed reports dirty: false, unpushed: 1 (#88 AC1)',
+  deadWorktree76?.dirty === false && deadWorktree76?.unpushed === 1,
+  JSON.stringify(deadWorktree76),
+);
+
+const deadWorktree77 = deadWorktrees.find((w) => w.branch === 'feat/77-no-remote-branch');
+check(
+  'a dead worktree on a branch never pushed to origin reports unpushed: null (#88 AC1)',
+  deadWorktree77?.dirty === false && deadWorktree77?.unpushed === null,
+  JSON.stringify(deadWorktree77),
 );
 
 const inProgress73 = (out?.inProgress ?? []).find((i: any) => i.number === 73);
