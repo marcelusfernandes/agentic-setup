@@ -292,8 +292,16 @@ for (const other of others) {
   // Wildcard-vs-wildcard (and literal-vs-wildcard-prefix) new-directory
   // overlap: the fixed-prefix comparison the regex-based check above can't
   // make, since neither wildcard's pattern necessarily matches the other's
-  // literal shape.
+  // literal shape. Mirrors both legs `newLiteralPaths` gets above: a new
+  // prefix against the other side's own new prefixes/paths (`newPathsOverlap`),
+  // *and* a new prefix against the other side's full glob list (`matchesAny`)
+  // — the second leg is what catches a brand-new directory nested under an
+  // *existing* tracked directory the other issue's wildcard already covers
+  // (`tests/newsub/**`, new, under `tests/**`, matched — `tests/**` never
+  // lands in `otherNewPrefixes` since `tests/` is tracked).
   const overlapNewPrefixes = [
+    ...selfNewPrefixes.filter((p) => matchesAny(p, otherGlobs)),
+    ...otherNewPrefixes.filter((p) => matchesAny(p, validSelfGlobs)),
     ...selfNewPrefixes.filter((p) => [...otherNewPrefixes, ...otherNewPaths].some((q) => newPathsOverlap(p, q))),
     ...otherNewPrefixes.filter((p) => [...selfNewPrefixes, ...selfNewPaths].some((q) => newPathsOverlap(p, q))),
   ];
