@@ -24,6 +24,9 @@
 // base always accepts a `review:approved` label as approval, so it queues a
 // label-only PR even with AGENTIC_REVIEWER_TOKEN set -- this test fails on
 // that base and passes only once the label alone stops being sufficient.
+// Cases M and O are the negative control for #78: the base never retries a
+// clean-status failure and always prints { queued } after a successful
+// --auto call, so both fail against the old script.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -193,7 +196,8 @@ check('no-rules + green checks reports { queued, gate: client-checks }', eOut?.q
 check('no-rules + green checks invoked gh pr checks --required', /pr checks 14 --required/.test(e.log), e.log);
 
 // --- F: required_status_checks present -> queued straight from the server,
-// no client checks call at all; the merge is the last gh call made ----------
+// no client checks call at all; the merge is the last *mutating* call, a
+// state read follows it ------------------------------------------------
 const f = land(15, { FAKE_GH_RULES: 'required' });
 check('required_status_checks present queues (exit 0)', f.status === 0, `${f.stdout}\n${f.stderr}`);
 const fOut = parse(f.stdout);
