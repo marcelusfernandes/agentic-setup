@@ -24,7 +24,11 @@
 // and its GitHub review is the only thing that satisfies approval: the same
 // token that runs this script can no longer write itself an approval by
 // mistake or via a prompt injection in the issue (#66, audit finding 6).
-// Without the variable, behaviour is unchanged (#66 AC4).
+// Without the variable, behaviour is unchanged (#66 AC4). Setting the
+// variable without also setting the base branch ruleset's
+// required_approving_review_count (`scripts/init.mts`'s "by hand" list)
+// leaves `reviewDecision` null forever on a repository with no review
+// policy — every PR would then refuse here with no way to satisfy it.
 //
 // Then gate='ruleset' iff the PR base branch's *effective* rules (`gh api
 // repos/{owner}/{repo}/rules/branches/<baseRefName>`, flattened and

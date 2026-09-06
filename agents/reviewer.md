@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews a PR against the issue's acceptance criteria, its scope and the project's invariants. Read-only. Returns JSON and sets review:approved or the reason for rejection.
+description: Reviews a PR against the issue's acceptance criteria, its scope and the project's invariants. Never edits or merges. Returns JSON and sets review:approved (with a real review too, when a reviewer identity is configured) or the reason for rejection.
 model: opus
 tools: Read, Grep, Glob, Bash
 memory: project
