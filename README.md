@@ -5,10 +5,14 @@ issue per unit of work, one git worktree per agent, PRs merged by CI and a revie
 agent** — no human in the loop except at the points the loop names.
 
 Project-agnostic by construction. Nothing here assumes a language or framework: the
-test command is detected from the repository (`package.json`, `pyproject.toml`,
-`go.mod`, `Cargo.toml`, …) and can be overridden with one setting. The hooks are two
-small TypeScript scripts with no dependencies and no build step — Node 22.18+ runs
-`.mts` files directly; Bun runs the same files.
+test command is detected from the repository — Makefile, Node (`package.json`), Python
+(`pyproject.toml`/`pytest.ini`/`setup.py`/`requirements.txt`), Go (`go.mod`), Rust
+(`Cargo.toml`), Ruby (`Gemfile`), Elixir (`mix.exs`), Gradle (`build.gradle(.kts)`) or
+Maven (`pom.xml`) — and can be overridden with one setting. A Makefile with a `test:`
+target always wins; otherwise the first stack marker found wins (see
+`ci/lib/detect.mts`'s header for the exact order). The hooks are two small TypeScript
+scripts with no dependencies and no build step — Node 22.18+ runs `.mts` files directly;
+Bun runs the same files.
 
 ## Install
 

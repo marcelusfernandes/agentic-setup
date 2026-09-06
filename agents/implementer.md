@@ -14,9 +14,9 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    criteria, proof, the **globs** you may touch, dependencies.
 2. Prove the worktree (skill `safe-worktree`): secrets arrived, base is right (`git fetch`;
    the prerequisite's symbol exists), writes work (a throwaway edit).
-3. Read everything the issue links. Find the project's check and test commands
-   (`package.json` scripts, `Makefile`, `pyproject.toml`, `go.mod`, `Cargo.toml`, or what
-   `CLAUDE.md` says).
+3. Read everything the issue links. Find the project's check and test commands — detected
+   by `ci/lib/detect.mts` (Makefile first, else the first stack marker found; see its
+   header for the full list and order), or what `CLAUDE.md` says.
 
 ## Cycle
 4. Write the failing test. Commit `test(red): <what it covers>`. That commit is the
