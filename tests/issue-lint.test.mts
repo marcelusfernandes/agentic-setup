@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // Cases for ci/issue-lint.mts: it validates an issue's contract (sections,
-// globs, disjointness against issues in flight, entry-point references,
-// Blocked-by numbers) against a real temporary git repository, with a fake
-// `gh` on PATH for AC5 (the only check that always shells out, in both
-// modes). Everything else runs through --issue-body-file /
-// --milestone-issues-file, so no other `gh` call is needed.
+// globs, disjointness against issues in flight, Blocked-by numbers) against
+// a real temporary git repository, with a fake `gh` on PATH for AC5 (the
+// only check that always shells out, in both modes). Everything else runs
+// through --issue-body-file / --milestone-issues-file, so no other `gh`
+// call is needed. There is no entry-point reference check any more (#62) —
+// that mechanical form of the #3 guard moved to `scope`'s dangling-reference
+// rule at PR time (#51), where a diff exists to check it against.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, ci, cleanup, commit, finish, tempRepo } from './lib/harness.mts';
+import { check, ci, cleanup, commit, finish, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
 
 // --- a fake `gh` on PATH, for AC5 only: `gh issue view <n> --json number` -
 // succeeds for any number except 999 (simulates "issue does not exist"). --
@@ -32,8 +34,7 @@ writeFileSync(join(fakeGhDir, 'gh'), FAKE_GH);
 chmodSync(join(fakeGhDir, 'gh'), 0o755);
 const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 
-// --- a real repo with tracked files the globs and the reference check
-// exercise for real --------------------------------------------------------
+// --- a real repo with tracked files the globs exercise for real ------------
 const repo = tempRepo();
 commit(repo, {
   'package.json': '{"name":"x"}\n',
@@ -74,10 +75,9 @@ function milestoneFile(issues: Array<{ number: number; labels: string[]; body: s
   return p;
 }
 
-function lint(n: number, body: string, opts: { milestone?: string; strict?: boolean; markdown?: boolean } = {}) {
+function lint(n: number, body: string, opts: { milestone?: string; markdown?: boolean } = {}) {
   const args = ['--issue', String(n), '--issue-body-file', bodyFile(body)];
   if (opts.milestone) args.push('--milestone-issues-file', opts.milestone);
-  if (opts.strict) args.push('--strict');
   if (opts.markdown) args.push('--markdown');
   return ci('issue-lint.mts', args, { cwd: repo, env: { PATH: PATH_WITH_FAKE_GH } });
 }
@@ -479,145 +479,6 @@ check(
   sequencedMatchedVsNewSubOverlap.out,
 );
 
-// --- AC4: entry-point references (the #3 shape) -----------------------------
-// tests/** covers tests/smoke.mts, which .github/workflows/test.yml
-// references by path — the check that would have caught #3.
-const withReference = lint(113, issueBody());
-const withReferenceOut = parse(withReference.out);
-check('a covered file referenced by an uncovered file produces a warning, not a failure', withReference.status === 0, withReference.out);
-check(
-  'the warning carries { file, referencedBy } naming the covered file and the workflow that references it',
-  Array.isArray(withReferenceOut?.warnings) &&
-    withReferenceOut.warnings.some((w: any) => w.file === 'tests/smoke.mts' && w.referencedBy === '.github/workflows/test.yml'),
-  withReference.out,
-);
-
-// AC3/AC4 (of #37): a *new* literal path is checked for entry-point
-// references too, the same as a matched tracked file — its basename
-// ("smoke.mts") is already referenced (as a substring of "tests/smoke.mts")
-// by .github/workflows/test.yml, so declaring a new file with that same
-// basename still produces a warning, not a failure.
-const newPathReference = lint(1130, issueBody({ files: '## Files\n- `other/smoke.mts`\n' }));
-const newPathReferenceOut = parse(newPathReference.out);
-check(
-  'a new literal path referenced (by basename) by an uncovered file passes with ok: true',
-  newPathReference.status === 0 && newPathReferenceOut?.ok === true,
-  newPathReference.out,
-);
-check(
-  'the warning names the new path and the file that references its basename',
-  Array.isArray(newPathReferenceOut?.warnings) &&
-    newPathReferenceOut.warnings.some((w: any) => w.file === 'other/smoke.mts' && w.referencedBy === '.github/workflows/test.yml'),
-  newPathReference.out,
-);
-
-const strictReference = lint(114, issueBody(), { strict: true });
-const strictReferenceOut = parse(strictReference.out);
-check(
-  '--strict turns the AC4 warning into ok: false without moving it into failures[]',
-  strictReference.status === 1 &&
-    strictReferenceOut?.ok === false &&
-    Array.isArray(strictReferenceOut?.warnings) &&
-    strictReferenceOut.warnings.length > 0 &&
-    Array.isArray(strictReferenceOut?.failures) &&
-    strictReferenceOut.failures.length === 0,
-  strictReference.out,
-);
-
-// --- #44: the AC4 reference check runs one `git grep` for the whole covered
-// set (plus one more to map hits back to the covered file(s) that own each
-// pattern), not one spawn per covered file. A `git` shim first on PATH logs
-// every invocation's argv (then execs the real git found via `which git` in
-// this process, whose own PATH is untouched) so the spawn count is
-// observable from outside the script. ---------------------------------------
-const REAL_GIT = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
-const gitShimDir = mkdtempSync(join(tmpdir(), 'agentic-issuelint-gitshim-'));
-cleanup(() => rmSync(gitShimDir, { recursive: true, force: true }));
-const gitInvocationLog = join(gitShimDir, 'git-invocations.log');
-writeFileSync(gitInvocationLog, '');
-writeFileSync(join(gitShimDir, 'git'), `#!/usr/bin/env bash\necho "$@" >> ${gitInvocationLog}\nexec ${REAL_GIT} "$@"\n`);
-chmodSync(join(gitShimDir, 'git'), 0o755);
-const PATH_WITH_GIT_SHIM = `${gitShimDir}:${PATH_WITH_FAKE_GH}`;
-
-function grepSpawnCount(): number {
-  return readFileSync(gitInvocationLog, 'utf8')
-    .split('\n')
-    .filter((l) => /^grep(\s|$)/.test(l)).length;
-}
-
-// AC3: 300 covered files (well under any chunk limit) plus one uncovered
-// file that references one covered file's basename. A per-file loop would
-// spawn 300 `git grep`s here; the batched check spawns at most 2 regardless.
-const bigRepo = tempRepo();
-const bigRepoFiles: Record<string, string> = {};
-for (let i = 0; i < 300; i++) bigRepoFiles[`src/gen/f${i}.mts`] = 'export {};\n';
-bigRepoFiles['docs/notes.md'] = 'See f0.mts for details.\n';
-commit(bigRepo, bigRepoFiles, 'chore: base');
-writeFileSync(gitInvocationLog, '');
-const bigBody = issueBody({ files: '## Files\n- `src/**`\n' });
-const bigResult = ci('issue-lint.mts', ['--issue', '900', '--issue-body-file', bodyFile(bigBody)], {
-  cwd: bigRepo,
-  env: { PATH: PATH_WITH_GIT_SHIM },
-});
-const bigOut = parse(bigResult.out);
-const bigSpawnCount = grepSpawnCount();
-check(
-  'the reference check spawns at most two `git grep`s for 300 covered files',
-  bigSpawnCount <= 2,
-  `spawns: ${bigSpawnCount}`,
-);
-check('the 300-file reference check still reports ok: true', bigResult.status === 0 && bigOut?.ok === true, bigResult.out);
-check(
-  'the 300-file reference check still finds the real warning',
-  Array.isArray(bigOut?.warnings) && bigOut.warnings.some((w: any) => w.file === 'src/gen/f0.mts' && w.referencedBy === 'docs/notes.md'),
-  bigResult.out,
-);
-
-// AC2: the batched check's warnings match the exact set (and, after sorting,
-// order) the old per-file `git grep -l` loop produced. This fixture exercises
-// the two places the batched design differs from a naive "one grep per hit
-// file" rewrite: (a) two covered files sharing a basename referenced by the
-// same outside file must both warn, and (b) one outside file referencing the
-// same covered file twice (once by path, once by basename) must warn once,
-// not twice. It also re-checks the untouched rules: a <4-char basename never
-// becomes its own pattern, and an excluded file (package-lock.json) is never
-// a `referencedBy`.
-const refRepo = tempRepo();
-commit(
-  refRepo,
-  {
-    'modA/util.mts': 'export {};\n',
-    'modB/util.mts': 'export {};\n',
-    'pkg/thing.mts': 'export {};\n',
-    'pkg/abc': 'export {};\n',
-    'notes.md': 'See util.mts for details.\n',
-    'outside/refs.md': 'Path: pkg/thing.mts\nAlso just thing.mts here.\n',
-    'outside/abcnote.md': 'abc appears here but not the covered path.\n',
-    'package-lock.json': '{"note": "pkg/thing.mts"}\n',
-  },
-  'chore: base',
-);
-const refBody = issueBody({ files: '## Files\n- `modA/**`\n- `modB/**`\n- `pkg/**`\n' });
-const refResult = ci('issue-lint.mts', ['--issue', '901', '--issue-body-file', bodyFile(refBody)], {
-  cwd: refRepo,
-  env: { PATH: PATH_WITH_FAKE_GH },
-});
-const refOut = parse(refResult.out);
-const sortedWarnings = (Array.isArray(refOut?.warnings) ? [...refOut.warnings] : []).sort((a: any, b: any) =>
-  a.file === b.file ? (a.referencedBy < b.referencedBy ? -1 : a.referencedBy > b.referencedBy ? 1 : 0) : a.file < b.file ? -1 : 1,
-);
-const expectedWarnings = [
-  { file: 'modA/util.mts', referencedBy: 'notes.md' },
-  { file: 'modB/util.mts', referencedBy: 'notes.md' },
-  { file: 'pkg/thing.mts', referencedBy: 'outside/refs.md' },
-];
-check('the reference check reports ok: true for the shared-basename fixture', refResult.status === 0 && refOut?.ok === true, refResult.out);
-check(
-  'the reference check reports exactly the expected { file, referencedBy } pairs, sorted, no duplicates',
-  JSON.stringify(sortedWarnings) === JSON.stringify(expectedWarnings),
-  `got: ${JSON.stringify(sortedWarnings)}`,
-);
-
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);
@@ -655,15 +516,20 @@ check(
 check('a failing issue exits 1 with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
 check('a passing issue exits 0 with ok: true', valid.status === 0 && validOut?.ok === true, valid.out);
 check(
-  'the JSON result carries every required key',
+  'the JSON result carries every required key, and no more',
   typeof validOut?.issue === 'number' &&
     typeof validOut?.ok === 'boolean' &&
     Array.isArray(validOut?.failures) &&
-    Array.isArray(validOut?.warnings) &&
     Array.isArray(validOut?.globs) &&
     Array.isArray(validOut?.sequenced),
   valid.out,
 );
+// AC1 (of #62): the entry-point reference check is gone, and with it the
+// `warnings` key — this issue's default `## Files` (`tests/**`) covers
+// tests/smoke.mts, which .github/workflows/test.yml references by path, so
+// the old lint always put a `warnings` array (non-empty) on this exact
+// output. Red against the old lint; green once AC1 lands.
+check('the JSON result has no warnings key at all', validOut?.warnings === undefined, valid.out);
 
 const md = lint(118, issueBody({ goal: null }), { markdown: true });
 check('--markdown starts with the marker the workflow comment step greps for', md.out.startsWith('<!-- agentic-issue-lint -->'), md.out);
@@ -671,6 +537,10 @@ check('--markdown output reports FAIL and names the failing section', /issue-lin
 
 const mdOk = lint(1180, issueBody(), { markdown: true });
 check('--markdown reports PASS for a passing issue', /issue-lint for #1180: PASS/.test(mdOk.out), mdOk.out);
+// AC2: the Markdown comment no longer has a Warnings section — same
+// reference-triggering body as above (tests/** vs. test.yml), red against
+// the old lint (which rendered a **Warnings** section here).
+check('--markdown output has no Warnings section', !/\*\*Warnings\*\*/.test(mdOk.out), mdOk.out);
 
 // { error }: no issue number at all (neither positional nor --issue).
 const noNumber = ci('issue-lint.mts', [], { cwd: repo, env: { PATH: PATH_WITH_FAKE_GH } });
@@ -744,6 +614,29 @@ check(
   'scripts/reconcile.mts (tracked) is reported as matched',
   Array.isArray(issue31Out?.globs) && issue31Out.globs.some((g: any) => g.glob === 'scripts/reconcile.mts' && g.status === 'matched'),
   issue31.out,
+);
+
+// --- design note: an old caller (e.g. an unmigrated scripts/claim.mts) may
+// still pass --strict. That must not crash the lint or change stdout/exit
+// code — an unknown flag is ignored, with a note on stderr instead. Spawned
+// directly (not through the `ci()`/`lint()` helpers, which merge
+// stdout+stderr) so stdout can be asserted as clean JSON on its own.
+const strictArgv = ['--issue', '121', '--issue-body-file', bodyFile(issueBody())];
+const strictSpawn = spawnSync(RUNTIME, [join(ROOT, 'ci', 'issue-lint.mts'), ...strictArgv, '--strict'], {
+  encoding: 'utf8',
+  cwd: repo,
+  env: { ...process.env, PATH: PATH_WITH_FAKE_GH, GITHUB_EVENT_PATH: '', GITHUB_STEP_SUMMARY: '' },
+});
+const strictSpawnOut = parse(strictSpawn.stdout);
+check(
+  'a legacy --strict flag does not crash the lint; stdout is unaffected',
+  strictSpawn.status === 0 && strictSpawnOut?.ok === true && strictSpawnOut?.warnings === undefined,
+  `stdout: ${strictSpawn.stdout}\nstderr: ${strictSpawn.stderr}`,
+);
+check(
+  'a legacy --strict flag is noted on stderr, not silently dropped',
+  /--strict/.test(strictSpawn.stderr),
+  strictSpawn.stderr,
 );
 
 finish();
