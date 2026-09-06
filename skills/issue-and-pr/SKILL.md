@@ -21,13 +21,27 @@ node "$CLAIM" 42 --slug dashboard-kpis --type feat
 ```
 
 `<type>` defaults to the title prefix (`feat(scope): …` → `feat`) when `--type` is
-omitted. The push of a new ref (`origin/<default>:refs/heads/<type>/<n>-<slug>`) is the
-lock — `git push --porcelain`, not a local pre-check, decides whether it held. Exit 0 →
-`{ issue, branch, base }`: pushed, assigned `@me`, relabelled `state:in-progress`. Exit 2 →
-`{ held }`: the branch already exists, another agent has it — skip, no retry. Exit 1 →
-`{ refused }` (closed, missing `state:ready`, an open `Blocked by:` issue, or no `## Files`
-bullet — nothing pushed, nothing relabelled) or `{ error }` (a `gh`/`git` failure). The
-implementer is born in a worktree on that branch and **never creates or renames one**.
+omitted, and must be one of `feat|fix|refactor|chore|docs|test|ci|deps` either way; a
+title outside that set (e.g. `perf(ci): …`) has no type of its own, so pass `--type` with
+a value from the set (whichever fits — `ci` for `perf(ci): …`). The push of a new ref
+(`origin/<default>:refs/heads/<type>/<n>-<slug>`) is the lock — `git push --porcelain`,
+not a local pre-check, decides whether it held.
+
+Before that push, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses when
+the result is not `ok: true` — a normal failure, or the lint's own `{ error }` when it
+could not even run: `{ refused: "issue-lint failed", lint: <the lint JSON> }`, exit 1,
+nothing pushed or relabelled. `--strict` is passed through verbatim when given — an opt-in
+flag, not something `claim.mts` applies by issue type (see "Write sub-issues" below);
+`--no-lint` skips the check entirely, and the success JSON then reports `"lint": "skipped"`
+instead of `"lint": { "ok": true, "warnings": <n> }`.
+
+Exit 0 → `{ issue, branch, base, lint }`: pushed, assigned `@me`, relabelled
+`state:in-progress`. Exit 2 → `{ held }`: the branch already exists, another agent has it
+— skip, no retry. Exit 1 → `{ refused }` (closed, missing `state:ready`, an open
+`Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint` — nothing pushed,
+nothing relabelled) or `{ error }` (a usage problem — no type determinable and none given,
+or an invalid `--type` — or a `gh`/`git` failure). The implementer is born in a worktree on
+that branch and **never creates or renames one**.
 
 ## Open the PR (implementer)
 

@@ -35,8 +35,10 @@ One Claude Code session at the repository root (not in a worktree), running
    path, not a failure), a `sequenced` overlap does not
 2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
    already checked this against the milestone's other in-flight issues)
-3. for each: `scripts/claim.mts <n> --slug <slug>` pushes the remote branch
-   <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
+3. for each: `scripts/claim.mts <n> --slug <slug>` runs `ci/issue-lint.mts` on the issue
+   itself first and refuses (`{ refused: "issue-lint failed", lint }`) on anything but
+   `ok: true` (`--strict` opt-in passthrough, `--no-lint` to skip), then pushes the remote
+   branch <type>/<n>-<slug> as the lock (skip on `{ held }`, exit 2), assigns, labels
    in-progress, then launch an `implementer` in its own worktree with the whole
    issue in the prompt; a `resumable` issue skips `claim.mts` — the lock is already
    held — and launches straight to an implementer as round N+1 from origin/<branch>

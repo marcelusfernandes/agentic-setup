@@ -122,16 +122,27 @@ way:
 CLAIM="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/claim.mts}"
 [ -f "$CLAIM" ] || CLAIM="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/claim.mts' 2>/dev/null | head -1)"
 [ -f "$CLAIM" ] || { echo "agentic-setup: claim.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-node "$CLAIM" <n> --slug <slug> [--type <type>]
+node "$CLAIM" <n> --slug <slug> [--type <type>] [--strict] [--no-lint]
 ```
 
-Exit 0 → `{ issue, branch, base }`: the push succeeded (the lock), the issue is assigned
-and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another agent (or
-a previous, still-live claim) holds it; skip, do not retry. Exit 1 with `{ refused }`: the
-issue is not claimable (closed, missing `state:ready`, an open `Blocked by:` issue, or no
-`## Files` bullet) — drop it from this pass, it needs a person or a prior issue to close
-first. Exit 1 with `{ error }`: a `gh`/`git` failure, not a verdict on the issue — stop and
-report rather than guessing.
+`<type>` defaults to the title prefix (`feat(scope): …` → `feat`) and must be one of
+`feat|fix|refactor|chore|docs|test|ci|deps`; a title outside that set (e.g. `perf(ci): …`)
+has no type of its own, so pass `--type` with a value from the set (whichever fits — `ci`
+for `perf(ci): …`), or `claim.mts` errors out (an invalid `--type` errors too, same set).
+Before pushing, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses on
+anything but `ok: true` — `{ refused: "issue-lint failed", lint }`, nothing pushed or
+relabelled. `--strict` is opt-in, passed through verbatim when given (not applied by issue
+type — same rule as step 1); `--no-lint` skips the check (`"lint": "skipped"` in the
+success JSON instead of `"lint": { "ok": true, "warnings": <n> }`).
+
+Exit 0 → `{ issue, branch, base, lint }`: the push succeeded (the lock), the issue is
+assigned and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another
+agent (or a previous, still-live claim) holds it; skip, do not retry. Exit 1 with
+`{ refused }`: the issue is not claimable (closed, missing `state:ready`, an open
+`Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint`) — drop it from this
+pass, it needs a person or a prior issue to close first. Exit 1 with `{ error }`: a usage
+problem (no type determinable and none given, or an invalid `--type`) or a `gh`/`git`
+failure — not a verdict on the issue; stop and report rather than guessing.
 
 Then launch the `implementer` agent with **the whole issue body in the prompt** (subagents
 do not see this conversation). One agent per issue, in parallel.
