@@ -91,7 +91,10 @@ function parseBlockedBy(body: string): number[] {
  * to the head commit, including runs `concurrency.cancel-in-progress`
  * cancelled when the PR was pushed to again. Keep only the latest entry per
  * check name (check runs) / context (status contexts), the way `gh pr
- * checks` deduplicates, before classifying.
+ * checks` deduplicates, before classifying — latest by `startedAt`, since a
+ * re-run always starts after the run it replaces, whatever that run's
+ * `completedAt` (a cancelled predecessor can complete after the replacement
+ * has already started).
  */
 function latestChecksByName(entries: CheckEntry[]): CheckEntry[] {
   const latest = new Map<string, CheckEntry>();
@@ -102,11 +105,16 @@ function latestChecksByName(entries: CheckEntry[]): CheckEntry[] {
       latest.set(key, entry);
       continue;
     }
-    const existingTime = existing.completedAt ?? existing.startedAt;
-    const time = entry.completedAt ?? entry.startedAt;
-    // Both entries carry a timestamp: the later ISO string wins. Otherwise
-    // (either side missing one) the later array position wins — this loop
-    // runs in array order, so the incoming entry always wins that case.
+    const existingTime = existing.startedAt ?? existing.completedAt;
+    const time = entry.startedAt ?? entry.completedAt;
+    // Order by startedAt, not completedAt: a re-run starts after its
+    // predecessor started, regardless of when that predecessor (possibly
+    // cancelled well after the replacement began) completed. Comparing
+    // completedAt would let a cancelled predecessor's late completion
+    // outrank the replacement that is currently running. Both entries
+    // carry a timestamp: the later one wins. Otherwise (either side
+    // missing one) the later array position wins — this loop runs in
+    // array order, so the incoming entry always wins that case.
     if (existingTime && time ? time >= existingTime : true) latest.set(key, entry);
   }
   return [...latest.values()];
