@@ -28,6 +28,10 @@
 //                                                              // checkout (dead-locked ones
 //                                                              // don't count)
 //     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved }],
+//                                                              // checks comes from one
+//                                                              // `gh pr checks <pr>` call per
+//                                                              // in-review PR, not from the
+//                                                              // list-call's rollup
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
 //     deadWorktrees: [{ path, branch, pid }],                  // locked by a pid that no longer exists
@@ -60,34 +64,41 @@
 // from a live session's paused agent — that residual still reads
 // `inProgress` and needs a person, or a future liveness signal, to resolve.
 //
-// GitHub data comes only from `gh` (issue list, pr list, api); worktree and
-// branch data from `git worktree list --porcelain` and (after `git fetch
-// --prune origin`, unless --no-fetch) `git for-each-ref refs/remotes/origin`.
-// Node built-ins only, no dependency.
+// GitHub data comes only from `gh` (issue list, pr list, api, pr checks);
+// worktree and branch data from `git worktree list --porcelain` and (after
+// `git fetch --prune origin`, unless --no-fetch) `git for-each-ref
+// refs/remotes/origin`. Node built-ins only, no dependency.
+//
+// `inReview[].checks` comes from one `gh pr checks <pr> --json name,bucket`
+// call per in-review PR (cached by PR number, so two issues closed by the
+// same PR still cost one call) — `gh` already deduplicates superseded check
+// runs and classifies each into `bucket` (pass, fail, pending, skipping,
+// cancel) the way `gh pr list --json statusCheckRollup` does neither, so
+// reconcile no longer re-implements either (the #21 and #24 bugs were bugs
+// of that re-implementation). `gh pr checks` exits non-zero whenever a check
+// is failing or still pending, but still prints the JSON on stdout in that
+// case, so its exit code is ignored; if stdout does not parse as JSON,
+// `checks` reads 'pending' rather than failing the whole pass over one PR.
 //
 // Crash policy: never a stack trace. A failing `gh` or `git` call (auth,
 // rate limit, an unknown milestone, no remote) prints { "error": "..." } to
-// stdout and exits 1.
+// stdout and exits 1 — except `gh pr checks`, whose failure degrades that
+// one PR's `checks` to 'pending' instead (see above).
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
 import { parseBlockedBy } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
-type CheckEntry = {
-  name?: string;
-  context?: string;
-  status?: string;
-  state?: string;
-  conclusion?: string;
-  startedAt?: string;
-  completedAt?: string;
-};
-type PR = { number: number; headRefName: string; labels: Label[]; statusCheckRollup: CheckEntry[] | null; reviewDecision: string | null };
+type PR = { number: number; headRefName: string; labels: Label[]; reviewDecision: string | null };
 type Milestone = { number: number; title: string; state: string };
+type PrCheckEntry = { name?: string; bucket?: string };
 
-const GREEN = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
-const RED = new Set(['FAILURE', 'ERROR', 'CANCELLED']);
+// `gh pr checks --json name,bucket` categorizes each check's raw CI state
+// into exactly one of these five buckets (see `gh pr checks --help`) — this
+// mirrors that five-way split, not GitHub's raw CheckConclusionState names.
+const CHECK_GREEN = new Set(['pass', 'skipping']);
+const CHECK_RED = new Set(['fail', 'cancel']);
 
 function fail(message: string): never {
   console.log(JSON.stringify({ error: message }));
@@ -121,46 +132,41 @@ function hasLabel(labels: Label[] | undefined, name: string): boolean {
 }
 
 /**
- * `gh pr list --json statusCheckRollup` returns every check run ever attached
- * to the head commit, including runs `concurrency.cancel-in-progress`
- * cancelled when the PR was pushed to again. Keep only the latest entry per
- * check name (check runs) / context (status contexts), the way `gh pr
- * checks` deduplicates, before classifying — latest by `startedAt`, since a
- * re-run always starts after the run it replaces, whatever that run's
- * `completedAt` (a cancelled predecessor can complete after the replacement
- * has already started).
+ * `gh pr checks <pr>` already deduplicates superseded check runs (a re-run
+ * `concurrency.cancel-in-progress` cancelled when the PR was pushed to
+ * again) the way `gh pr list --json statusCheckRollup` does not, and its
+ * `bucket` field already classifies each surviving check into pass, fail,
+ * pending, skipping or cancel — so this reads that instead of re-deriving
+ * green/red/pending from raw CheckConclusionState strings the old rollup
+ * code did. `gh pr checks` exits non-zero whenever a check is failing or
+ * still pending, but still prints the JSON on stdout in that case — so the
+ * exit code is ignored and only stdout is read. A non-JSON stdout (an actual
+ * `gh` failure: no such PR, no auth, `gh` not on PATH) degrades to 'pending'
+ * rather than failing the whole pass over one PR's checks. Cached by PR
+ * number so a PR closing more than one in-review issue costs one call.
  */
-function latestChecksByName(entries: CheckEntry[]): CheckEntry[] {
-  const latest = new Map<string, CheckEntry>();
-  for (const entry of entries) {
-    const key = entry.name ?? entry.context ?? '';
-    const existing = latest.get(key);
-    if (!existing) {
-      latest.set(key, entry);
-      continue;
+const checksCache = new Map<number, 'green' | 'red' | 'pending'>();
+function checksForPr(prNumber: number): 'green' | 'red' | 'pending' {
+  const cached = checksCache.get(prNumber);
+  if (cached) return cached;
+  const r = spawnSync('gh', ['pr', 'checks', String(prNumber), '--json', 'name,bucket'], { encoding: 'utf8' });
+  const out = (r.stdout ?? '').trim();
+  let result: 'green' | 'red' | 'pending' = 'pending';
+  if (out) {
+    try {
+      const entries: PrCheckEntry[] = JSON.parse(out);
+      const bucket = (c: PrCheckEntry) => String(c.bucket ?? '').toLowerCase();
+      if (Array.isArray(entries) && entries.length > 0) {
+        if (entries.some((c) => CHECK_RED.has(bucket(c)))) result = 'red';
+        else if (entries.every((c) => CHECK_GREEN.has(bucket(c)))) result = 'green';
+      }
+    } catch {
+      // Non-JSON stdout: leave result at 'pending' rather than failing the
+      // whole pass over one PR's checks.
     }
-    const existingTime = existing.startedAt ?? existing.completedAt;
-    const time = entry.startedAt ?? entry.completedAt;
-    // Order by startedAt, not completedAt: a re-run starts after its
-    // predecessor started, regardless of when that predecessor (possibly
-    // cancelled well after the replacement began) completed. Comparing
-    // completedAt would let a cancelled predecessor's late completion
-    // outrank the replacement that is currently running. Both entries
-    // carry a timestamp: the later one wins. Otherwise (either side
-    // missing one) the later array position wins — this loop runs in
-    // array order, so the incoming entry always wins that case.
-    if (existingTime && time ? time >= existingTime : true) latest.set(key, entry);
   }
-  return [...latest.values()];
-}
-
-function checksState(rollup: CheckEntry[] | null): 'green' | 'red' | 'pending' {
-  const entries = latestChecksByName(rollup ?? []);
-  if (entries.length === 0) return 'pending';
-  const status = (c: CheckEntry) => String(c.conclusion ?? c.state ?? '').toUpperCase();
-  if (entries.some((c) => RED.has(status(c)))) return 'red';
-  if (entries.every((c) => GREEN.has(status(c)))) return 'green';
-  return 'pending';
+  checksCache.set(prNumber, result);
+  return result;
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -189,7 +195,7 @@ const closedNumbers = new Set(
 
 // 4. open PRs.
 const prs = ghJson<PR[]>(
-  ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,labels,statusCheckRollup,reviewDecision', '--limit', '200'],
+  ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,labels,reviewDecision', '--limit', '200'],
   [],
 );
 
@@ -336,7 +342,7 @@ const inReview = issues
     return {
       number: i.number,
       pr: pr ? pr.number : null,
-      checks: pr ? checksState(pr.statusCheckRollup) : 'pending' as const,
+      checks: pr ? checksForPr(pr.number) : 'pending' as const,
       reviewApproved: pr ? hasLabel(pr.labels, 'review:approved') || pr.reviewDecision === 'APPROVED' : false,
     };
   });
