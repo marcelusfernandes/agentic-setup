@@ -104,8 +104,13 @@ check('output carries the issue number', validOut?.issue === 100, valid.out);
 
 // --- AC1: missing sections --------------------------------------------------
 const missingGoal = lint(101, issueBody({ goal: null }));
-check('missing ## Goal fails', missingGoal.status === 1, missingGoal.out);
-check('missing ## Goal names the section', /## Goal/.test(missingGoal.out), missingGoal.out);
+const missingGoalOut = parse(missingGoal.out);
+check('missing ## Goal fails with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
+check(
+  'missing ## Goal names the section in failures[]',
+  Array.isArray(missingGoalOut?.failures) && missingGoalOut.failures.some((f: any) => typeof f === 'string' && /## Goal/.test(f)),
+  missingGoal.out,
+);
 
 const missingContext = lint(102, issueBody({ context: null }));
 check('missing ## Context fails and names it', missingContext.status === 1 && /## Context/.test(missingContext.out), missingContext.out);
@@ -141,18 +146,53 @@ check(
 );
 
 const noParent = lint(108, issueBody({ files: '## Files\n- `nonexistent-dir/file.ts`\n' }));
-check('a glob matching no tracked file and with no existing parent dir fails', noParent.status === 1, noParent.out);
-check('the no-parent failure names the glob', /nonexistent-dir\/file\.ts/.test(noParent.out), noParent.out);
+const noParentOut = parse(noParent.out);
+check(
+  'a glob matching no tracked file and with no existing parent dir fails with ok: false',
+  noParent.status === 1 && noParentOut?.ok === false,
+  noParent.out,
+);
+check(
+  'the no-parent failure names the glob in failures[]',
+  Array.isArray(noParentOut?.failures) && noParentOut.failures.some((f: any) => typeof f === 'string' && f.includes('nonexistent-dir/file.ts')),
+  noParent.out,
+);
+
+// AC2: a glob that does not parse (a leading unescaped `?` has nothing to
+// repeat — `new RegExp` throws) fails, distinctly from "no match".
+const badGlob = lint(1080, issueBody({ files: '## Files\n- `?abc`\n' }));
+const badGlobOut = parse(badGlob.out);
+check('a glob that does not parse fails with ok: false', badGlob.status === 1 && badGlobOut?.ok === false, badGlob.out);
+check(
+  'the parse failure names the glob in failures[]',
+  Array.isArray(badGlobOut?.failures) && badGlobOut.failures.some((f: any) => typeof f === 'string' && f.includes('?abc')),
+  badGlob.out,
+);
 
 // --- AC3: disjointness -------------------------------------------------------
 const overlapMilestone = milestoneFile([{ number: 200, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n' }]);
 const overlap = lint(109, issueBody(), { milestone: overlapMilestone });
 const overlapOut = parse(overlap.out);
-check('overlapping globs with another ready issue fails', overlap.status === 1, overlap.out);
+check('overlapping globs with another ready issue fails with ok: false', overlap.status === 1 && overlapOut?.ok === false, overlap.out);
 check(
   'the overlap failure carries { issue, files } naming the other issue and the shared file',
   Array.isArray(overlapOut?.failures) && overlapOut.failures.some((f: any) => f?.issue === 200 && Array.isArray(f?.files) && f.files.includes('tests/smoke.mts')),
   overlap.out,
+);
+
+// AC3: the same overlap against an issue labelled state:in-progress (not
+// just state:ready) is also a failure — the code path covers all three
+// RELEVANT_STATES, not only "ready".
+const inProgressMilestone = milestoneFile([{ number: 204, labels: ['state:in-progress'], body: '## Files\n- `tests/smoke.mts`\n' }]);
+const inProgressOverlap = lint(1090, issueBody(), { milestone: inProgressMilestone });
+const inProgressOverlapOut = parse(inProgressOverlap.out);
+check(
+  'overlapping globs with a state:in-progress issue also fails',
+  inProgressOverlap.status === 1 &&
+    inProgressOverlapOut?.ok === false &&
+    Array.isArray(inProgressOverlapOut?.failures) &&
+    inProgressOverlapOut.failures.some((f: any) => f?.issue === 204 && f?.files?.includes('tests/smoke.mts')),
+  inProgressOverlap.out,
 );
 
 const sequencedMilestone = milestoneFile([{ number: 201, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n' }]);
@@ -191,25 +231,98 @@ check(
 );
 
 const strictReference = lint(114, issueBody(), { strict: true });
-check('--strict turns the AC4 warning into a failure', strictReference.status === 1, strictReference.out);
+const strictReferenceOut = parse(strictReference.out);
+check(
+  '--strict turns the AC4 warning into ok: false without moving it into failures[]',
+  strictReference.status === 1 &&
+    strictReferenceOut?.ok === false &&
+    Array.isArray(strictReferenceOut?.warnings) &&
+    strictReferenceOut.warnings.length > 0 &&
+    Array.isArray(strictReferenceOut?.failures) &&
+    strictReferenceOut.failures.length === 0,
+  strictReference.out,
+);
 
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);
 
 const invalidBlocker = lint(116, issueBody({ deps: '## Dependencies\nBlocked by: #999\n' }));
-check('a Blocked-by number that gh cannot find fails', invalidBlocker.status === 1, invalidBlocker.out);
-check('the missing-blocker failure names #999', /#999/.test(invalidBlocker.out), invalidBlocker.out);
+const invalidBlockerOut = parse(invalidBlocker.out);
+check(
+  'a Blocked-by number that gh cannot find fails with ok: false',
+  invalidBlocker.status === 1 && invalidBlockerOut?.ok === false,
+  invalidBlocker.out,
+);
+check(
+  'the missing-blocker failure names #999 in failures[]',
+  Array.isArray(invalidBlockerOut?.failures) && invalidBlockerOut.failures.some((f: any) => typeof f === 'string' && f.includes('#999')),
+  invalidBlocker.out,
+);
 
 const noneBlocker = lint(117, issueBody({ deps: '## Dependencies\nBlocked by: none\n' }));
 check('"Blocked by: none" needs no gh lookup and passes', noneBlocker.status === 0, noneBlocker.out);
 
-// --- AC6: output shape and --markdown ---------------------------------------
-check('a failing issue exits 1', missingGoal.status === 1);
-check('a passing issue exits 0', valid.status === 0);
+// A bare number ("Blocked by: 32", no `#`) is accepted the same as "#32".
+const bareBlocker = lint(1170, issueBody({ deps: '## Dependencies\nBlocked by: 5\n' }));
+check('"Blocked by: 5" (no #) is read as a real blocker and passes when gh finds it', bareBlocker.status === 0, bareBlocker.out);
+const bareBlockerMissing = lint(1171, issueBody({ deps: '## Dependencies\nBlocked by: 999\n' }));
+const bareBlockerMissingOut = parse(bareBlockerMissing.out);
+check(
+  '"Blocked by: 999" (no #) is still checked against gh and fails when not found',
+  bareBlockerMissing.status === 1 &&
+    bareBlockerMissingOut?.ok === false &&
+    bareBlockerMissingOut.failures.some((f: any) => typeof f === 'string' && f.includes('999')),
+  bareBlockerMissing.out,
+);
+
+// --- AC6: output shape, --markdown, and the { error } path ------------------
+check('a failing issue exits 1 with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
+check('a passing issue exits 0 with ok: true', valid.status === 0 && validOut?.ok === true, valid.out);
+check(
+  'the JSON result carries every required key',
+  typeof validOut?.issue === 'number' &&
+    typeof validOut?.ok === 'boolean' &&
+    Array.isArray(validOut?.failures) &&
+    Array.isArray(validOut?.warnings) &&
+    Array.isArray(validOut?.globs) &&
+    Array.isArray(validOut?.sequenced),
+  valid.out,
+);
+
 const md = lint(118, issueBody({ goal: null }), { markdown: true });
 check('--markdown starts with the marker the workflow comment step greps for', md.out.startsWith('<!-- agentic-issue-lint -->'), md.out);
-check('--markdown output is not JSON', parse(md.out) === null, md.out);
-check('--markdown output names the failing section', /## Goal/.test(md.out), md.out);
+check('--markdown output reports FAIL and names the failing section', /issue-lint for #118: FAIL/.test(md.out) && /## Goal/.test(md.out), md.out);
+
+const mdOk = lint(1180, issueBody(), { markdown: true });
+check('--markdown reports PASS for a passing issue', /issue-lint for #1180: PASS/.test(mdOk.out), mdOk.out);
+
+// { error }: no issue number at all (neither positional nor --issue).
+const noNumber = ci('issue-lint.mts', [], { cwd: repo, env: { PATH: PATH_WITH_FAKE_GH } });
+const noNumberOut = parse(noNumber.out);
+check('no issue number given exits 1 with { error }', noNumber.status === 1 && typeof noNumberOut?.error === 'string', noNumber.out);
+
+// { error }: an unparseable --milestone-issues-file.
+const badMilestoneFile = join(repo, `bad-milestone-${seq++}.json`);
+writeFileSync(badMilestoneFile, 'not valid json');
+const badMilestone = lint(119, issueBody(), { milestone: badMilestoneFile });
+const badMilestoneOut = parse(badMilestone.out);
+check(
+  'an unparseable --milestone-issues-file exits 1 with { error }, not a crash',
+  badMilestone.status === 1 && typeof badMilestoneOut?.error === 'string',
+  badMilestone.out,
+);
+
+// { error } + --markdown: the marker still leads, so the workflow's own
+// comment is never orphaned without it on this path.
+const badMilestoneMd = ci('issue-lint.mts', ['--issue', '120', '--issue-body-file', bodyFile(issueBody()), '--milestone-issues-file', badMilestoneFile, '--markdown'], {
+  cwd: repo,
+  env: { PATH: PATH_WITH_FAKE_GH },
+});
+check(
+  'the { error } path still starts with the marker under --markdown',
+  badMilestoneMd.status === 1 && badMilestoneMd.out.startsWith('<!-- agentic-issue-lint -->'),
+  badMilestoneMd.out,
+);
 
 finish();
