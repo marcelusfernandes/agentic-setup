@@ -24,6 +24,8 @@ const denied = [
   'git push', // bare push while on main
   'cd sub && git push origin main', // a segment after && is still checked
   'gh pr merge --admin 12',
+  'git push origin main:refs/heads/main', // AC1/AC3: long-form refspec, remote side is protected
+  'git push origin HEAD:refs/heads/master',
 ];
 for (const command of denied) {
   const r = bash(command, repo);
@@ -38,6 +40,7 @@ const allowed = [
   'AGENTIC_ALLOW_PUSH_MAIN=1 git push origin main', // inline valve
   'gh pr merge 1', // fail-closed is gone: no --admin, the server decides
   'gh pr merge 1 --squash',
+  'git push origin main:refs/heads/feat/x', // AC2/AC3: local side matches, remote side does not
 ];
 for (const command of allowed) {
   const r = bash(command, repo);
@@ -46,6 +49,10 @@ for (const command of allowed) {
 check(
   'protect-main allows a push to main with the env valve set',
   bash('git push origin main', repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0,
+);
+check(
+  'protect-main allows the long-form refspec to main with the env valve set',
+  bash('git push origin main:refs/heads/main', repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 0,
 );
 
 // AC1/AC3: the valve lifts pushing to main, never deleting it.
