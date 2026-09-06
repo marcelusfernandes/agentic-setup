@@ -13,12 +13,13 @@
 // step carries the full set of sections issue-lint requires (Context,
 // Goal, Acceptance criteria, Proof, Files, Dependencies). A single real
 // tracked file (`caller.mts`, added late, once the earlier push-mechanics
-// cases no longer need a lint-noise-free repo) lets the AC4
-// entry-point-reference check produce a genuine warning. The fake `gh`
-// also answers `issue list --milestone …` (a canned empty list by default,
-// or an error when `GH_LIST_FAILS` is set) for the one issue below that
-// sets a milestone, and `issue view <blocker>` for the numbers already
-// exercised above.
+// cases no longer need a lint-noise-free repo) exercises the same
+// "covered path referenced elsewhere" shape issue-lint's entry-point
+// reference check used to warn on before it was removed (#62) — it is
+// just a normal pass now. The fake `gh` also answers `issue list
+// --milestone …` (a canned empty list by default, or an error when
+// `GH_LIST_FAILS` is set) for the one issue below that sets a milestone,
+// and `issue view <blocker>` for the numbers already exercised above.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -227,11 +228,12 @@ check(
   /issue edit 10 --add-assignee @me --add-label state:in-progress --remove-label state:ready/.test(claimed10.log),
   claimed10.log,
 );
-// AC4: a passing issue's success JSON carries the lint's own ok/warnings.
-// The repo has no other tracked files yet, so the warning count is 0.
+// AC4: a passing issue's success JSON reports the lint result as exactly
+// { ok: true } — issue-lint dropped `--strict` and the warnings it used to
+// gate, so claim.mts has nothing left to forward from the lint result (#62).
 check(
-  'a passing issue-lint run reports { ok: true, warnings: 0 } on the success JSON',
-  claimed10.json?.lint?.ok === true && claimed10.json?.lint?.warnings === 0,
+  'a passing issue-lint run reports { ok: true } on the success JSON',
+  claimed10.json?.lint?.ok === true && Object.keys(claimed10.json?.lint ?? {}).length === 1,
   JSON.stringify(claimed10.json),
 );
 
@@ -361,35 +363,37 @@ const milestoneLookupOk = claim(['26', '--slug', 'y']);
 check('the same issue claims normally once the milestone lookup succeeds, exit 0', milestoneLookupOk.status === 0, `${milestoneLookupOk.stdout}\n${milestoneLookupOk.stderr}`);
 check('the milestone lookup really ran (not skipped as milestone-less)', /issue list --milestone M2/.test(milestoneLookupOk.log), milestoneLookupOk.log);
 
-// --- AC2: --strict turns an otherwise-passing warnings-only lint result ----
-// into a refusal. Issue #25's ## Files names `covered.mts` — a "new"
-// literal path issue-lint has not seen tracked yet — and a real tracked
-// file (added below) references that path outside the issue's own globs,
-// which is exactly an AC4 warning, not a failure. Added only now, after
-// every push-mechanics case above has already run, so it cannot add noise
-// to their own (unrelated) lint runs.
+// --- claim.mts no longer has a --strict flag: issue-lint dropped it, along
+// with the entry-point-reference warnings it used to gate (#62). Issue
+// #25's ## Files names `covered.mts` — a "new" literal path issue-lint has
+// not seen tracked yet — and a real tracked file (added below) references
+// that path outside the issue's own globs; under the old lint this was
+// exactly an AC4 warning. Added only now, after every push-mechanics case
+// above has already run, so it cannot add noise to their own (unrelated)
+// lint runs.
 commit(repo, { 'caller.mts': "// see covered.mts\nexport {};\n" }, 'chore: a file that references covered.mts');
 
-const warningsOnly = claim(['25', '--slug', 'warn']);
-check('a warnings-only issue claims normally without --strict, exit 0', warningsOnly.status === 0, `${warningsOnly.stdout}\n${warningsOnly.stderr}`);
+const previouslyWarned = claim(['25', '--slug', 'warn']);
+check('an issue that used to only warn now claims normally, exit 0', previouslyWarned.status === 0, `${previouslyWarned.stdout}\n${previouslyWarned.stderr}`);
 check(
-  'the success JSON reports the warning count',
-  warningsOnly.json?.lint?.ok === true && warningsOnly.json?.lint?.warnings > 0,
-  JSON.stringify(warningsOnly),
+  'the success JSON reports the lint result as exactly { ok: true }, no warnings key at all',
+  previouslyWarned.json?.lint?.ok === true && Object.keys(previouslyWarned.json?.lint ?? {}).length === 1,
+  JSON.stringify(previouslyWarned),
 );
 
-const warningsStrict = claim(['25', '--slug', 'warn-strict', '--strict']);
-check('--strict refuses the same warnings-only issue, exit 1', warningsStrict.status === 1 && warningsStrict.json?.refused === 'issue-lint failed', JSON.stringify(warningsStrict));
+// A caller still passing --strict (an old orchestrator/hook not yet
+// updated) must not break claim.mts: parseArgs collects it into `flags`
+// like any other key, but claim.mts never reads it, and never forwards it
+// to issue-lint (the passthrough is gone) — so the claim still succeeds
+// exactly as without the flag. Unlike issue-lint (#62), claim.mts prints no
+// note about the flag being ignored; it is silently absorbed by parseArgs.
+const legacyStrict = claim(['25', '--slug', 'warn-legacy-strict', '--strict']);
+check('a legacy --strict flag does not break the claim, exit 0', legacyStrict.status === 0, `${legacyStrict.stdout}\n${legacyStrict.stderr}`);
 check(
-  '--strict refusal carries the lint result with the warning and no failures',
-  warningsStrict.json?.lint?.ok === false &&
-    Array.isArray(warningsStrict.json?.lint?.warnings) &&
-    warningsStrict.json.lint.warnings.length > 0 &&
-    Array.isArray(warningsStrict.json?.lint?.failures) &&
-    warningsStrict.json.lint.failures.length === 0,
-  JSON.stringify(warningsStrict),
+  'a legacy --strict flag still reports { ok: true } on the success JSON',
+  legacyStrict.json?.lint?.ok === true && Object.keys(legacyStrict.json?.lint ?? {}).length === 1,
+  JSON.stringify(legacyStrict),
 );
-check('--strict refusal does not push a branch', !remoteBranches().includes('feat/25-warn-strict'), JSON.stringify(remoteBranches()));
-check('--strict refusal does not touch labels', !warningsStrict.log.includes('issue edit'), warningsStrict.log);
+check('a legacy --strict flag still creates the branch on origin', remoteBranches().includes('feat/25-warn-legacy-strict'), JSON.stringify(remoteBranches()));
 
 finish();
