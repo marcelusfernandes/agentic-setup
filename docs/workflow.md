@@ -121,10 +121,15 @@ the PR's labels and body, never the issue's.
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants |
-| `negative-control` | checkout of the PR base + **only the test files from the diff** + the test command **must fail**. Outcomes: the command fails = pass; the command passes = fail (vacuous tests); no test files in the diff = fail. Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail. Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
 
 The exemption is by label, not by hand: the job reads the PR's `type:` label. Without a
 label it runs and fails.
+
+A `pass` whose overlaid run fails with a structural signature (a missing module, a missing
+export, a syntax error) still exits 0 — an opaque test command cannot tell a crashing test
+file apart from several real failures — but the job summary and stdout carry a `warning:`
+line asking for a throwing stub instead, so the red is a runtime red.
 
 ## Merge
 
