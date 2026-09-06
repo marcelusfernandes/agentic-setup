@@ -193,6 +193,60 @@ check(
   rAuthorised.out,
 );
 
+// #89: `checkScope` can pass (every changed file sits inside the linked
+// issues' globs) while the overall check still fails on a dangling
+// reference; the summary's first line must say so instead of reading
+// "all inside the linked issues' globs." right above a FAILED section.
+// Written against a real GITHUB_STEP_SUMMARY file, per the issue's proof.
+// Run here, not further down, while danglingRepo is still checked out on
+// danglingHead — the same head this case's --head diffs against; the
+// dangling-reference grep reads the checked-out tree (see the comment at
+// danglingHead's definition above), so the two must match.
+const firstNonEmptyLineAfterHeading = (summary: string, heading: string): string => {
+  const lines = summary.split('\n');
+  const at = lines.findIndex((l) => l.trim() === heading);
+  if (at === -1) throw new Error(`no "${heading}" heading found in: ${summary}`);
+  const rest = lines.slice(at + 1).map((l) => l.trim()).filter(Boolean);
+  if (rest.length === 0) throw new Error(`no non-empty line after "${heading}" in: ${summary}`);
+  return rest[0];
+};
+
+const summaryDanglingOnly = join(dir, 'summary-dangling-only.md');
+writeFileSync(summaryDanglingOnly, '');
+const rDanglingSummary = ci(
+  'scope-check.mts',
+  ['--base', danglingBase, '--head', danglingHead, '--issue-body-file', issueTestsOnly, '--pr-body-file', prClosesOnly, '--root', danglingRepo],
+  { env: { GITHUB_STEP_SUMMARY: summaryDanglingOnly } },
+);
+const firstLineDangling = firstNonEmptyLineAfterHeading(readFileSync(summaryDanglingOnly, 'utf8'), '## scope');
+check(
+  'scope summary states the FAILED verdict on its first line when only dangling references fail',
+  rDanglingSummary.status === 1 &&
+    /^\*\*FAILED\*\* — \d+ dangling reference\(s\); every changed file is inside the linked issues' globs\.$/.test(firstLineDangling) &&
+    !/all inside/.test(firstLineDangling),
+  firstLineDangling,
+);
+
+const summaryPassing = join(dir, 'summary-passing.md');
+writeFileSync(summaryPassing, '');
+ci('scope-check.mts', ['--files-file', files, '--issue-body-file', issueSrc, '--pr-body-file', prPlain], { env: { GITHUB_STEP_SUMMARY: summaryPassing } });
+const firstLinePassing = firstNonEmptyLineAfterHeading(readFileSync(summaryPassing, 'utf8'), '## scope');
+check(
+  "scope summary's passing first line is unchanged",
+  firstLinePassing === "2 file(s), all inside the linked issues' globs.",
+  firstLinePassing,
+);
+
+const summaryGlobViolation = join(dir, 'summary-glob-violation.md');
+writeFileSync(summaryGlobViolation, '');
+ci('scope-check.mts', ['--files-file', files, '--issue-body-file', issueLib, '--pr-body-file', prPlain], { env: { GITHUB_STEP_SUMMARY: summaryGlobViolation } });
+const firstLineGlobViolation = firstNonEmptyLineAfterHeading(readFileSync(summaryGlobViolation, 'utf8'), '## scope');
+check(
+  "scope summary's glob-violation first line is unchanged",
+  firstLineGlobViolation === "**FAILED** — outside the linked issues' globs:",
+  firstLineGlobViolation,
+);
+
 // #83: an `authorised:` line outside the PR's `## Files` section is
 // prose, not a grant — `parseAuthorisedGlobs` never sees it — but the
 // summary and JSON should say why, instead of silently listing it among
@@ -272,56 +326,6 @@ check(
   'scope summary has a "Dangling references" heading when there is a dangling reference, and none when there is not',
   /### Dangling references/.test(rDangling.out) && !/### Dangling references/.test(rOrphan.out),
   `${rDangling.out}\n---\n${rOrphan.out}`,
-);
-
-// #89: `checkScope` can pass (every changed file sits inside the linked
-// issues' globs) while the overall check still fails on a dangling
-// reference; the summary's first line must say so instead of reading
-// "all inside the linked issues' globs." right above a FAILED section.
-// Written against a real GITHUB_STEP_SUMMARY file, per the issue's proof.
-const firstNonEmptyLineAfterHeading = (summary: string, heading: string): string => {
-  const lines = summary.split('\n');
-  const at = lines.findIndex((l) => l.trim() === heading);
-  if (at === -1) throw new Error(`no "${heading}" heading found in: ${summary}`);
-  const rest = lines.slice(at + 1).map((l) => l.trim()).filter(Boolean);
-  if (rest.length === 0) throw new Error(`no non-empty line after "${heading}" in: ${summary}`);
-  return rest[0];
-};
-
-const summaryDanglingOnly = join(dir, 'summary-dangling-only.md');
-writeFileSync(summaryDanglingOnly, '');
-const rDanglingSummary = ci(
-  'scope-check.mts',
-  ['--base', danglingBase, '--head', danglingHead, '--issue-body-file', issueTestsOnly, '--pr-body-file', prClosesOnly, '--root', danglingRepo],
-  { env: { GITHUB_STEP_SUMMARY: summaryDanglingOnly } },
-);
-const firstLineDangling = firstNonEmptyLineAfterHeading(readFileSync(summaryDanglingOnly, 'utf8'), '## scope');
-check(
-  'scope summary states the FAILED verdict on its first line when only dangling references fail',
-  rDanglingSummary.status === 1 &&
-    /^\*\*FAILED\*\* — \d+ dangling reference\(s\); every changed file is inside the linked issues' globs\.$/.test(firstLineDangling) &&
-    !/all inside/.test(firstLineDangling),
-  firstLineDangling,
-);
-
-const summaryPassing = join(dir, 'summary-passing.md');
-writeFileSync(summaryPassing, '');
-ci('scope-check.mts', ['--files-file', files, '--issue-body-file', issueSrc, '--pr-body-file', prPlain], { env: { GITHUB_STEP_SUMMARY: summaryPassing } });
-const firstLinePassing = firstNonEmptyLineAfterHeading(readFileSync(summaryPassing, 'utf8'), '## scope');
-check(
-  "scope summary's passing first line is unchanged",
-  firstLinePassing === "2 file(s), all inside the linked issues' globs.",
-  firstLinePassing,
-);
-
-const summaryGlobViolation = join(dir, 'summary-glob-violation.md');
-writeFileSync(summaryGlobViolation, '');
-ci('scope-check.mts', ['--files-file', files, '--issue-body-file', issueLib, '--pr-body-file', prPlain], { env: { GITHUB_STEP_SUMMARY: summaryGlobViolation } });
-const firstLineGlobViolation = firstNonEmptyLineAfterHeading(readFileSync(summaryGlobViolation, 'utf8'), '## scope');
-check(
-  "scope summary's glob-violation first line is unchanged",
-  firstLineGlobViolation === "**FAILED** — outside the linked issues' globs:",
-  firstLineGlobViolation,
 );
 
 // AC1: a basename under 4 characters is too common to search on its own —
