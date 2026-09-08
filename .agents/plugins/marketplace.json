@@ -1,0 +1,20 @@
+{
+  "name": "agentic-setup",
+  "interface": {
+    "displayName": "Agentic Setup"
+  },
+  "plugins": [
+    {
+      "name": "agentic-setup",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agentic-setup"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

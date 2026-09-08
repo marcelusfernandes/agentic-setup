@@ -1,0 +1,23 @@
+{
+  "name": "agentic-setup",
+  "version": "0.1.0",
+  "description": "Autonomous GitHub planning, specification and implementation with durable human checkpoints.",
+  "author": {
+    "name": "Marcelus Fernandes"
+  },
+  "skills": "./skills/",
+  "repository": "https://github.com/marcelusfernandes/agentic-setup",
+  "license": "MIT",
+  "interface": {
+    "displayName": "Agentic Setup",
+    "shortDescription": "Develop through GitHub with human checkpoints.",
+    "longDescription": "Run an authorized objective through planning, specification, implementation and review. GitHub preserves decisions and evidence. Requires Node.js, Git and authenticated gh; installation grants no publication or merge authority.",
+    "developerName": "Marcelus Fernandes",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Help me scope an objective with autonomous-loop; ask before publishing.",
+      "Resume my authorized GitHub objective using autonomous-loop."
+    ]
+  }
+}
