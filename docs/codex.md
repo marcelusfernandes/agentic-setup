@@ -12,6 +12,11 @@ the separate legacy Claude labels and installation route.
 
 ## Runtime boundaries
 
+The [native Codex plugin](codex-plugin.md) distributes the same skill in an isolated
+package. Its helpers resolve resources relative to the loaded skill in Codex's cache;
+they still operate on the target repository's Git/GitHub state. The project-local
+installer below remains an alternative, not a prerequisite for plugin use.
+
 - `.agents/skills/autonomous-loop/SKILL.md` gives Codex the decision procedure. The main
   agent may implement; independent review uses another context. Parallel writers are
   deferred until sequential behavior and measured benefit justify them.
@@ -23,6 +28,8 @@ the separate legacy Claude labels and installation route.
   result validation and external waits. It is not a scheduler or a second state store.
 - `scripts/setup-codex.mts` copies the self-contained skill into a target repo. It makes
   no GitHub or global configuration changes and preserves existing project instructions.
+- `plugins/agentic-setup/` is the native distribution snapshot, checked against the
+  maintained source by `scripts/sync-codex-plugin.mts --check` and the test suite.
 
 The unit of progress is an objective/task, not a fixed number of agent roles or commits.
 Specification grows only as needed for the next task. Documentation belongs in the same

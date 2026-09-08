@@ -7,6 +7,8 @@
   "scripts": {
     "test": "node tests/run.mts",
     "setup:codex": "node scripts/setup-codex.mts",
+    "sync:codex-plugin": "node scripts/sync-codex-plugin.mts",
+    "check:codex-plugin": "node scripts/sync-codex-plugin.mts --check",
     "loop": "node .agents/skills/autonomous-loop/scripts/run.mts",
     "check": "tsc -p tsconfig.json"
   },

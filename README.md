@@ -23,7 +23,22 @@ Open the [self-contained visual guide](docs/workflow-visual.html) in a browser f
 the lifecycle, milestone/issue/PR relationships, route-specific labels and human
 checkpoints. It works offline and includes installation and starter prompts.
 
-## Install in a repository
+## Install as a Codex plugin
+
+With Node.js 22.18+, Git, authenticated `gh` and a Codex CLI with plugin support:
+
+```sh
+codex plugin marketplace add marcelusfernandes/agentic-setup --ref main
+codex plugin add agentic-setup@agentic-setup
+```
+
+Start a new Codex thread in the target project and invoke `$agentic-setup:autonomous-loop`.
+It loads from Codex's cache without copying instructions or
+settings into the project. Authorize an objective explicitly using the prompt below.
+See [plugin distribution](docs/codex-plugin.md) for local preview, updates, helper paths
+and coexistence with existing installations. The native plugin does not load Claude.
+
+## Alternative: project-local installation
 
 Requires Node.js 22.18+, Git, authenticated `gh` and Codex with project skills.
 The optional headless runner uses `codex exec` with JSON events and an output schema;
@@ -44,7 +59,9 @@ skill files, never an existing `AGENTS.md`.
 Symbolic links in planned destination paths are refused before any installation writes,
 including with `--force`.
 
-Fill in the project's actual validation commands. In Codex, ask:
+Fill in the project's actual validation commands. With project-local installation,
+ask the following; for the plugin, replace `$autonomous-loop` with
+`$agentic-setup:autonomous-loop`:
 
 ```text
 Use $autonomous-loop to achieve <observable outcome>.
@@ -59,11 +76,14 @@ The skill creates the authorized GitHub objective and works from it. To resume, 
 
 ## Optional headless loop
 
-From the target repository:
+With project-local installation, from the target repository:
 
 ```sh
 node .agents/skills/autonomous-loop/scripts/run.mts 123 --max-turns 12
 ```
+
+With plugin installation, use the loaded skill's `scripts/run.mts` instead; see
+[cache-relative execution](docs/codex-plugin.md#locate-helpers-and-update).
 
 Each invocation advances bounded Codex transitions, reconciles GitHub and stops on a
 human/CI wait, blocker, completion or execution limit. Resume the same command after
