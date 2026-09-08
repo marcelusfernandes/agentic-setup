@@ -1,23 +1,22 @@
 # agentic-setup
 
-These instructions operate the original Claude Code plugin, retained as an opt-in route.
-Use `docs/legacy-claude.md` for installation and the legacy workflow below for execution.
-The repository's primary Codex route has separate instructions in `AGENTS.md` and
-`docs/codex.md`; do not start it implicitly from Claude or run both coordinators on the
-same objective. Preserving Claude does not imply parity with new Codex features.
+A Codex-first development setup with a separately available, opt-in Claude Code plugin.
+Preserve both routes. Consolidating Codex does not authorize removing Claude or require
+feature parity between the two runtimes.
 
 ## Commands
 
-- `npm test` — `tests/run.mts` discovers and runs every `tests/*.test.mts` file (per area:
-  hooks, CI scripts, installers and the Codex loop), real throwaway git repositories;
-  external GitHub/Codex responses are controlled CLI fixtures.
+- `npm test` — all `tests/*.test.mts`: real scripts and throwaway Git repositories;
+  external GitHub/Codex responses use controlled CLI fixtures where needed.
 - `npm run check` — `tsc` over the `.mts` sources (`erasableSyntaxOnly`, `verbatimModuleSyntax`).
+- `npm run setup:codex -- --target /path/to/repo --dry-run` — preview local Codex installation.
 
 ## Map
 
-- `.agents/skills/autonomous-loop/` — Codex skill, contract, GitHub helper, bounded runner.
-- `scripts/setup-codex.mts` — local Codex installer; preserves existing project settings.
-
+- `.agents/skills/autonomous-loop/` — Codex procedure, contract, GitHub state helper and
+  optional bounded runner; `scripts/setup-codex.mts` installs this self-contained route.
+- `.claude-plugin/`, `agents/`, `skills/`, `hooks/` — the existing Claude plugin package.
+- `docs/codex.md` and `docs/legacy-claude.md` — route-specific setup and operation.
 - `hooks/` — the two `PreToolUse` hooks (`protect-main.mts`, `protect-worktree.mts`) and
   `lib/common.mts`; `hooks.json` wires them.
 - `ci/` — `scope-check.mts`, `negative-control.mts`, `issue-lint.mts` (an issue's contract,
@@ -47,18 +46,28 @@ same objective. Preserving Claude does not imply parity with new Codex features.
    needs a test for the exact prose that used to break it.
 6. **Tests spawn the real script.** A case for a hook, a CI script or the installer runs
    the actual file against a real git repository; external CLI responses may use controlled
-   fixtures. Pure functions in
+   fixtures, not replacements for production functions. Pure functions in
    `ci/lib/` (`detect`, `scope`, `globs`) may be imported and tested directly.
 7. **English throughout; no references to private projects.** Lessons yes, provenance no.
 8. **Docs equal code.** A change to a hook, flag, label or check updates `docs/` and the
    relevant `SKILL.md` in the same PR.
 
-## Workflow
+## Select one workflow
 
-For the legacy Claude plugin, `docs/workflow.md` and `docs/orchestration.md` are the
-contract; `skills/issue-and-pr` is the operating card. Branch `<type>/<n>-<slug>`;
-commit `test(red):` first; PR with
-`Closes`/`Fixes`/`Resolves #N` (several issues may be linked, globs unioned); once green
-checks and an approved review (or the `type:docs` label) are in place, `scripts/land.mts`
-queues `gh pr merge --squash --auto` and the server merges when its own rules are
-satisfied.
+- For a user-authorized Codex objective, use `$autonomous-loop` and its contract.
+  Ordinary edits do not start or resume an objective. GitHub is the durable state;
+  publication and merge need separate authorization. Do not import the Claude label
+  machine, hooks, PID cleanup or merge exceptions into the Codex objective loop.
+- The Claude route remains available through its plugin commands and `CLAUDE.md`.
+  Its operating contracts are `docs/workflow.md`, `docs/orchestration.md` and
+  `skills/issue-and-pr/SKILL.md`. Do not launch it against an objective owned by Codex.
+- One coordinator owns an objective at a time. Preserve existing sessions/worktrees;
+  an absent remote branch or a label is not proof that another session is abandoned.
+- Maintenance PRs in this repository retain the existing issue/CI contract during
+  migration: valid closing keywords, issue Files globs, accurate type labels and the
+  required checks. Review independently before integrating. Do not change server
+  protections or switch merge procedures to get around a refusal.
+- Installing either route must preserve the other's files and user configuration.
+  Never commit local permission settings or enable model/global defaults as part of setup.
+- Prefer codebase-memory MCP for discovery when available; fall back to `rg` for
+  unavailable/insufficient graph results, strings and configuration. MCP is optional.

@@ -1,114 +1,121 @@
 # agentic-setup
 
-A Claude Code plugin for running a repository with autonomous agents: **one GitHub
-issue per unit of work, one git worktree per agent, PRs merged by CI and a reviewing
-agent** — no human in the loop except at the points the loop names.
+A Codex setup for autonomous planning, specification and implementation, with durable
+human checkpoints for consequential decisions.
 
-Project-agnostic by construction. Nothing here assumes a language or framework: the
-test command is detected from the repository — Makefile, Node (`package.json`), Python
-(`pyproject.toml`/`pytest.ini`/`setup.py`/`requirements.txt`), Go (`go.mod`), Rust
-(`Cargo.toml`), Ruby (`Gemfile`), Elixir (`mix.exs`), Gradle (`build.gradle(.kts)`) or
-Maven (`pom.xml`) — and can be overridden with one setting. A Makefile with a `test:`
-target always wins; otherwise the first stack marker found wins (see
-`ci/lib/detect.mts`'s header for the exact order). The hooks are two small TypeScript
-scripts with no dependencies and no build step — Node 22.18+ runs `.mts` files directly.
+Keep one authorized objective moving: plan the next useful task, specify it, implement,
+review, validate and reconcile. Continue until its success criteria are met or a real
+decision or blocker needs the user. GitHub holds the plan and evidence across restarts.
 
-## Install
+The default is one coordinator and one implementation at a time. No local task database,
+PID-based cleanup, mandatory milestones, scope globs or fixed cast of agent roles.
 
-```
-/plugin marketplace add marcelusfernandes/agentic-setup
-/plugin install agentic-setup@agentic-setup
-```
+## Choose a workflow
 
-Then, in the repository you want to run this way:
+Codex is the primary route below. The [Claude Code plugin](docs/legacy-claude.md)
+remains a supported installation option with its existing runtime, hooks, labels and
+contracts. These routes coexist in the repository; neither installer runs the other.
+Choose one coordinator per objective and never run both against the same work.
+Keeping Claude available does not require feature parity with Codex. Removing it would
+require a separate maintainer decision, not an automatic migration cleanup.
 
-```
-/agentic-setup:init --dry-run --milestone "M1 foundation"
-/agentic-setup:init --milestone "M1 foundation"
-```
+## Install in a repository
 
-Run with `--dry-run` first: it prints the exact report a real run would (writes nothing
-to disk or to GitHub); drop the flag to apply once the preview looks right.
+Requires Node.js 22.18+, Git, authenticated `gh` and Codex with project skills.
+The optional headless runner uses `codex exec` with JSON events and an output schema;
+its flags were checked against Codex CLI 0.153.2.
 
-It copies the GitHub templates and the two CI checks, writes the permission deny list,
-installs the git `pre-push` hook, turns on the repository's `allow_auto_merge` and
-`delete_branch_on_merge` settings, and seeds the labels — then prints the steps only a
-person can do (required checks, a ruleset if your plan allows one, and the separate
-reviewer identity below). From then on, one pass of the loop is:
+From this checkout:
 
-```
-/agentic-setup:orchestrate
+```sh
+node scripts/setup-codex.mts --target /path/to/repo --dry-run
+node scripts/setup-codex.mts --target /path/to/repo
 ```
 
-## The loop
+This installs the self-contained `.agents/skills/autonomous-loop/` and adds a small
+`AGENTS.md` only if absent. Existing instructions, `.codex`, hooks, CI and GitHub settings
+are preserved. Review any existing workflow instructions before mixing them with this
+loop. Conflicting skill files stop installation; `--force` replaces only those distributed
+skill files, never an existing `AGENTS.md`.
+Symbolic links in planned destination paths are refused before any installation writes,
+including with `--force`.
 
-One Claude Code session at the repository root is the **orchestrator**. It never
-implements; it plans and dispatches.
+Fill in the project's actual validation commands. In Codex, ask:
 
-```
-0. RECONCILE (scripts/reconcile.mts) from GitHub, never from memory
-   in-progress with no PR and no remote branch → ready
-   in-review, checks read via gh pr checks, and review approved → merge
-   local worktree with no remote branch → delete
-1. LINT (ci/issue-lint.mts) every state:ready issue with no open dependency;
-   dispatch only what it reports ok (contract only: sections, globs, Blocked-by)
-2. pick up to 4 whose file globs do not overlap
-3. CLAIM (scripts/claim.mts) for each: pushes the remote branch <type>/<n>-<slug>
-   as the lock (skip if it already exists), assigns, labels in-progress, then
-   launch an implementer in its own worktree with the whole issue in the prompt
-4. PR opened → launch a reviewer (read-only) and wait for CI
-5. green checks + an approved review (or the type:docs label) → LAND
-   (scripts/land.mts) queues gh pr merge --squash --auto; the server merges once
-   its own rules are satisfied, Closes #N closes the issue, and the repository's
-   delete_branch_on_merge setting removes the branch → back to 1
-   rejected (CI or reviewer) → back to the implementer with the summary (round 2)
-   second rejection → state:blocked + human, comment with the summary, move on
-6. nothing left to do → post a summary of what is blocked on the milestone issue;
-   milestone with no open issue → open the next milestone's parent issue
+```text
+Use $autonomous-loop to achieve <observable outcome>.
+Success criteria: <evidence>.
+Boundaries: <scope, constraints, non-goals>.
+Publishing issues/branches/PRs is authorized; ask before merging.
+Human decision maker: @my-github-login.
 ```
 
-Everything the loop needs to be safe is mechanical, not prose: a remote branch as
-the lock, CI as the only gate before a merge is queued, a CI job that checks the diff
-stays inside the globs the issue declared, and a **negative control** job that proves
-the tests the PR added actually fail without the change.
+The skill creates the authorized GitHub objective and works from it. To resume, use
+`$autonomous-loop` with the same objective issue number.
 
-## What is inside
+## Optional headless loop
 
-| piece | what it does |
-|---|---|
-| `agents/` | `implementer` (one issue → one PR, test first, own worktree), `reviewer` (read-only, JSON verdict, sets the label), `docs-writer` (docs equal to code, `type:docs` PRs) |
-| `skills/` | `orchestrate` (one pass of the loop, for the main session), `init` (set a repository up), `safe-worktree` (how not to lose work), `issue-and-pr` (the exact `gh` contract) |
-| `hooks/` | `protect-main.mts` (denies a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin`; a fallback for a repository with no ruleset yet), `protect-worktree.mts` (a subagent may not write into the main checkout), and the git `pre-push` the init installs |
-| `scripts/` | `init.mts` (the installer), `reconcile.mts` (the loop's state as one JSON document, checks read per PR via `gh pr checks`), `claim.mts` (locks an issue: push-as-lock, then assign and relabel, or refuse), `land.mts` (the only way the orchestrator merges: queues `gh pr merge --squash --auto`, gated by the base branch's ruleset when it has one, else by `gh pr checks --required`) |
-| `ci/` | `scope-check.mts` (diff ⊆ the issue's globs, and fails a PR that drops a path still referenced outside the diff), `negative-control.mts` (the PR's tests must fail on the base), `issue-lint.mts` (an issue's contract — sections, globs, disjointness against issues in flight, `Blocked by:` numbers exist — checked before it is dispatched, locally and by its own workflow), `lib/detect.mts` (the test-command detection `negative-control.mts` uses). Copied into the target repository by `init`. |
-| `templates/` | issue and PR templates, `guard-main` and `agentic-checks` workflows, `.worktreeinclude`, the permission deny list |
-| `docs/` | the contract in full: [workflow](docs/workflow.md), [orchestration](docs/orchestration.md), [decisions](docs/decisions.md) |
-| `tests/run.mts` | discovers and runs every `tests/*.test.mts` file (split by area) — cases against real throwaway repositories, nothing mocked; `npm test` |
+From the target repository:
 
-## Requirements
+```sh
+node .agents/skills/autonomous-loop/scripts/run.mts 123 --max-turns 12
+```
 
-- **Node.js ≥ 22.18** on the machine that runs Claude Code: the hooks and CI scripts are
-  `.mts` files run directly (type stripping, on by default since 22.18; no build). `.mts`
-  rather than `.ts` because a `.ts` file takes its module format from the nearest
-  `package.json` `"type"`, and the CI scripts are copied into repositories this plugin
-  does not control. The hooks fail **open** when Node is missing or too old — they are
-  one layer of three, not the only one. GitHub's `ubuntu-latest` already ships 22.23.
-- Override detection when it guesses wrong: `AGENTIC_TEST_CMD`, `AGENTIC_TEST_GLOBS`. The
-  bootstrap valve, always declared inline and visible in the transcript: lifts pushing to
-  `main` only, never deletion: `AGENTIC_ALLOW_PUSH_MAIN=1`. A separate reviewer identity
-  (recommended once a repository has real contributors): `AGENTIC_REVIEWER_TOKEN`, set
-  where the orchestrator and reviewer run, never in the repository — `init` prints the
-  exact setup steps.
-- `gh` authenticated against the repository.
-- git ≥ 2.38 (`git worktree`, `git push` refspec locks).
+Each invocation advances bounded Codex transitions, reconciles GitHub and stops on a
+human/CI wait, blocker, completion or execution limit. Resume the same command after
+external state changes, manually or through your existing scheduler. Waiting does not
+repeatedly call the model. This runner is not a daemon or scheduler.
 
-## Where this comes from
+Use `--profile name` for an existing Codex profile. The runner does not override sandbox,
+approval or model settings. Configure the chosen environment for the required repository
+writes and authenticated GitHub/Git access; sandboxed execution does not automatically
+inherit the host's network access. Test a read-only GitHub operation from Codex in that
+environment before unattended use. A host-side reconciliation succeeds only for the host,
+not necessarily for the child sandbox. Do not disable protections just to make it run.
 
-Distilled from a private project that ran ~200 issues and ~160 PRs through this loop
-over its first weeks, with a written lesson for each rule that bit. The lessons are
-kept; the project's stack, names and PR numbers are stripped. The upstream ideas
-that survived: branch-as-lock, the issue section contract, worktree safety rules,
-"a milestone does not close with an open issue".
+Run logs live under Git's metadata directory in `agentic-runs/`, outside tracked files.
+The summary records CLI invocations, duration and available input/cached/output token
+counts. Cached input is part of input, not an extra charge to add again. The turn limit
+is not a hard token/spending cap. Logs may contain sensitive task/tool content.
+
+## Human checkpoints and merge safety
+
+Important product/scope choices, irreversible architecture, production/data operations
+and additional cost/access require a checkpoint. Routine implementation stays autonomous.
+An explicit human answer is attached to the decision revision and returned with its full
+conditions and source. Silence, closing an issue and the agent's recommendation are not
+approval. Accepted decisions survive restarts while their question and authority remain
+unchanged.
+
+Automatic merge additionally requires explicit permission, a separate GitHub review,
+required passing server checks and stale-approval dismissal. The merge is pinned to the
+reviewed commit. If that policy is unavailable, automatic merge stops; no fallback bypass.
+The setup does not provide an identity security boundary when agent and human share
+credentials. Use separate execution/reviewer identities for stronger isolation.
+
+Read the [operating contract](.agents/skills/autonomous-loop/references/contract.md) for
+issue formats, checkpoint answers and ownership rules.
+
+To pilot on an existing test branch, record its exact name under the objective's
+`Integration branch` section. Claims and PRs then target that branch, not main. The same
+review and required-check protections still apply. A milestone can group the pilot's issues.
+
+## Development and migration
+
+```sh
+npm test
+npm run check
+```
+
+Tests execute the real helper and runner against local Git repositories and controlled
+GitHub/Codex CLI fixtures. They validate mechanics, not live LLM planning or GitHub policy.
+See [migration and validation](docs/codex.md) for the limits of those tests and the
+live end-to-end validation required before broad adoption.
+
+The installer coexistence tests exercise both installation orders with actual scripts
+and verify the other route's instructions/settings/hooks/CI survive unchanged. Existing
+required CI workflows remain intact until their server-side requirements are migrated
+deliberately; installing Codex does not perform that migration.
 
 ## License
 
