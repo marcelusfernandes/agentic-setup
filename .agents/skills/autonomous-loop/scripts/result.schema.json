@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["continue", "waiting_human", "waiting_ci", "blocked", "complete"] },
+    "objective": { "type": "integer" },
+    "summary": { "type": "string" }
+  },
+  "required": ["status", "objective", "summary"],
+  "additionalProperties": false
+}

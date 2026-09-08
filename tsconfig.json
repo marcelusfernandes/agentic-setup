@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["hooks/**/*.mts", "ci/**/*.mts", "scripts/**/*.mts", "tests/**/*.mts"]
+  "include": ["hooks/**/*.mts", "ci/**/*.mts", "scripts/**/*.mts", "tests/**/*.mts", ".agents/skills/**/*.mts"]
 }
