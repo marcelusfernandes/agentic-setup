@@ -19,6 +19,10 @@ Choose one coordinator per objective and never run both against the same work.
 Keeping Claude available does not require feature parity with Codex. Removing it would
 require a separate maintainer decision, not an automatic migration cleanup.
 
+Open the [self-contained visual guide](docs/workflow-visual.html) in a browser for
+the lifecycle, milestone/issue/PR relationships, route-specific labels and human
+checkpoints. It works offline and includes installation and starter prompts.
+
 ## Install in a repository
 
 Requires Node.js 22.18+, Git, authenticated `gh` and Codex with project skills.
