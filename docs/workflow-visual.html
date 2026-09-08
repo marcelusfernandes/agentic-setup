@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Offline visual guide to the Codex and legacy Claude development routes.">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>From objective to delivery · Agentic workflow guide</title>
+    <style>
+:root { color-scheme: light; --paper: #f4f3ed; --card: #fffefa; --ink: #202d28; --muted: #59665f; --line: #d4dbd3; --green: #255c43; --green-soft: #e4eddf; --amber: #7b5010; --amber-soft: #fff0d4; --blue: #315b7a; --blue-soft: #e8eff6; --radius: 16px; --mono: ui-monospace,SFMono-Regular,Consolas,monospace }
+* { box-sizing: border-box }
+html { scroll-behavior: smooth; scroll-padding-top: 90px }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+a { color: var(--green); text-underline-offset: 4px }
+button,textarea { font: inherit }
+button { cursor: pointer }
+[hidden] { display: none!important }
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px }
+h1,h2,h3,p { margin: 0 }
+h1,h2,h3 { line-height: 1.14; letter-spacing: -.03em }
+h1 { font-size: clamp(38px,5vw,66px); max-width: 820px }
+h2 { font-size: clamp(27px,3vw,40px) }
+h3 { font-size: 21px }
+p+p { margin-top: 12px }
+code,pre { font-family: var(--mono) }
+code { font-size: .88em; overflow-wrap: anywhere }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65 }
+.wrap { width: min(1160px,calc(100% - 64px)); margin: auto }
+.skip { position: absolute; top: 8px; left: 16px; padding: 10px 16px; background: var(--card); transform: translateY(-180%); z-index: 10 }
+.skip:focus { transform: none }
+.topbar { position: sticky; top: 0; z-index: 5; border-bottom: 1px solid var(--line); background: var(--paper) }
+.topbar .wrap { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 24px }
+.brand { color: var(--ink); text-decoration: none; font-weight: 700 }
+.brand small { display: block; font: 10px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted) }
+nav { display: flex; flex-wrap: wrap; gap: 20px }
+nav a { font-size: 13px; color: var(--muted); text-decoration: none }
+.hero { padding: 72px 0 50px; display: grid; grid-template-columns: 1.6fr 1fr; gap: 52px; align-items: center }
+.eyebrow { font: 11px/1.6 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px }
+.lead { font-size: 18px; color: var(--muted); max-width: 650px; margin-top: 22px }
+.button { min-height: 42px; padding: 9px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font-size: 13px; font-weight: 650; text-decoration: none; display: inline-flex; align-items: center; justify-content: center }
+.button.primary { background: var(--green); border-color: var(--green); color: white }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px }
+.mental { padding: 25px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card) }
+.mental div { padding: 15px 0 }
+.mental div+div { border-top: 1px solid var(--line) }
+.mental strong { display: block }
+.mental p { font-size: 13px; color: var(--muted) }
+section { padding: 62px 0; border-bottom: 1px solid var(--line) }
+.section-head { display: flex; justify-content: space-between; align-items: end; gap: 35px; margin-bottom: 30px }
+.section-head>p { max-width: 400px; color: var(--muted); font-size: 14px }
+.callout { padding: 17px 20px; border: 1px solid #dfc995; background: var(--amber-soft); border-radius: 10px; margin-bottom: 25px; font-size: 14px }
+.route-grid,.two-col,.parts { display: grid; grid-template-columns: repeat(2,1fr); gap: 25px }
+.route { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px }
+.route.primary { border-top: 4px solid var(--green) }
+.route.legacy { border-top: 4px solid var(--blue) }
+.tag { display: inline-block; font: 10px/1.7 var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--green) }
+.tag.blue { color: var(--blue) }
+.route h3 { margin: 8px 0 12px }
+.route p,.small { font-size: 13px; color: var(--muted) }
+.route ul { padding-left: 20px; font-size: 13px }
+.codebox { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); margin-top: 17px }
+.codebox header { padding: 9px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; font: 10px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .06em }
+.codebox pre { padding: 17px; font-size: 12px }
+.copy { display: none; min-height: 34px; padding: 5px 10px; text-transform: none; letter-spacing: 0 }
+.js .copy { display: inline-flex }
+.flow { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 17px; list-style: none; padding: 0; margin: 0 0 22px }
+.flow li { position: relative; margin: 0 }
+.flow li:not(:last-child)::after { content: '→'; position: absolute; right: -13px; top: 54px; color: var(--muted) }
+.step { width: 100%; min-height: 130px; padding: 16px 12px; text-align: left; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink) }
+.step[aria-pressed=true] { border: 2px solid var(--green); background: var(--green-soft); padding: 15px 11px }
+.step span { display: block; font: 11px/1.4 var(--mono); color: var(--muted); margin-bottom: 15px }
+.step strong { display: block; font-size: 14px }
+.detail-shell { padding: 25px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card) }
+.detail-toolbar { display: none; justify-content: space-between; align-items: center; margin-bottom: 18px }
+.js .detail-toolbar { display: flex }
+.controls { display: flex; gap: 8px }
+.step-detail { display: grid; grid-template-columns: 1.2fr 1fr; gap: 30px }
+.step-detail+.step-detail { margin-top: 24px }
+.js .step-detail { margin-top: 0 }
+.step-detail p { font-size: 14px; color: var(--muted) }
+.artifact { padding: 18px; background: var(--paper); border-radius: 8px; font-size: 13px }
+.artifact strong { display: block; margin-bottom: 6px }
+.checkpoint { padding: 25px; border: 1px solid #dfc995; border-radius: var(--radius); background: var(--amber-soft) }
+.checkpoint h3 { margin: 9px 0 }
+.checkpoint pre { padding: 13px; background: var(--card); border-radius: 7px; font-size: 12px; margin-top: 13px }
+.demo-actions { display: none; flex-wrap: wrap; gap: 8px; margin: 17px 0 }
+.js .demo-actions { display: flex }
+.status { display: inline-block; padding: 3px 8px; background: var(--card); border: 1px solid #dfc995; border-radius: 5px; font: 11px/1.7 var(--mono) }
+.record { margin-top: 16px; font-size: 13px }
+.parts { grid-template-columns: repeat(3,1fr) }
+.parts + h3 { margin-top: 24px }
+.part { border-top: 2px solid var(--green); padding-top: 17px }
+.part p { font-size: 13px; color: var(--muted); margin-top: 9px }
+.table-wrap { overflow-x: auto }
+.label-table { width: 100%; border-collapse: collapse; margin-top: 20px }
+.label-table th,.label-table td { text-align: left; vertical-align: top; padding: 15px 16px 15px 0; border-bottom: 1px solid var(--line); font-size: 13px }
+.label-table th { font: 10px/1.6 var(--mono); text-transform: uppercase; color: var(--muted) }
+.label { display: inline-block; padding: 3px 7px; border-radius: 5px; background: var(--green-soft); color: var(--green); font: 11px/1.7 var(--mono) }
+.label.blue { background: var(--blue-soft); color: var(--blue) }
+.record-map { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 18px; margin: 28px 0 }
+.record-node { position: relative; min-height: 112px; padding: 17px; border: 1px solid var(--line); border-radius: 10px; background: var(--card) }
+.record-node:not(:last-child)::after { content: '→'; position: absolute; right: -14px; top: 42px; color: var(--muted) }
+.record-node strong { display: block; margin: 5px 0 }
+.record-node p { font-size: 12px; color: var(--muted) }
+.checkpoint-link { padding: 15px 18px; border-left: 3px solid var(--amber); background: var(--amber-soft); font-size: 13px; margin-bottom: 28px }
+.legacy-states { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 14px 0 18px }
+.legacy-states .arrow { color: var(--muted) }
+details { border-top: 1px solid var(--line); padding: 17px 0 }
+summary { cursor: pointer; font-weight: 650 }
+details div { padding-top: 12px }
+details p,details li { font-size: 14px; color: var(--muted) }
+footer { padding: 35px 0 }
+footer p { font-size: 12px; color: var(--muted) }
+.footer-top { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 15px }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0 }
+.no-script { padding: 14px; border: 1px solid var(--line); margin-bottom: 22px }
+@media(max-width:850px) {
+  .hero,.route-grid,.two-col,.step-detail { grid-template-columns: 1fr }
+  .parts { grid-template-columns: 1fr }
+  .record-map { grid-template-columns: 1fr 1fr }
+  .record-node:nth-child(2)::after { display: none }
+  .flow { grid-template-columns: 1fr; gap: 13px }
+  .flow li:not(:last-child)::after { content: '↓'; left: 22px; right: auto; top: auto; bottom: -15px }
+  .step { min-height: 64px; display: grid; grid-template-columns: 30px 1fr; align-items: center }
+  .step span { margin: 0 }
+  .section-head { display: block }
+  .section-head>p { margin-top: 14px; max-width: none }
+}
+@media(max-width:560px) {
+  .wrap { width: calc(100% - 34px) }
+  .topbar { position: static }
+  .topbar .wrap { display: block; padding: 14px 0 }
+  nav { margin-top: 9px; gap: 12px }
+  .hero { padding: 38px 0 }
+  .section-head { margin-bottom: 22px }
+  section { padding: 42px 0 }
+  .footer-top { display: block }
+  .footer-top button { margin-top: 14px }
+  .record-map { grid-template-columns: 1fr }
+  .record-node:not(:last-child)::after { content: '↓'; right: auto; left: 22px; top: auto; bottom: -17px }
+  .record-node:nth-child(2)::after { display: block }
+}
+@media(prefers-reduced-motion:reduce) {
+  html { scroll-behavior: auto }
+  * { transition: none!important }
+}
+@media print {
+  body { background: white; font-size: 11px }
+  .wrap { width: 100% }
+  .topbar { position: static }
+  nav,.actions,.detail-toolbar,.demo-actions,.copy,.print-button { display: none!important }
+  section { padding: 28px 0 }
+  .step-detail { display: grid!important; break-inside: avoid }
+  .flow { grid-template-columns: repeat(6,1fr) }
+  details { break-inside: avoid }
+  details>div { display: block!important }
+}
+</style>
+    <noscript><style>
+.step-detail { display: grid!important }
+.copy,.detail-toolbar,.demo-actions,.print-button { display: none!important }
+</style></noscript>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand" href="#top">agentic-setup <small>visual workflow guide</small>
+        </a>
+        <nav aria-label="Guide sections">
+          <a href="#routes">Choose a route</a>
+          <a href="#loop">The loop</a>
+          <a href="#records">GitHub records</a>
+          <a href="#use">Start</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <div class="wrap hero" id="top">
+        <div>
+          <p class="eyebrow">From an authorized objective to reviewed delivery</p>
+          <h1>One durable workflow. <span style="color:var(--green)">Two opt-in controllers.</span>
+          </h1>
+          <p class="lead">Codex is the primary continuing loop. The legacy Claude plugin remains a separate route. They may coexist in one repository, but never coordinate the same objective at the same time.</p>
+          <div class="actions">
+            <a class="button primary" href="#routes">Choose your route</a>
+            <a class="button" href="#loop">See the lifecycle</a>
+          </div>
+        </div>
+        <aside class="mental" aria-label="Mental model">
+          <div>
+            <strong>GitHub remembers</strong>
+            <p>Objectives, tasks, decisions, PRs and evidence survive sessions.</p>
+          </div>
+          <div>
+            <strong>The agent reasons</strong>
+            <p>It plans and implements only inside the authority already granted.</p>
+          </div>
+          <div>
+            <strong>Scripts verify</strong>
+            <p>Small helpers reconcile state and enforce checks; they do not invent permission.</p>
+          </div>
+        </aside>
+      </div>
+      <section id="routes">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">01 / choose deliberately</p>
+              <h2>Which route should own the objective?</h2>
+            </div>
+            <p>Installation does not start a controller. Pick one route for a specific objective and keep the other idle for that work.</p>
+          </div>
+          <div class="callout">
+            <strong>Coexistence rule:</strong> one coordinator per objective. Codex runs one implementation at a time; Claude may parallelize disjoint tasks under its own contract. A feature added to one route does not imply feature parity in the other.</div>
+          <div class="route-grid">
+            <article class="route primary">
+              <span class="tag">Primary · Codex</span>
+              <h3>Continuing objective loop</h3>
+              <p>Uses a repository-local skill, ordinary GitHub issues and explicit human checkpoints.</p>
+              <ul>
+                <li>Milestones are optional grouping.</li>
+                <li>Merge permission is distinct from publication.</li>
+                <li>A local review is never a GitHub approval.</li>
+              </ul>
+              <div class="codebox">
+                <header>
+                  <span>Install locally from this repository</span>
+                  <button class="button copy" data-copy="install-codex" type="button">Copy</button>
+                </header>
+                <pre><code id="install-codex">node scripts/setup-codex.mts --target /path/to/project --dry-run
+node scripts/setup-codex.mts --target /path/to/project</code></pre>
+              </div>
+              <p class="small">This preserves existing project instructions, hooks, CI and local Codex settings.</p>
+            </article>
+            <article class="route legacy">
+              <span class="tag blue">Opt-in · legacy Claude</span>
+              <h3>Phase-oriented plugin loop</h3>
+              <p>Uses its own commands, strict issue contract, labels, hooks and worktree lifecycle.</p>
+              <ul>
+                <li>Milestones organize phases.</li>
+                <li>
+                  <code>state:*</code> labels drive this legacy controller.</li>
+                <li>The installer no longer seeds <code>state:done</code>; historically configured repositories may still have it. A closed task issue is the completion convention.</li>
+              </ul>
+              <div class="codebox">
+                <header>
+                  <span>Install and preview in Claude Code</span>
+                  <button class="button copy" data-copy="install-claude" type="button">Copy</button>
+                </header>
+                <pre><code id="install-claude">/plugin marketplace add marcelusfernandes/agentic-setup
+/plugin install agentic-setup@agentic-setup
+/agentic-setup:init --dry-run --milestone "M1 foundation"</code></pre>
+              </div>
+              <p class="small">See <code>docs/legacy-claude.md</code> for the full opt-in route.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section id="loop">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">02 / Codex lifecycle</p>
+              <h2>A bounded loop with human decision points</h2>
+            </div>
+            <p>Select a stage for its durable artifact. With JavaScript disabled, every stage remains visible below.</p>
+          </div>
+          <noscript>
+            <p class="no-script">Interactive controls are disabled. All lifecycle details are expanded.</p>
+          </noscript>
+          <ol class="flow" aria-label="Objective lifecycle">
+            <li>
+              <button class="step" data-step="0" aria-pressed="true">
+                <span>01</span>
+                <strong>Plan</strong>
+              </button>
+            </li>
+            <li>
+              <button class="step" data-step="1" aria-pressed="false">
+                <span>02</span>
+                <strong>Specify</strong>
+              </button>
+            </li>
+            <li>
+              <button class="step" data-step="2" aria-pressed="false">
+                <span>03</span>
+                <strong>Implement</strong>
+              </button>
+            </li>
+            <li>
+              <button class="step" data-step="3" aria-pressed="false">
+                <span>04</span>
+                <strong>Review</strong>
+              </button>
+            </li>
+            <li>
+              <button class="step" data-step="4" aria-pressed="false">
+                <span>05</span>
+                <strong>Land</strong>
+              </button>
+            </li>
+            <li>
+              <button class="step" data-step="5" aria-pressed="false">
+                <span>06</span>
+                <strong>Reconcile</strong>
+              </button>
+            </li>
+          </ol>
+          <div class="detail-shell">
+            <div class="detail-toolbar">
+              <span id="step-counter">STEP 01 / 06</span>
+              <div class="controls">
+                <button class="button" id="previous-step" type="button">Previous</button>
+                <button class="button" id="next-step" type="button">Next</button>
+              </div>
+            </div>
+            <article class="step-detail" data-panel="0">
+              <div>
+                <h3>Plan the next useful slice</h3>
+                <p>Start only after the objective and its scope are authorized. Keep a short roadmap; do not invent a new objective when one finishes.</p>
+              </div>
+              <div class="artifact">
+                <strong>Fictional objective #120</strong>
+                <code>Goal: deliver safe export<br>Permissions: publish yes · merge no<br>Plan: #121</code>
+              </div>
+            </article>
+            <article class="step-detail" data-panel="1">
+              <div>
+                <h3>Specify observable acceptance</h3>
+                <p>One task describes one useful change, its validation and real dependencies. Material ambiguity becomes a checkpoint.</p>
+              </div>
+              <div class="artifact">
+                <strong>Fictional task #121</strong>
+                <code>Acceptance: export omits secrets<br>Validation: real subprocess test<br>Dependency: none</code>
+              </div>
+            </article>
+            <article class="step-detail" data-panel="2">
+              <div>
+                <h3>Implement in isolation</h3>
+                <p>Re-read status, claim when publication is authorized, and work on canonical branch <code>codex/task-121</code> in an isolated checkout.</p>
+              </div>
+              <div class="artifact">
+                <strong>Local evidence</strong>
+                <code>Tests: green<br>Docs: updated<br>User changes: preserved</code>
+              </div>
+            </article>
+            <article class="step-detail" data-panel="3">
+              <div>
+                <h3>Review independently</h3>
+                <p>Review the specification and diff in a separate context. Publishing a review through a distinct identity—or waiting for a human—is required when GitHub approval matters.</p>
+              </div>
+              <div class="artifact">
+                <strong>Fictional PR #44</strong>
+                <code>head: codex/task-121<br>base: main<br>review: APPROVED at current head</code>
+              </div>
+            </article>
+            <article class="step-detail" data-panel="4">
+              <div>
+                <h3>Land only through compatible rules</h3>
+                <p>The Codex helper requires explicit merge permission, resolved checkpoints, the correct branch, current approval and effective server rules requiring checks and stale-review dismissal. It refuses incompatible policy.</p>
+              </div>
+              <div class="artifact">
+                <strong>No bypass</strong>
+                <code>merge permission ≠ publish permission<br>green tests ≠ approval<br>local review ≠ GitHub APPROVED</code>
+              </div>
+            </article>
+            <article class="step-detail" data-panel="5">
+              <div>
+                <h3>Reconcile and continue—or stop</h3>
+                <p>Read durable state again. Continue useful unlocked work, wait for external state, or finish only with evidence against every success criterion.</p>
+              </div>
+              <div class="artifact">
+                <strong>Possible status</strong>
+                <code>working · waiting_human<br>waiting_ci · blocked<br>ready_to_finish · complete</code>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section id="records">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">03 / durable records</p>
+              <h2>GitHub is the shared memory</h2>
+            </div>
+            <p>The formats look similar, but their authority is deliberately different.</p>
+          </div>
+          <div class="parts">
+            <article class="part">
+              <span class="tag">Objective #120</span>
+              <h3>Outcome and authority</h3>
+              <p>Goal, success criteria, boundaries, permissions, decision makers, plan and checkpoints.</p>
+            </article>
+            <article class="part">
+              <span class="tag">Task #121</span>
+              <h3>A reviewable unit</h3>
+              <p>Acceptance criteria, relevant validation and genuine dependencies.</p>
+            </article>
+            <article class="part">
+              <span class="tag">Checkpoint #122</span>
+              <h3>A human decision</h3>
+              <p>Question, options, recommendation, impact and the tasks it blocks.</p>
+            </article>
+          </div>
+          <h3>How the fictional records connect</h3>
+          <div class="record-map" aria-label="Fictional GitHub record hierarchy">
+            <article class="record-node">
+              <span class="tag">Optional grouping</span>
+              <strong>Milestone M1</strong>
+              <p>Codex can group work without making the milestone its state machine.</p>
+            </article>
+            <article class="record-node">
+              <span class="tag">Outcome</span>
+              <strong>Objective #120</strong>
+              <p>Owns authority, success criteria, plan and checkpoint list.</p>
+            </article>
+            <article class="record-node">
+              <span class="tag">Work unit</span>
+              <strong>Task #121</strong>
+              <p>Is implemented on <code>codex/task-121</code>.</p>
+            </article>
+            <article class="record-node">
+              <span class="tag">Delivery</span>
+              <strong>PR #44</strong>
+              <p>Merges to the authorized integration branch, then the task can close.</p>
+            </article>
+          </div>
+          <p class="checkpoint-link">
+            <strong>Checkpoint #122 cross-links the hierarchy:</strong> it is listed by
+            objective #120 and blocks task #121 until an authorized decision is recorded.
+            After review, checks and merge authority are satisfied, PR #44 may merge;
+            completion evidence then closes the task and advances the objective.
+          </p>
+          <div class="two-col">
+            <div>
+              <h3>Labels belong to a route</h3>
+              <p class="small">The legacy Claude controller moves work through these labels.
+                Codex does not create or synchronize this sequence.</p>
+              <div class="legacy-states" aria-label="Legacy Claude label lifecycle">
+                <span class="label blue">state:ready</span><span class="arrow">→</span>
+                <span class="label blue">state:in-progress</span><span class="arrow">→</span>
+                <span class="label blue">state:in-review</span><span class="arrow">→</span>
+                <strong>closed issue = done</strong>
+              </div>
+              <p class="small">Side paths are
+                <span class="label blue">state:qa-failed</span>,
+                <span class="label blue">state:blocked</span> and
+                <span class="label blue">human</span>. The installer no longer seeds
+                <code>state:done</code>, although historical repositories may still have it.</p>
+              <div class="table-wrap">
+                <table class="label-table">
+                  <thead>
+                    <tr>
+                      <th>Label family</th>
+                      <th>Meaning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <span class="label blue">state:*</span>
+                      </td>
+                      <td>Legacy Claude controller state. Codex does not automatically synchronize these labels.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <span class="label">type:*</span>
+                      </td>
+                      <td>Work classification. In this source repository, type labels still affect legacy CI behavior.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <span class="label blue">review:approved</span>
+                      </td>
+                      <td>A fallback in the old Claude policy only. It is never approval for Codex; Codex requires a real GitHub approval.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="checkpoint">
+              <span class="tag">Interactive checkpoint example</span>
+              <h3>Should the test use a paid external service?</h3>
+              <p>Recommendation: validate locally first. A paid call requires explicit scope, data and cost authority.</p>
+              <div class="demo-actions">
+                <button class="button" type="button" data-decision="local" aria-pressed="false">Local only</button>
+                <button class="button" type="button" data-decision="paid" aria-pressed="false">Bounded paid test</button>
+                <button class="button" type="button" id="demo-resume" disabled>Resume</button>
+                <button class="button" type="button" id="demo-reset">Reset</button>
+              </div>
+              <span class="status" id="demo-status">waiting_human</span>
+              <p id="demo-message" class="record">Without an explicit answer, paid work does not begin. Independent work may continue.</p>
+              <pre id="demo-record">Decision &lt;current revision&gt;: &lt;explicit answer&gt;</pre>
+            </aside>
+          </div>
+        </div>
+      </section>
+      <section id="use">
+        <div class="wrap">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">04 / start safely</p>
+              <h2>Authorize an objective, then invoke the route</h2>
+            </div>
+            <p>These are fictional examples. Replace placeholders and numbers before using them.</p>
+          </div>
+          <details open>
+            <summary>Start a new Codex objective</summary>
+            <div>
+              <div class="codebox">
+                <header>
+                  <span>Prompt</span>
+                  <button class="button copy" data-copy="prompt-new" type="button">Copy</button>
+                </header>
+                <pre><code id="prompt-new">Use $autonomous-loop to create and run a GitHub objective.
+
+Outcome: [observable result].
+Success criteria: [evidence].
+Boundaries: [non-goals, data, cost and production limits].
+Decision maker: @[GitHub login].
+Publishing: yes. Merge: no unless I explicitly authorize it.
+Pause at checkpoints for consequential decisions.</code></pre>
+              </div>
+            </div>
+          </details>
+          <details>
+            <summary>Resume fictional objective #120</summary>
+            <div>
+              <div class="codebox">
+                <header>
+                  <span>Prompt</span>
+                  <button class="button copy" data-copy="prompt-resume" type="button">Copy</button>
+                </header>
+                <pre><code id="prompt-resume">Use $autonomous-loop to resume objective #120.
+Reconcile GitHub state and continue only authorized, unblocked work.</code></pre>
+              </div>
+              <div class="codebox">
+                <header>
+                  <span>Read-only status command</span>
+                  <button class="button copy" data-copy="command-status" type="button">Copy</button>
+                </header>
+                <pre><code id="command-status">node .agents/skills/autonomous-loop/scripts/github.mts status 120</code></pre>
+              </div>
+            </div>
+          </details>
+          <details>
+            <summary>What do installation and merge not authorize?</summary>
+            <div>
+              <ul>
+                <li>Installing either route does not start an objective or authorize publication, models, production, data access or spending.</li>
+                <li>Codex defaults to the repository default branch only when the <code>Integration branch</code> heading is omitted. An explicitly empty heading is invalid.</li>
+                <li>Required-rule compatibility is repository-specific: checks and a current independent approval must be enforced by readable server policy before autonomous landing.</li>
+                <li>Never run Codex and Claude coordinators on the same objective.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+      </section>
+      <footer class="wrap">
+        <div class="footer-top">
+          <strong>Choose one route. Record authority. Preserve evidence.</strong>
+          <button class="button print-button" id="print-guide" type="button" hidden>Print / save PDF</button>
+        </div>
+        <p>This standalone guide works without network access, external fonts, libraries or images. Reference links are intentionally omitted; use the repository documentation as the current contract.</p>
+      </footer>
+      <p class="sr-only" id="live-status" role="status" aria-live="polite" aria-atomic="true">
+      </p>
+    </main>
+    <script>
+    (() => {
+      'use strict';
+
+      const byId = (id) => document.getElementById(id);
+      const steps = [...document.querySelectorAll('[data-step]')];
+      const panels = [...document.querySelectorAll('[data-panel]')];
+      const live = byId('live-status');
+      let current = 0;
+      let decision = null;
+
+      const announce = (message) => {
+        live.textContent = message;
+      };
+
+      function selectStep(index, speak = true) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        steps.forEach((button, i) => {
+          button.setAttribute('aria-pressed', String(i === current));
+        });
+        panels.forEach((panel, i) => {
+          panel.hidden = i !== current;
+        });
+        byId('step-counter').textContent =
+          'STEP ' + String(current + 1).padStart(2, '0') + ' / 06';
+        byId('previous-step').disabled = current === 0;
+        byId('next-step').disabled = current === steps.length - 1;
+        if (speak) {
+          announce('Step ' + (current + 1) + ': ' +
+            panels[current].querySelector('h3').textContent);
+        }
+      }
+
+      steps.forEach((button, i) => {
+        button.addEventListener('click', () => selectStep(i));
+        button.addEventListener('keydown', (event) => {
+          const direction = {
+            ArrowRight: 1,
+            ArrowDown: 1,
+            ArrowLeft: -1,
+            ArrowUp: -1,
+          }[event.key];
+          if (direction === undefined) return;
+          event.preventDefault();
+          selectStep((i + direction + steps.length) % steps.length);
+          steps[current].focus();
+        });
+      });
+      byId('previous-step').addEventListener('click', () => selectStep(current - 1));
+      byId('next-step').addEventListener('click', () => selectStep(current + 1));
+
+      const decisions = {
+        local: {
+          answer: 'Use local fixtures only; no external data or spending.',
+          resume: 'Continue: the task uses local validation and does not make a paid call.',
+        },
+        paid: {
+          answer: 'Authorize one synthetic call within the recorded cost and data limits; ' +
+            'merge remains unauthorized.',
+          resume: 'Continue only after the limits are enforceable; otherwise return to ' +
+            'the decision maker.',
+        },
+      };
+
+      document.querySelectorAll('[data-decision]').forEach((button) => {
+        button.addEventListener('click', () => {
+          decision = button.dataset.decision;
+          byId('demo-status').textContent = 'answer recorded · simulation';
+          byId('demo-message').textContent =
+            'On resume, the coordinator applies these conditions before dependent work.';
+          byId('demo-record').textContent =
+            'Decision a1b2c3: ' + decisions[decision].answer;
+          byId('demo-resume').disabled = false;
+          document.querySelectorAll('[data-decision]').forEach((option) => {
+            option.setAttribute('aria-pressed', String(option === button));
+          });
+          announce('Simulated answer recorded.');
+        });
+      });
+
+      byId('demo-resume').addEventListener('click', () => {
+        if (!decision) return;
+        byId('demo-status').textContent = 'continue · simulation';
+        byId('demo-message').textContent = decisions[decision].resume;
+        byId('demo-resume').disabled = true;
+        announce(decisions[decision].resume);
+      });
+
+      byId('demo-reset').addEventListener('click', () => {
+        decision = null;
+        byId('demo-status').textContent = 'waiting_human';
+        byId('demo-message').textContent =
+          'Without an explicit answer, paid work does not begin. Independent work may continue.';
+        byId('demo-record').textContent =
+          'Decision <current revision>: <explicit answer>';
+        byId('demo-resume').disabled = true;
+        document.querySelectorAll('[data-decision]').forEach((button) => {
+          button.setAttribute('aria-pressed', 'false');
+        });
+        announce('Example reset.');
+      });
+
+      document.querySelectorAll('[data-copy]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const source = byId(button.dataset.copy);
+          let copied = false;
+          try {
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(source.textContent);
+              copied = true;
+            }
+          } catch {
+            // Local-file clipboard access may be restricted.
+          }
+          if (!copied) {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(source);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+              copied = document.execCommand('copy');
+            } catch {
+              // Leave the text selected for manual copying.
+            }
+          }
+          button.textContent = copied ? 'Copied!' : 'Text selected';
+          announce(copied
+            ? 'Copied. Review placeholders before use.'
+            : 'Text selected; use Ctrl+C or Command+C.');
+          setTimeout(() => {
+            button.textContent = 'Copy';
+          }, 2200);
+        });
+      });
+
+      const printButton = byId('print-guide');
+      printButton.hidden = false;
+      printButton.addEventListener('click', () => window.print());
+      let closedDetails = [];
+      window.addEventListener('beforeprint', () => {
+        closedDetails = [...document.querySelectorAll('details:not([open])')];
+        closedDetails.forEach((detail) => {
+          detail.open = true;
+        });
+      });
+      window.addEventListener('afterprint', () => {
+        closedDetails.forEach((detail) => {
+          detail.open = false;
+        });
+        closedDetails = [];
+      });
+
+      document.documentElement.classList.add('js');
+      selectStep(0, false);
+    })();
+    </script>
+  </body>
+</html>

@@ -6,6 +6,10 @@ maintained operating contract is the skill's
 [reference](../.agents/skills/autonomous-loop/references/contract.md); do not duplicate it
 in global/project instructions or agent role files.
 
+For a guided introduction, open the [offline visual workflow](workflow-visual.html)
+in a browser. It explains the Codex lifecycle and GitHub record hierarchy alongside
+the separate legacy Claude labels and installation route.
+
 ## Runtime boundaries
 
 - `.agents/skills/autonomous-loop/SKILL.md` gives Codex the decision procedure. The main
