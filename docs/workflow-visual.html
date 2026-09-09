@@ -217,7 +217,7 @@ footer p { font-size: 12px; color: var(--muted) }
             <article class="route primary">
               <span class="tag">Primary · Codex</span>
               <h3>Continuing objective loop</h3>
-              <p>Uses a repository-local skill, ordinary GitHub issues and explicit human checkpoints.</p>
+              <p>Uses the same skill through a native Codex plugin or project-local installation, with ordinary GitHub issues and explicit human checkpoints.</p>
               <ul>
                 <li>Milestones are optional grouping.</li>
                 <li>Merge permission is distinct from publication.</li>
@@ -225,7 +225,16 @@ footer p { font-size: 12px; color: var(--muted) }
               </ul>
               <div class="codebox">
                 <header>
-                  <span>Install locally from this repository</span>
+                  <span>Install the native Codex plugin</span>
+                  <button class="button copy" data-copy="install-codex-plugin" type="button">Copy</button>
+                </header>
+                <pre><code id="install-codex-plugin">codex plugin marketplace add marcelusfernandes/agentic-setup --ref main
+codex plugin add agentic-setup@agentic-setup</code></pre>
+              </div>
+              <p class="small">Start a new thread and invoke <code>$agentic-setup:autonomous-loop</code>. Plugin helpers live beside the loaded skill in Codex's cache, not in the project's .agents directory. See docs/codex-plugin.md for updates; choose one Codex installation source per objective.</p>
+              <div class="codebox">
+                <header>
+                  <span>Alternative: install into the project</span>
                   <button class="button copy" data-copy="install-codex" type="button">Copy</button>
                 </header>
                 <pre><code id="install-codex">node scripts/setup-codex.mts --target /path/to/project --dry-run
@@ -504,7 +513,7 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
               <p class="eyebrow">04 / start safely</p>
               <h2>Authorize an objective, then invoke the route</h2>
             </div>
-            <p>These are fictional examples. Replace placeholders and numbers before using them.</p>
+            <p>These are fictional examples. Replace placeholders and numbers before using them. For project-local installation, replace <code>$agentic-setup:autonomous-loop</code> with <code>$autonomous-loop</code>.</p>
           </div>
           <details open>
             <summary>Start a new Codex objective</summary>
@@ -514,7 +523,7 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
                   <span>Prompt</span>
                   <button class="button copy" data-copy="prompt-new" type="button">Copy</button>
                 </header>
-                <pre><code id="prompt-new">Use $autonomous-loop to create and run a GitHub objective.
+                <pre><code id="prompt-new">Use $agentic-setup:autonomous-loop to create and run a GitHub objective.
 
 Outcome: [observable result].
 Success criteria: [evidence].
@@ -533,12 +542,12 @@ Pause at checkpoints for consequential decisions.</code></pre>
                   <span>Prompt</span>
                   <button class="button copy" data-copy="prompt-resume" type="button">Copy</button>
                 </header>
-                <pre><code id="prompt-resume">Use $autonomous-loop to resume objective #120.
+                <pre><code id="prompt-resume">Use $agentic-setup:autonomous-loop to resume objective #120.
 Reconcile GitHub state and continue only authorized, unblocked work.</code></pre>
               </div>
               <div class="codebox">
                 <header>
-                  <span>Read-only status command</span>
+                  <span>Read-only status · project-local installation</span>
                   <button class="button copy" data-copy="command-status" type="button">Copy</button>
                 </header>
                 <pre><code id="command-status">node .agents/skills/autonomous-loop/scripts/github.mts status 120</code></pre>

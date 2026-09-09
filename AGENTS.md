@@ -15,6 +15,9 @@ feature parity between the two runtimes.
 
 - `.agents/skills/autonomous-loop/` — Codex procedure, contract, GitHub state helper and
   optional bounded runner; `scripts/setup-codex.mts` installs this self-contained route.
+- `plugins/agentic-setup/` — isolated native Codex package; regenerate its skill snapshot
+  with `npm run sync:codex-plugin` after source edits and verify `npm run check:codex-plugin`.
+  `.agents/plugins/marketplace.json` is the repository distribution catalog.
 - `.claude-plugin/`, `agents/`, `skills/`, `hooks/` — the existing Claude plugin package.
 - `docs/codex.md` and `docs/legacy-claude.md` — route-specific setup and operation.
 - `hooks/` — the two `PreToolUse` hooks (`protect-main.mts`, `protect-worktree.mts`) and
