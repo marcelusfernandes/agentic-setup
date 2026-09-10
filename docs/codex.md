@@ -7,8 +7,8 @@ maintained operating contract is the skill's
 in global/project instructions or agent role files.
 
 For a guided introduction, open the [offline visual workflow](workflow-visual.html)
-in a browser. It explains the Codex lifecycle and GitHub record hierarchy alongside
-the separate legacy Claude labels and installation route.
+in a browser. It explains the Codex lifecycle, GitHub status labels and record hierarchy
+alongside the separate legacy Claude installation route.
 
 ## Runtime boundaries
 
@@ -21,7 +21,8 @@ installer below remains an alternative, not a prerequisite for plugin use.
   agent may implement; independent review uses another context. Parallel writers are
   deferred until sequential behavior and measured benefit justify them.
 - `scripts/github.mts` inside the skill computes state and gates claim, merge and finish.
-  It replaces Claude-specific labels, slug locks and PID-based recovery for this workflow.
+  Its authorized `labels` command projects that state onto GitHub issues/PRs without using
+  labels as authority. It replaces the Claude scheduler, slug locks and PID-based recovery.
   It does not execute arbitrary validation commands supplied in issues.
 - `scripts/run.mts` inside the skill provides optional bounded headless execution and
   usage logs. Codex owns planning/implementation; the runner owns process sequencing,
@@ -35,6 +36,16 @@ The unit of progress is an objective/task, not a fixed number of agent roles or 
 Specification grows only as needed for the next task. Documentation belongs in the same
 change. Native CI and review remain mandatory for autonomous merge; custom scope lint
 and negative control are optional project policy, not universal prerequisites.
+
+Keep titles descriptive; show workflow status with `state:*` labels and use checkboxes only
+for acceptance criteria. The coordinator runs `labels <objective>` on resume and after
+durable transitions, including completion. `status` and runner preflight remain read-only;
+there is no background label polling. Classification labels are selected by the coordinator,
+not inferred from titles. The contract defines managed states and human-label ownership.
+`human` requests on objectives/tasks/PRs are execution gates, not decorative metadata.
+The runner stops for unresolved human requests without a model call. Starting a loop grants
+routine publication/validated merge by default; record it once in the objective, preserving
+explicit restrictions. Fix technical failures autonomously instead of asking for each merge.
 
 The runner honors the chosen Codex configuration/profile, including its sandbox. The
 operator must verify that authenticated GitHub/Git access and repository writes work
@@ -90,6 +101,10 @@ The tests cover pending/closed checkpoints, full multiline decision conditions, 
 decision authors, revision invalidation, PRs merged into the wrong base branch,
 independent work while another task waits, downstream blocking, duplicate claims, default
 branch advancement, retry branches, incomplete specifications and cancelled work.
+Label tests exercise authorized/idempotent writes, current PR failures, checkpoint revisions,
+scoped human-request gates and runner waits, preservation of unrelated labels/titles and
+recovery from partial API failure. Fake status or
+approval labels do not satisfy the original execution and merge gates.
 Installer tests verify previews, self-contained installation, repeated installation and
 preservation of user instructions/settings. `tests/coexistence.test.mts` runs both real
 installers in both orders and verifies the other route's instructions, skill files,

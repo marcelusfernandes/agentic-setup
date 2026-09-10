@@ -4,11 +4,11 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-type Issue = { number: number; title: string; body: string | null; state: string; state_reason?: string; pull_request?: unknown };
+type Issue = { number: number; title: string; body: string | null; state: string; state_reason?: string; pull_request?: unknown; labels?: Array<{ name: string }> };
 type Comment = { body: string; html_url: string; user: { login: string; type: string } };
-type PR = { number: number; state: string; headRefName: string; headRefOid: string; baseRefName: string; reviewDecision: string | null; isDraft: boolean; isCrossRepository: boolean };
-type Checkpoint = { number: number; title: string; revision: string; blocks: 'all' | number[]; reply: string; answer: { text: string; author: string; url: string } | null };
-type Task = { number: number; title: string; branch: string; state: string; missing: string[]; dependencies: number[]; blockers: number[]; pr: PR | null };
+type PR = { number: number; state: string; headRefName: string; headRefOid: string; baseRefName: string; reviewDecision: string | null; isDraft: boolean; isCrossRepository: boolean; labels?: Array<{ name: string }> };
+type Checkpoint = { number: number; title: string; revision: string; blocks: 'all' | number[]; reply: string; answer: { text: string; author: string; url: string } | null; labels: string[] };
+type Task = { number: number; title: string; branch: string; state: string; missing: string[]; dependencies: number[]; blockers: number[]; pr: PR | null; labels: string[] };
 
 function run(command: string, args: string[]) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
@@ -82,14 +82,14 @@ function snapshot(goalNumber: number) {
     const match = pages.flat().filter((c) => c.user?.type === 'User' && humans.includes(c.user.login.toLowerCase()))
       .map((c) => ({ comment: c, answer: c.body.match(new RegExp(`^Decision ${revision}: ([\\s\\S]+)$`))?.[1].trim() }))
       .filter((c) => c.answer).at(-1);
-    return { number, title: item.title, revision, blocks, reply: `Decision ${revision}: <answer>`,
+    return { number, title: item.title, revision, blocks, reply: `Decision ${revision}: <answer>`, labels: (item.labels ?? []).map((label) => label.name),
       answer: match ? { text: match.answer!, author: match.comment.user.login, url: match.comment.html_url } : null };
   });
   const tasks: Task[] = taskNumbers.map((number) => {
     const item = issue(number); const text = item.body ?? ''; const branch = branchFor(number);
     const missing = ['Goal', 'Acceptance criteria', 'Validation'].filter((h) => !section(text, h));
     const dependencies = dependencyRefs(section(text, 'Dependencies'));
-    const prs = gh<PR[]>(['pr', 'list', '--head', branch, '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,headRefOid,baseRefName,reviewDecision,isDraft,isCrossRepository']);
+    const prs = gh<PR[]>(['pr', 'list', '--head', branch, '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,headRefOid,baseRefName,reviewDecision,isDraft,isCrossRepository,labels']);
     if (!Array.isArray(prs) || prs.length === 100) throw new Error(`ambiguous PR list for #${number}`);
     const own = prs.filter((p) => !p.isCrossRepository && p.headRefName === branch);
     const open = own.filter((p) => p.state === 'OPEN');
@@ -99,16 +99,34 @@ function snapshot(goalNumber: number) {
     const completedWithoutPR = finished(item) && !own.some((p) => ['OPEN', 'MERGED'].includes(p.state));
     const state = item.state_reason === 'not_planned' ? 'cancelled' : pr?.state === 'MERGED' || completedWithoutPR ? 'done'
       : missing.length ? 'needs_spec' : pr ? (pr.reviewDecision === 'APPROVED' ? 'waiting_ci' : 'review') : remote ? 'in_progress' : 'ready';
-    return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state };
+    return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state, labels: (item.labels ?? []).map((label) => label.name) };
   });
+  const hasHuman = (labels: string[]) => labels.some((label) => label.toLowerCase() === 'human');
+  const humanRequests: Array<{ kind: 'objective' | 'task' | 'pr' | 'dependency'; number: number; blocks: 'all' | number[] }> = [];
+  if (hasHuman((goal.labels ?? []).map((label) => label.name))) humanRequests.push({ kind: 'objective', number: goalNumber, blocks: 'all' });
+  for (const task of tasks) {
+    if (hasHuman(task.labels)) humanRequests.push({ kind: 'task', number: task.number, blocks: [task.number] });
+    if (task.pr && hasHuman((task.pr.labels ?? []).map((label) => label.name))) {
+      humanRequests.push({ kind: 'pr', number: task.pr.number, blocks: [task.number] });
+    }
+  }
   const pending = checkpoints.filter((c) => !c.answer);
   const global = pending.filter((c) => c.blocks === 'all').map((c) => c.number);
   for (const task of tasks) {
     task.blockers = pending.filter((c) => c.blocks === 'all' || c.blocks.includes(task.number)).map((c) => c.number);
+    task.blockers.push(...humanRequests.filter((request) => request.blocks === 'all' || request.blocks.includes(task.number)).map((request) => request.number));
     for (const dep of task.dependencies) {
       if (dep === goalNumber || dep === task.number) throw new Error(`task #${task.number} depends on itself or its objective`);
       const other = tasks.find((t) => t.number === dep); const decision = checkpoints.find((c) => c.number === dep);
-      if (other ? other.state !== 'done' : decision ? !decision.answer : !finished(issue(dep))) task.blockers.push(dep);
+      if (other ? other.state !== 'done' : decision ? !decision.answer : (() => {
+        const external = issue(dep); const externalHuman = hasHuman((external.labels ?? []).map((label) => label.name));
+        if (externalHuman) {
+          const request = humanRequests.find((entry) => entry.kind === 'dependency' && entry.number === dep);
+          if (request && request.blocks !== 'all') request.blocks.push(task.number);
+          else humanRequests.push({ kind: 'dependency', number: dep, blocks: [task.number] });
+        }
+        return !finished(external) || externalHuman;
+      })()) task.blockers.push(dep);
     }
   }
   // A pending decision also blocks dependents of already merged tasks.
@@ -117,22 +135,101 @@ function snapshot(goalNumber: number) {
   }
   const actionable = tasks.filter((t) => t.state !== 'done' && t.state !== 'cancelled' && !t.blockers.length);
   const next = actionable.find((t) => ['in_progress', 'review', 'waiting_ci'].includes(t.state)) ?? actionable[0] ?? null;
-  const allDone = tasks.length > 0 && tasks.every((t) => t.state === 'done') && !pending.length;
+  const allDone = tasks.length > 0 && tasks.every((t) => t.state === 'done') && !pending.length && !humanRequests.length;
   const status = goal.state === 'closed' ? (goal.state_reason !== 'not_planned' && allDone ? 'complete' : 'blocked')
-    : !tasks.length && !global.length ? 'planning'
+    : !tasks.length && !global.length && !humanRequests.length ? 'planning'
     : allDone ? 'ready_to_finish'
     : next ? (next.state === 'waiting_ci' ? 'waiting_ci' : 'working') : pending.length ? 'waiting_human' : 'blocked';
-  return { goal: goalNumber, title: goal.title, defaultBranch, integrationBranch, status, closed: goal.state === 'closed', permissions: { publish: allowed('publish'), merge: allowed('merge') }, next,
-    tasks, checkpoints, successCriteria: section(body, 'Success criteria') };
+  const projectedStatus = status === 'blocked' && humanRequests.length ? 'waiting_human' : status;
+  return { goal: goalNumber, title: goal.title, defaultBranch, integrationBranch, status: projectedStatus, closed: goal.state === 'closed', labels: (goal.labels ?? []).map((label) => label.name), permissions: { publish: allowed('publish'), merge: allowed('merge') }, next,
+    tasks, checkpoints, humanRequests, successCriteria: section(body, 'Success criteria') };
+}
+
+const LABELS = [
+  ['state:ready', 'Ready for the next authorized transition', '1d76db'],
+  ['state:in-progress', 'Implementation is in progress', 'fbca04'],
+  ['state:in-review', 'Awaiting review, checks, or objective verification', '5319e7'],
+  ['state:qa-failed', 'Review or required checks need repair', 'd73a4a'],
+  ['state:blocked', 'Blocked by specification, dependency, cancellation, or decision', 'b60205'],
+  ['state:done', 'Completed from verified GitHub state', '0e8a16'],
+  ['human', 'A recorded human decision is required', 'c5def5'],
+] as const;
+const STATES = new Set(LABELS.filter(([name]) => name.startsWith('state:')).map(([name]) => name));
+
+function qaFailed(pr: PR | null): boolean {
+  if (!pr || pr.state !== 'OPEN') return false;
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') return true;
+  const result = spawnSync('gh', ['pr', 'checks', String(pr.number), '--required', '--json', 'name,bucket'], { encoding: 'utf8', timeout: 60_000 });
+  let checks: Array<{ name: string; bucket: string }>;
+  try { checks = JSON.parse(result.stdout || 'null'); } catch { throw new Error('required checks cannot be read'); }
+  const buckets = new Set(['pass', 'fail', 'pending', 'skipping', 'cancel']);
+  if (![0, 1, 8].includes(result.status ?? -1) || !Array.isArray(checks)
+    || checks.some((check) => !check || typeof check.name !== 'string' || !buckets.has(check.bucket))) {
+    throw new Error('required checks cannot be read');
+  }
+  return checks.some((check) => ['fail', 'cancel'].includes(check.bucket));
+}
+
+function reconcileLabels(state: ReturnType<typeof snapshot>) {
+  if (!state.permissions.publish) throw new Error('label publication is not authorized by the objective');
+  type Target = { kind: 'issue' | 'pr'; number: number; labels: string[]; desired: string; human?: boolean };
+  const qa = new Map<number, boolean>();
+  for (const task of state.tasks) if (task.pr) qa.set(task.pr.number, qaFailed(task.pr));
+  const taskState = (task: Task) => task.state === 'done' ? 'state:done'
+    : task.pr?.state === 'OPEN' && task.pr.baseRefName !== state.integrationBranch ? 'state:blocked'
+    : task.blockers.length || ['needs_spec', 'cancelled'].includes(task.state) ? 'state:blocked'
+    : task.state === 'ready' ? 'state:ready' : task.state === 'in_progress' ? 'state:in-progress'
+    : task.pr && qa.get(task.pr.number) ? 'state:qa-failed' : 'state:in-review';
+  const objectivePR = state.next?.pr ?? null;
+  const objectiveState = state.status === 'complete' ? 'state:done' : state.status === 'planning' ? 'state:ready'
+    : ['waiting_human', 'blocked'].includes(state.status) ? 'state:blocked'
+    : objectivePR?.state === 'OPEN' && objectivePR.baseRefName !== state.integrationBranch ? 'state:blocked'
+    : objectivePR && qa.get(objectivePR.number) ? 'state:qa-failed'
+    : objectivePR ? 'state:in-review'
+    : ['waiting_ci', 'ready_to_finish'].includes(state.status) ? 'state:in-review' : 'state:in-progress';
+  const targets: Target[] = [{ kind: 'issue', number: state.goal, labels: state.labels, desired: objectiveState }];
+  for (const task of state.tasks) {
+    const desired = taskState(task);
+    targets.push({ kind: 'issue', number: task.number, labels: task.labels, desired });
+    if (task.pr) targets.push({ kind: 'pr', number: task.pr.number, labels: (task.pr.labels ?? []).map((label) => label.name),
+      desired: task.pr.state === 'MERGED' ? 'state:done' : desired });
+  }
+  for (const checkpoint of state.checkpoints) targets.push({ kind: 'issue', number: checkpoint.number,
+    labels: checkpoint.labels, desired: checkpoint.answer ? 'state:done' : 'state:blocked', human: !checkpoint.answer });
+  const pages = gh<Array<Array<{ name: string }>>>(['api', 'repos/{owner}/{repo}/labels', '--paginate', '--slurp']);
+  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) throw new Error('repository labels cannot be read');
+  const existing = new Set(pages.flat().map((label) => label.name.toLowerCase()));
+  for (const [name, description, color] of LABELS) if (!existing.has(name.toLowerCase())) {
+    run('gh', ['label', 'create', name, '--description', description, '--color', color]);
+  }
+  let updated = 0;
+  for (const target of targets) {
+    const remove = target.labels.filter((label) => STATES.has(label.toLowerCase() as typeof LABELS[number][0]) && label.toLowerCase() !== target.desired);
+    if (target.kind === 'issue' && state.checkpoints.some((checkpoint) => checkpoint.number === target.number)) {
+      if (!target.human) remove.push(...target.labels.filter((label) => label.toLowerCase() === 'human'));
+    }
+    const present = new Set(target.labels.map((label) => label.toLowerCase()));
+    const add = [target.desired, ...(target.human ? ['human'] : [])].filter((label) => !present.has(label));
+    if (!add.length && !remove.length) continue;
+    run('gh', [target.kind, 'edit', String(target.number), ...add.flatMap((label) => ['--add-label', label]),
+      ...[...new Set(remove)].flatMap((label) => ['--remove-label', label])]);
+    updated++;
+  }
+  return { goal: state.goal, updated, labels: LABELS.map(([name]) => name) };
 }
 
 function main() {
   const [command, rawGoal, rawTask, ...extra] = process.argv.slice(2);
-  if (!['status', 'claim', 'land', 'finish'].includes(command) || !/^[1-9]\d*$/.test(rawGoal ?? '')) throw new Error('usage: github.mts status|claim|land|finish <objective> [task | --evidence file]');
+  if (!['status', 'labels', 'claim', 'land', 'finish'].includes(command) || !/^[1-9]\d*$/.test(rawGoal ?? '')) throw new Error('usage: github.mts status|labels|claim|land|finish <objective> [task | --evidence file]');
   const state = snapshot(Number(rawGoal));
   if (command === 'status') return state;
+  if (command === 'labels') {
+    if (rawTask || extra.length) throw new Error('labels accepts only an objective number');
+    return reconcileLabels(state);
+  }
   if (state.closed) throw new Error('objective is closed; inspect its completion or cancellation before proceeding');
   if (command === 'finish') {
+    if (!state.permissions.publish) throw new Error('objective completion publication is not authorized');
     if (state.status !== 'ready_to_finish') throw new Error('objective still needs planning, tasks or human answers');
     if (rawTask !== '--evidence' || extra.length !== 1) throw new Error('finish requires --evidence <file>');
     const evidence = readFileSync(extra[0], 'utf8').trim();
