@@ -112,17 +112,27 @@ listed checkpoints and canonical task PRs only:
 | `state:qa-failed` | A current PR has changes requested or failed/cancelled required checks. |
 | `state:blocked` | Missing specification, unresolved dependencies/checkpoints, wrong PR destination or cancelled work. |
 | `state:done` | Task completion evidence, a resolved checkpoint or a verified closed objective. |
-| `human` | An unanswered checkpoint requires the named decision maker. |
+| `human:pending` | A decision is required from the named decision maker; affected work is paused. |
+| `human:reviewed` | The decision was recorded; work may proceed. Kept as the audit trail of the intervention. |
+| `human` | Legacy alias of `human:pending`, read exactly like it; still seeded for repositories that predate the two states. |
 
-`human` is added/removed automatically only on checkpoint issues. Existing human requests
-on other records are preserved and enforced: objective `human` blocks the whole objective;
-task/PR `human` blocks that task and its transitive dependents. Other independent tasks
-may continue. Any unresolved human request blocks objective completion, even on a merged task.
+The two human states are mutually exclusive and matched by exact name, never by prefix.
+`human:pending` and bare `human` are gates; `human:reviewed` never blocks and is never removed
+by synchronization. On checkpoint issues the workflow owns the human state: an unanswered
+checkpoint carries `human:pending` (a bare `human` there is migrated to it); a recorded answer
+replaces it with `human:reviewed` next to `state:done`; a new decision revision restores
+`human:pending` and removes `human:reviewed`. On objectives, tasks and PRs the workflow never
+adds or removes a human state: existing requests are preserved and enforced — objective
+`human:pending` blocks the whole objective; task/PR `human:pending` blocks that task and its
+transitive dependents — and only a person flips them to `human:reviewed`, after which the
+record is read as unblocked while the label stays. Other independent tasks may continue.
+Any unresolved human request blocks objective completion, even on a merged task.
 Status reads, label repair and recording the required decision may continue while blocked.
-A referenced external prerequisite tagged `human` also blocks its dependents even if closed;
-it is read as a gate, never relabeled by this objective's synchronization.
+A referenced external prerequisite tagged `human:pending` (or bare `human`) also blocks its
+dependents even if closed; one tagged `human:reviewed` does not. Either is read as a gate
+record, never relabeled by this objective's synchronization.
 An answered checkpoint is resolved, not blanket permission
-to proceed: apply the answer's conditions. A new decision revision restores blocked/human.
+to proceed: apply the answer's conditions. A new decision revision restores blocked/pending.
 Already completed tasks/merged PRs remain done when a new checkpoint pauses the objective.
 For a local validation failure not yet visible in CI, record the failure and repair it;
 do not claim that automatic labels have observed a check that was never published.
