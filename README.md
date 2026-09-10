@@ -6,6 +6,11 @@ human checkpoints for consequential decisions.
 Keep one authorized objective moving: plan the next useful task, specify it, implement,
 review, validate and reconcile. Continue until its success criteria are met or a real
 decision or blocker needs the user. GitHub holds the plan and evidence across restarts.
+Status appears in GitHub labels, not `[ ]` or status prefixes in issue/PR titles.
+The coordinator reconciles labels after durable transitions; evidence and explicit human
+permissions remain authoritative. Starting the loop grants routine publication and validated
+merge within its boundaries unless you restrict them. `human` pauses affected work for
+decisions, not every PR. Acceptance criteria may still use checkboxes.
 
 The default is one coordinator and one implementation at a time. No local task database,
 PID-based cleanup, mandatory milestones, scope globs or fixed cast of agent roles.
@@ -67,7 +72,8 @@ ask the following; for the plugin, replace `$autonomous-loop` with
 Use $autonomous-loop to achieve <observable outcome>.
 Success criteria: <evidence>.
 Boundaries: <scope, constraints, non-goals>.
-Publishing issues/branches/PRs is authorized; ask before merging.
+Publishing issues/branches/PRs and merging after validation and review are authorized.
+Pause affected work for human decisions; continue independent tasks.
 Human decision maker: @my-github-login.
 ```
 
@@ -111,7 +117,12 @@ conditions and source. Silence, closing an issue and the agent's recommendation 
 approval. Accepted decisions survive restarts while their question and authority remain
 unchanged.
 
-Automatic merge additionally requires explicit permission, a separate GitHub review,
+Record publication and merge authority once when starting the objective; do not ask again
+for each routine PR. A `human` label on the objective pauses all work; on a task or its PR,
+it pauses that task and dependents. Convert the request into a durable checkpoint and apply
+the real answer before removing the originating label. Explicit user restrictions still apply.
+
+Automatic merge requires that standing permission, a separate GitHub review,
 required passing server checks and stale-approval dismissal. The merge is pinned to the
 reviewed commit. If that policy is unavailable, automatic merge stops; no fallback bypass.
 The setup does not provide an identity security boundary when agent and human share

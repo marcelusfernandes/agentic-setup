@@ -1,6 +1,8 @@
 # Native Codex plugin distribution
 
 The native plugin packages the same `autonomous-loop` skill as the local installer.
+The loop uses GitHub status labels and descriptive titles; publishing authorization also
+covers its explicit label-reconciliation command. Installation itself writes no GitHub labels.
 It does not include the Claude plugin, hooks, CI or project settings. Requires Node.js
 22.18+, Git, authenticated `gh`, and Codex plugin support; CLI commands below were
 checked with Codex 0.153.4. No MCP server, API key or runtime dependency is added.
@@ -30,7 +32,7 @@ publication, merge, production, model or spending authority.
 
 Open the target project and start a new Codex thread. Invoke
 `$agentic-setup:autonomous-loop` and provide the outcome, success criteria, boundaries,
-GitHub decision maker and separate publication/merge permissions described in the
+GitHub decision maker and standing publication/merge authority described in the
 [README](../README.md), substituting this namespaced invocation for the local
 `$autonomous-loop` name. Installation alone starts no objective. Do not load the plugin
 and a project-local copy for the same objective; reconcile existing project instructions

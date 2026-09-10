@@ -59,8 +59,11 @@ feature parity between the two runtimes.
 
 - For a user-authorized Codex objective, use `$autonomous-loop` and its contract.
   Ordinary edits do not start or resume an objective. GitHub is the durable state;
-  publication and merge need separate authorization. Do not import the Claude label
-  machine, hooks, PID cleanup or merge exceptions into the Codex objective loop.
+  starting the loop grants routine publication and validated merge within its boundaries,
+  unless the user restricts either. Record that standing authority once. Codex synchronizes
+  status labels from evidence; `human` blocks affected work, while labels never grant approval.
+  Do not import the Claude scheduler,
+  hooks, PID cleanup or merge exceptions into the Codex objective loop.
 - The Claude route remains available through its plugin commands and `CLAUDE.md`.
   Its operating contracts are `docs/workflow.md`, `docs/orchestration.md` and
   `skills/issue-and-pr/SKILL.md`. Do not launch it against an objective owned by Codex.

@@ -331,7 +331,7 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
               </div>
               <div class="artifact">
                 <strong>Fictional objective #120</strong>
-                <code>Goal: deliver safe export<br>Permissions: publish yes · merge no<br>Plan: #121</code>
+                <code>Goal: deliver safe export<br>Permissions: publish yes · merge yes<br>Plan: #121</code>
               </div>
             </article>
             <article class="step-detail" data-panel="1">
@@ -357,7 +357,7 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
             <article class="step-detail" data-panel="3">
               <div>
                 <h3>Review independently</h3>
-                <p>Review the specification and diff in a separate context. Publishing a review through a distinct identity—or waiting for a human—is required when GitHub approval matters.</p>
+                <p>Review the specification and diff in a separate context, using the configured independent GitHub reviewer. If reviewer access needs a human decision, record a scoped human checkpoint for that setup, not a fresh permission request for every PR.</p>
               </div>
               <div class="artifact">
                 <strong>Fictional PR #44</strong>
@@ -367,17 +367,17 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
             <article class="step-detail" data-panel="4">
               <div>
                 <h3>Land only through compatible rules</h3>
-                <p>The Codex helper requires explicit merge permission, resolved checkpoints, the correct branch, current approval and effective server rules requiring checks and stale-review dismissal. It refuses incompatible policy.</p>
+                <p>The loop records standing publication and merge authority once. After tests and independent review, land without another confirmation unless affected work has a human request. The helper still enforces the correct branch, approval and protected checks.</p>
               </div>
               <div class="artifact">
                 <strong>No bypass</strong>
-                <code>merge permission ≠ publish permission<br>green tests ≠ approval<br>local review ≠ GitHub APPROVED</code>
+                <code>human → pause affected work<br>green tests ≠ decision answer<br>local review ≠ GitHub APPROVED</code>
               </div>
             </article>
             <article class="step-detail" data-panel="5">
               <div>
                 <h3>Reconcile and continue—or stop</h3>
-                <p>Read durable state again. Continue useful unlocked work, wait for external state, or finish only with evidence against every success criterion.</p>
+                <p>Read durable state again and synchronize GitHub labels after each transition. Continue useful unlocked work, wait for external state, or finish only with evidence against every success criterion.</p>
               </div>
               <div class="artifact">
                 <strong>Possible status</strong>
@@ -444,20 +444,22 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
           </p>
           <div class="two-col">
             <div>
-              <h3>Labels belong to a route</h3>
-              <p class="small">The legacy Claude controller moves work through these labels.
-                Codex does not create or synchronize this sequence.</p>
-              <div class="legacy-states" aria-label="Legacy Claude label lifecycle">
+              <h3>Labels show progress; titles describe work</h3>
+              <p class="small">Codex reconciles labels from GitHub evidence after each durable transition.
+                Keep titles descriptive; checkboxes belong only in acceptance criteria.</p>
+              <div class="legacy-states" aria-label="Codex status label lifecycle">
                 <span class="label blue">state:ready</span><span class="arrow">→</span>
                 <span class="label blue">state:in-progress</span><span class="arrow">→</span>
                 <span class="label blue">state:in-review</span><span class="arrow">→</span>
-                <strong>closed issue = done</strong>
+                <span class="label blue">state:done</span>
               </div>
               <p class="small">Side paths are
                 <span class="label blue">state:qa-failed</span>,
                 <span class="label blue">state:blocked</span> and
-                <span class="label blue">human</span>. The installer no longer seeds
-                <code>state:done</code>, although historical repositories may still have it.</p>
+                <span class="label blue">human</span>. A human request blocks the objective,
+                task or PR it marks and affected dependents. Codex automatically clears it
+                only on answered checkpoints. The separate Claude installer still uses closed
+                issues as completion and does not seed <code>state:done</code>.</p>
               <div class="table-wrap">
                 <table class="label-table">
                   <thead>
@@ -471,19 +473,23 @@ node scripts/setup-codex.mts --target /path/to/project</code></pre>
                       <td>
                         <span class="label blue">state:*</span>
                       </td>
-                      <td>Legacy Claude controller state. Codex does not automatically synchronize these labels.</td>
+                      <td>Codex progress synchronized with <code>labels &lt;objective&gt;</code>.
+                        Requires publishing permission; read-only status never writes labels.
+                        State labels cannot grant approval; <code>human</code> is an effective stop.</td>
                     </tr>
                     <tr>
                       <td>
                         <span class="label">type:*</span>
                       </td>
-                      <td>Work classification. In this source repository, type labels still affect legacy CI behavior.</td>
+                      <td>Work classification selected by the coordinator, alongside project-specific
+                        <code>scope:*</code>. Preserved during status synchronization; never guessed from titles.</td>
                     </tr>
                     <tr>
                       <td>
                         <span class="label blue">review:approved</span>
                       </td>
-                      <td>A fallback in the old Claude policy only. It is never approval for Codex; Codex requires a real GitHub approval.</td>
+                      <td>Not synchronized or trusted by Codex. A fallback in the old Claude policy only;
+                        Codex still requires a real GitHub approval and protected checks.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -529,8 +535,8 @@ Outcome: [observable result].
 Success criteria: [evidence].
 Boundaries: [non-goals, data, cost and production limits].
 Decision maker: @[GitHub login].
-Publishing: yes. Merge: no unless I explicitly authorize it.
-Pause at checkpoints for consequential decisions.</code></pre>
+Publishing: yes. Merge after validation, independent review and required checks.
+Pause human-tagged work for consequential decisions; continue independent tasks.</code></pre>
               </div>
             </div>
           </details>
@@ -559,6 +565,7 @@ Reconcile GitHub state and continue only authorized, unblocked work.</code></pre
             <div>
               <ul>
                 <li>Installing either route does not start an objective or authorize publication, models, production, data access or spending.</li>
+                <li>Starting a loop grants routine publication and validated merge within its boundaries, unless you restrict them. No new confirmation is needed for each PR.</li>
                 <li>Codex defaults to the repository default branch only when the <code>Integration branch</code> heading is omitted. An explicitly empty heading is invalid.</li>
                 <li>Required-rule compatibility is repository-specific: checks and a current independent approval must be enforced by readable server policy before autonomous landing.</li>
                 <li>Never run Codex and Claude coordinators on the same objective.</li>
@@ -635,7 +642,7 @@ Reconcile GitHub state and continue only authorized, unblocked work.</code></pre
         },
         paid: {
           answer: 'Authorize one synthetic call within the recorded cost and data limits; ' +
-            'merge remains unauthorized.',
+            'the existing merge authority and checks remain unchanged.',
           resume: 'Continue only after the limits are enforceable; otherwise return to ' +
             'the decision maker.',
         },

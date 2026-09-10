@@ -24,16 +24,28 @@ if (args[0] === 'api') {
     const item = state.issues[match[1]];
     if (!item) { console.error('not found'); process.exit(1); }
     output(match[2] ? [state.comments[match[1]] || []] : item);
-  } else if (args[1].includes('/rules/branches/')) output(state.rules);
+  } else if (args[1].endsWith('/labels')) output([state.catalog || []]);
+  else if (args[1].includes('/rules/branches/')) output(state.rules);
   else process.exit(3);
 } else if (args[0] === 'repo') output({defaultBranchRef:{name:'main'}});
 else if (args[0] === 'pr' && args[1] === 'list') output(Object.values(state.prs).filter(p => p.headRefName === args[args.indexOf('--head')+1]));
-else if (args[0] === 'pr' && args[1] === 'checks') { output(state.checks); process.exit(state.checks.some(c=>c.bucket==='pending')?8:0); }
+else if (args[0] === 'pr' && args[1] === 'checks') { if(state.checksUnreadable){console.error('checks unavailable');process.exit(1);} output(state.checks); process.exit(state.checks.some(c=>c.bucket==='pending')?8:0); }
 else if (args[0] === 'pr' && args[1] === 'merge') {
   const pr = state.prs[args[2]];
   if (args[args.indexOf('--match-head-commit')+1] !== pr.headRefOid || state.rejectMerge) process.exit(1);
   pr.state=state.afterMerge || 'MERGED'; save();
 } else if (args[0] === 'pr' && args[1] === 'view') output({state:state.prs[args[2]].state});
+else if ((args[0] === 'issue' || args[0] === 'pr') && args[1] === 'edit') {
+  state.editCount=(state.editCount||0)+1;
+  if(state.failEditAt===state.editCount){save();console.error('simulated label edit failure');process.exit(1);}
+  const record=args[0]==='issue'?state.issues[args[2]]:state.prs[args[2]];
+  record.labels=record.labels||[];
+  for(let i=3;i<args.length;i+=2){const name=args[i+1];if(args[i]==='--add-label'&&!record.labels.some(l=>l.name===name))record.labels.push({name});if(args[i]==='--remove-label')record.labels=record.labels.filter(l=>l.name!==name);}
+  save();
+}
+else if (args[0] === 'label' && args[1] === 'create') {
+  state.catalog=state.catalog||[]; state.catalog.push({name:args[2],description:args[args.indexOf('--description')+1],color:args[args.indexOf('--color')+1]}); save();
+}
 else if (args[0] === 'issue' && args[1] === 'close') { state.issues[args[2]].state='closed'; state.issues[args[2]].state_reason='completed'; save(); }
 else { console.error('unexpected gh call: '+args.join(' ')); process.exit(3); }
 `;
@@ -43,7 +55,7 @@ const runner = join(ROOT, '.agents/skills/autonomous-loop/scripts/run.mts');
 const objective = (plan = '', checkpoints = '') => `## Goal\nMake answer return 2.\n## Success criteria\nThe acceptance test passes.\n## Boundaries\nLocal behavior only; no deployment.\n## Permissions\npublish: yes\nmerge: yes\n## Decision makers\n@owner\n## Plan\n${plan}\n## Checkpoints\n${checkpoints}\n`;
 const task = (dependencies = '') => `## Goal\nReturn 2.\n## Acceptance criteria\n- [ ] answer equals 2\n## Validation\nnode --test answer.test.mts\n## Dependencies\n${dependencies}\n`;
 const checkpoint = (blocks = 'all') => `## Question\nShould the public result change to 2?\n## Options\n1 or 2\n## Recommendation\n2\n## Impact\nExisting clients observe a new result.\n## Blocks\n${blocks}\n`;
-const item = (number: number, body: string, state = 'open') => ({ number, title: `Item ${number}`, body, state, state_reason: state === 'closed' ? 'completed' : undefined });
+const item = (number: number, body: string, state = 'open') => ({ number, title: `Item ${number}`, body, state, state_reason: state === 'closed' ? 'completed' : undefined, labels: [] as Array<{ name: string }> });
 let fixture: any = { issues: { 1: item(1, objective()) }, comments: {}, prs: {}, rules: [], checks: [{ name: 'test', bucket: 'pass' }] };
 const save = () => writeFileSync(store, JSON.stringify(fixture));
 const refresh = () => { fixture = JSON.parse(readFileSync(store, 'utf8')); };
@@ -128,6 +140,15 @@ check('merge pins the reviewed commit and never uses admin, auto or branch delet
 r = status(); check('a merged task progresses to objective verification', r.data.status === 'ready_to_finish', r.out);
 r = invoke(['finish', '1']); check('empty completion claims are refused', r.code === 1, r.out);
 const evidence = join(bin, 'evidence.md'); writeFileSync(evidence, `Acceptance passed at ${implemented}; PR #20 merged.\n`);
+fixture.issues[1].body = objective('- #2', '- #3').replace('publish: yes', 'publish: no'); save();
+const callsBeforeDeniedFinish = readFileSync(log, 'utf8').trim().split('\n').length;
+r = invoke(['finish', '1', '--evidence', evidence]); refresh();
+const deniedFinishCalls = readFileSync(log, 'utf8').trim().split('\n').slice(callsBeforeDeniedFinish).map((line) => JSON.parse(line));
+check('finish needs explicit publication permission and leaves the objective open',
+  r.code === 1 && /publication is not authorized/.test(r.out) && fixture.issues[1].state === 'open', r.out);
+check('denied finish never posts evidence or closes the issue',
+  !deniedFinishCalls.some((args: string[]) => args[0] === 'issue' && args[1] === 'close'));
+fixture.issues[1].body = objective('- #2', '- #3'); save();
 r = invoke(['finish', '1', '--evidence', evidence]); check('objective closes only with all tasks, decisions and evidence', r.code === 0 && r.data.status === 'complete', r.out); refresh();
 r = status(); check('completion survives a fresh process', r.data.status === 'complete', r.out);
 
@@ -145,6 +166,105 @@ fixture.issues[1] = item(1, objective('- #2\n- #4')); fixture.issues[2] = item(2
 r = status(); check('legacy issue CI dependency lines preserve real dependency blocking', r.code === 0 && r.data.tasks[0].dependencies.length === 0 && r.data.tasks[1].blockers.includes(2), r.out);
 fixture.issues[4].body = task('Blocked by: none\n- #2'); save();
 r = status(); check('mixed legacy and native dependency formats fail closed', r.code === 1, r.out);
+
+// Label projection is an explicit, permission-gated write; status remains read-only.
+fixture = { issues: { 1: item(1, objective('- #2').replace('publish: yes', 'publish: no')), 2: item(2, task()) }, comments: {}, prs: {}, rules: [], checks: [], catalog: [] }; save();
+const callsBeforeDenied = readFileSync(log, 'utf8').trim().split('\n').length;
+r = invoke(['labels', '1']); refresh();
+check('label reconciliation needs explicit publish permission', r.code === 1 && /not authorized/.test(r.out));
+check('denied labels perform no GitHub writes', fixture.catalog.length === 0 && fixture.editCount === undefined &&
+  readFileSync(log, 'utf8').trim().split('\n').slice(callsBeforeDenied).every((line) => !/"(edit|create)"/.test(line)));
+
+fixture = { issues: { 1: item(1, objective('- #2', '- #3')), 2: item(2, task()), 3: item(3, checkpoint()) }, comments: {}, prs: {}, rules: [], checks: [], catalog: [
+  { name: 'State:Ready', color: 'ffffff', description: 'keep existing catalog metadata' }, { name: 'type:feature', color: '000000' }
+] };
+fixture.issues[1].labels = [{ name: 'state:done' }, { name: 'scope:core' }];
+fixture.issues[2].labels = [{ name: 'state:ready' }, { name: 'human' }];
+const originalTitles = Object.values(fixture.issues).map((issue: any) => issue.title); save();
+r = invoke(['labels', '1']); refresh();
+check('labels replace conflicting managed state without title or unrelated-label mutation', r.code === 0 &&
+  fixture.issues[1].labels.some((label: any) => label.name === 'state:blocked') &&
+  fixture.issues[1].labels.some((label: any) => label.name === 'scope:core') &&
+  !fixture.issues[1].labels.some((label: any) => label.name === 'state:done') &&
+  JSON.stringify(Object.values(fixture.issues).map((issue: any) => issue.title)) === JSON.stringify(originalTitles), r.out);
+check('pending checkpoint owns human while tasks preserve manually added human',
+  fixture.issues[3].labels.some((label: any) => label.name === 'human') && fixture.issues[2].labels.some((label: any) => label.name === 'human'));
+check('existing label catalog metadata is preserved',
+  fixture.catalog.find((label: any) => label.name.toLowerCase() === 'state:ready')?.description === 'keep existing catalog metadata' &&
+  fixture.catalog.filter((label: any) => label.name.toLowerCase() === 'state:ready').length === 1);
+r = status(); const labelRevision = r.data.checkpoints[0].revision;
+fixture.comments[3] = [humanAnswer(labelRevision)]; save();
+r = invoke(['labels', '1']); refresh();
+check('recorded current-revision answer moves checkpoint from human to done', r.code === 0 &&
+  fixture.issues[3].labels.some((label: any) => label.name === 'state:done') &&
+  !fixture.issues[3].labels.some((label: any) => label.name === 'human'), r.out);
+r = invoke(['labels', '1']); check('label reconciliation is idempotent', r.code === 0 && r.data.updated === 0, r.out);
+
+fixture.issues[2].labels = fixture.issues[2].labels.filter((label: any) => label.name !== 'human');
+fixture.prs[20] = { number: 20, state: 'OPEN', headRefName: 'codex/task-2', headRefOid: base, baseRefName: 'main', reviewDecision: 'CHANGES_REQUESTED', isDraft: false, isCrossRepository: false, labels: [{ name: 'review:approved' }] }; save();
+r = invoke(['labels', '1']); refresh();
+check('changes requested projects qa-failed onto task, objective, and canonical PR', r.code === 0 &&
+  [fixture.issues[1], fixture.issues[2], fixture.prs[20]].every((record: any) => record.labels.some((label: any) => label.name === 'state:qa-failed')));
+fixture.prs[20].reviewDecision = null; fixture.checks = [{ name: 'test', bucket: 'fail' }]; save();
+r = invoke(['labels', '1']); refresh();
+check('failed required checks independently project qa-failed', r.code === 0 && fixture.prs[20].labels.some((label: any) => label.name === 'state:qa-failed'));
+r = invoke(['land', '1', '2']); check('labels and legacy review labels cannot grant merge approval', r.code === 1 && /approved/.test(r.out), r.out);
+
+fixture.prs[20].baseRefName = 'wrong-base'; fixture.checks = []; save();
+r = invoke(['labels', '1']); refresh();
+check('wrong-base canonical PR blocks its task, objective, and PR projection', r.code === 0 &&
+  [fixture.issues[1], fixture.issues[2], fixture.prs[20]].every((record: any) => record.labels.some((label: any) => label.name === 'state:blocked')), r.out);
+fixture.prs[20].baseRefName = 'main'; fixture.checks = [{ name: 'test', bucket: 'mystery' }]; fixture.editCount = 0; save();
+r = invoke(['labels', '1']); refresh();
+check('malformed check buckets fail closed before mutation', r.code === 1 && fixture.editCount === 0, r.out);
+fixture.checksUnreadable = true; fixture.editCount = 0; save();
+r = invoke(['labels', '1']); refresh();
+check('unreadable QA preflight fails before every mutation', r.code === 1 && fixture.editCount === 0, r.out);
+fixture.checksUnreadable = false; fixture.checks = []; fixture.editCount = 0; fixture.failEditAt = 2;
+fixture.issues[1].labels = []; fixture.issues[2].labels = []; save();
+r = invoke(['labels', '1']); refresh();
+check('partial label API failure is reported rather than hidden', r.code === 1 && fixture.editCount === 2, r.out);
+delete fixture.failEditAt; fixture.editCount = 0; save();
+r = invoke(['labels', '1']); refresh();
+check('retry converges after a partial label API failure', r.code === 0 &&
+  fixture.issues[1].labels.some((label: any) => label.name === 'state:in-review') &&
+  fixture.issues[2].labels.some((label: any) => label.name === 'state:in-review'), r.out);
+
+fixture = { issues: { 1: item(1, objective('- #2\n- #4\n- #5')), 2: item(2, task(), 'closed'), 4: item(4, task()), 5: item(5, task('- #2')) }, comments: {}, prs: {}, rules: [], checks: [] };
+fixture.issues[2].labels = [{ name: 'human' }, { name: 'state:done' }]; save();
+r = status();
+check('task human request blocks that task and transitive dependents despite forged state',
+  r.data.tasks.find((entry: any) => entry.number === 2).blockers.includes(2) &&
+  r.data.tasks.find((entry: any) => entry.number === 5).blockers.includes(2), r.out);
+check('task human request leaves independent work actionable', r.data.next?.number === 4 && r.data.status === 'working', r.out);
+fixture.issues[2].state = 'open'; fixture.issues[2].state_reason = undefined; save();
+r = invoke(['claim', '1', '2']); check('claim refuses a task with a human request', r.code === 1 && /not actionable/.test(r.out), r.out);
+fixture.issues[1].labels = [{ name: 'human' }]; fixture.issues[2].labels = []; save();
+r = status(); check('objective human request blocks every planned task', r.data.status === 'waiting_human' &&
+  r.data.tasks.every((entry: any) => entry.blockers.includes(1)) && r.data.humanRequests?.[0]?.kind === 'objective', r.out);
+
+fixture = { issues: { 1: item(1, objective('- #2')), 2: item(2, task()) }, comments: {}, prs: {}, rules: [], checks: [] };
+fixture.prs[20] = { number: 20, state: 'OPEN', headRefName: 'codex/task-2', headRefOid: base, baseRefName: 'main', reviewDecision: 'APPROVED', isDraft: false, isCrossRepository: false, labels: [{ name: 'human' }, { name: 'state:done' }] }; save();
+r = status(); check('canonical PR human request blocks land regardless of approval or state labels',
+  r.data.status === 'waiting_human' && r.data.humanRequests?.some((request: any) => request.kind === 'pr' && request.number === 20), r.out);
+r = invoke(['land', '1', '2']); check('land refuses a canonical PR with a human request', r.code === 1 && /not actionable/.test(r.out), r.out);
+
+fixture = { issues: { 1: item(1, objective('- #2', '- #3')), 2: item(2, task()), 3: item(3, checkpoint()) }, comments: {}, prs: {}, rules: [], checks: [] }; save();
+r = status(); const staleRevision = r.data.checkpoints[0].revision;
+check('unanswered checkpoint remains a gate without its human label', r.data.status === 'waiting_human', r.out);
+fixture.comments[3] = [humanAnswer(staleRevision)]; fixture.issues[3].labels = [{ name: 'Human' }]; save();
+r = status(); check('answered checkpoint stale human label does not create an ad hoc request',
+  r.data.status === 'working' && r.data.humanRequests?.length === 0, r.out);
+r = invoke(['labels', '1']); refresh(); check('label reconciliation removes case-variant stale human from answered checkpoint',
+  r.code === 0 && !fixture.issues[3].labels.some((label: any) => label.name.toLowerCase() === 'human'), r.out);
+fixture.issues[2].state = 'closed'; fixture.issues[2].state_reason = 'completed'; fixture.issues[2].labels = [{ name: 'human' }]; save();
+r = invoke(['finish', '1', '--evidence', evidence]); check('finish refuses human requests on completed tasks', r.code === 1 && /human|planning|tasks|decisions/.test(r.out), r.out);
+fixture = { issues: { 1: item(1, objective('- #2')), 2: item(2, task('- #99'), 'closed'), 99: item(99, task(), 'closed') }, comments: {}, prs: {}, rules: [], checks: [] };
+fixture.issues[99].labels = [{ name: 'human' }]; save();
+r = status(); check('closed external prerequisite human request blocks its dependent and finish',
+  r.data.status === 'waiting_human' && r.data.tasks[0].blockers.includes(99) &&
+  r.data.humanRequests?.some((request: any) => request.kind === 'dependency' && request.number === 99), r.out);
+r = invoke(['finish', '1', '--evidence', evidence]); check('finish refuses unresolved human request on external prerequisite', r.code === 1, r.out);
 
 // A third-party pilot must stay on its explicit integration branch, never main.
 const pilotBranch = 'test/openrouter';
@@ -205,7 +325,11 @@ check('runner uses a schema and preserves the chosen profile without overriding 
 r = invoke(['1'], runner); refresh(); check('an already completed objective consumes no further model calls', fixture.codexCalls === 2 && r.data.turns === 0, r.out);
 fixture.issues[1] = item(1, objective('- #2', '- #3')); fixture.issues[2] = item(2, task()); fixture.issues[3] = item(3, checkpoint()); fixture.comments = {}; save();
 r = invoke(['1'], runner); refresh(); check('waiting for a human consumes no model turns', r.data.status === 'waiting_human' && r.data.turns === 0 && fixture.codexCalls === 2, r.out);
-fixture.issues[1] = item(1, objective('- #2')); fixture.runnerScenario = ''; fixture.codexCalls = 0; save();
+fixture = { issues: { 1: item(1, objective('- #2')), 2: item(2, task()) }, comments: {}, prs: {}, rules: [], checks: [{ name: 'test', bucket: 'pass' }], codexCalls: 0 };
+fixture.issues[2].labels = [{ name: 'human' }]; save();
+r = invoke(['1'], runner); refresh(); check('runner stops for ad hoc human request without a model turn',
+  r.data.status === 'waiting_human' && r.data.turns === 0 && fixture.codexCalls === 0 && /task #2/.test(r.data.summary), r.out);
+fixture.issues[1] = item(1, objective('- #2')); fixture.issues[2].labels = []; fixture.runnerScenario = ''; fixture.codexCalls = 0; save();
 fixture.prs[20] = { number: 20, state: 'OPEN', headRefName: 'codex/task-2', headRefOid: implemented, baseRefName: 'main', reviewDecision: 'APPROVED', isDraft: false, isCrossRepository: false };
 fixture.checks[0].bucket = 'pending'; save();
 r = invoke(['1'], runner); refresh(); check('pending required CI consumes no model turns', r.data.status === 'waiting_ci' && r.data.turns === 0 && fixture.codexCalls === 0, r.out);
