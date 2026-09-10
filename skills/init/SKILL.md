@@ -40,7 +40,8 @@ The script is idempotent. It:
    (`gh repo edit`; skipped, reported only, under `--dry-run`) — `land.mts` depends on
    both: the first for `gh pr merge --auto` to have anything to enable, the second so a
    merged branch is deleted for it;
-6. seeds the `state:`, `type:`, `review:approved` and `human` labels, and the milestone.
+6. seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:reviewed`
+   labels, and the milestone. An existing bare `human` label is left as found.
 
 Then, by hand — the script cannot do these:
 

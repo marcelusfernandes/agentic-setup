@@ -34,7 +34,12 @@ const LABELS: [string, string, string][] = [
   ['type:docs', '0075ca', 'Docs only: no reviewer, no negative control'],
   ['type:deps', 'ededed', 'Dependency change: orchestrator only'],
   ['review:approved', '0e8a16', 'The reviewer approved'],
-  ['human', 'e99695', 'Needs a person'],
+  // Same names, colours and descriptions as the Codex route's `LABELS`
+  // (`.agents/skills/autonomous-loop/scripts/github.mts`), so a repository
+  // running both routes reads one vocabulary. The bare `human` label is no
+  // longer seeded; an existing one is left as found and read as pending.
+  ['human:pending', 'f9d0c4', 'A human decision is required; affected work is paused'],
+  ['human:reviewed', 'c2e0c6', 'A human decision was recorded; kept as the audit trail'],
 ];
 
 const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith('--') && !a.includes('=')));

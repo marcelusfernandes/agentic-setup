@@ -122,7 +122,9 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
 ## Labels
 
 `state:` ready → in-progress → in-review; `qa-failed` goes back to the implementer;
-`blocked` after two rounds, always with `human`. There is no `done` value: `Closes #N`
+`blocked` after two rounds, always with `human:pending`; a person flips that to
+`human:reviewed` when the decision is recorded, and the reviewed label stays as the audit
+trail (bare `human` from before the split reads as pending). There is no `done` value: `Closes #N`
 closes the issue when its PR merges, and a closed issue is a done issue — nothing to
 relabel. `review:approved` is set by the reviewer; when `AGENTIC_REVIEWER_TOKEN` is
 configured for the reviewer's own environment, it also casts a real GitHub review as that

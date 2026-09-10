@@ -66,6 +66,12 @@ Approving these decisions (explicit OK; silence does not approve); secrets and
 variables; the main-protection choice below; anything that needs hardware or accounts
 the agent lacks; production cut-overs; any `state:blocked` issue.
 
+*2026-09-10 (#110, #111):* the single `human` label became two exclusive states.
+`human:pending` is the gate (`reconcile.mts` keeps it out of `ready`, `claim.mts` refuses
+it); `human:reviewed` is set by the person who decided and never removed, so an issue
+that needed a person stays traceable from its labels. A bare `human` from before the
+split is read as pending. Earlier items above keep their original wording.
+
 ## 9. Single trunk, and how `main` is protected
 
 `main` is the only trunk. Protection has three layers; use as many as your plan allows.
@@ -79,7 +85,7 @@ the agent lacks; production cut-overs; any `state:blocked` issue.
   `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
   not cover a push from elsewhere.
 - **(c) Detection:** the `guard-main` action. On a push to `main` that belongs to no PR
-  it opens an issue labelled `human` and fails the run, so the history turns red and
+  it opens an issue labelled `human:pending` and fails the run, so the history turns red and
   someone looks. The escape hatch is a commit message containing `[allow-push-main]`,
   for bootstrap only.
 

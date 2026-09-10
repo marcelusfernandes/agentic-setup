@@ -1,7 +1,8 @@
 # Legacy Claude Code plugin
 
 The original Claude workflow remains available during and after the Codex migration. It
-is a separate, opt-in installation route, with its own strict issue contract, labels,
+is a separate, opt-in installation route, with its own strict issue contract, labels
+(sharing the `human:pending`/`human:reviewed` vocabulary with the Codex route),
 hooks and worktree lifecycle. The Codex installer preserves but does not install or
 manage these components; the legacy installer likewise preserves local Codex skills,
 project instructions and `.codex` settings.

@@ -17,4 +17,4 @@ You keep the documentation equal to the code — never ahead of it.
    is enough.
 
 If the change calls for a decision the docs do not cover, do not decide: open an issue
-labelled `human` describing the gap.
+labelled `human:pending` describing the gap.

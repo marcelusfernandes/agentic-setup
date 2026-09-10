@@ -120,6 +120,14 @@ function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
 }
 
+// Gate labels by exact name, case-insensitive: `human:pending`, or the bare
+// `human` that predates the two states. `human:reviewed` records a past
+// decision and never gates, so no prefix match.
+const PENDING_HUMAN = new Set(['human', 'human:pending']);
+function pendingHumanLabel(labels: Label[] | undefined): string | null {
+  return (labels ?? []).find((l) => PENDING_HUMAN.has(l.name.toLowerCase()))?.name ?? null;
+}
+
 // --- 1. argv: <n> --slug <slug> [--type <type>] [--no-lint] -----------------
 const [numberArg, ...rest] = process.argv.slice(2);
 const flags = parseArgs(rest);
@@ -148,6 +156,8 @@ if (!type) errorOut('cannot determine type from title; pass --type');
 // --- 3. refusal checks, before any push --------------------------------------
 if (issue.state !== 'OPEN') refuse('issue is closed');
 if (!hasLabel(issue.labels, 'state:ready')) refuse('missing state:ready label');
+const pendingHuman = pendingHumanLabel(issue.labels);
+if (pendingHuman) refuse(`issue carries ${pendingHuman}`);
 
 for (const blocker of parseBlockedBy(issue.body ?? '')) {
   const blockerIssue = ghJson<{ state: string }>(['issue', 'view', String(blocker), '--json', 'state']);
