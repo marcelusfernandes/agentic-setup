@@ -180,6 +180,7 @@ fixture = { issues: { 1: item(1, objective('- #2', '- #3')), 2: item(2, task()),
 ] };
 fixture.issues[1].labels = [{ name: 'state:done' }, { name: 'scope:core' }];
 fixture.issues[2].labels = [{ name: 'state:ready' }, { name: 'human' }];
+fixture.issues[3].labels = [{ name: 'human' }]; // legacy label on a workflow-owned checkpoint: migrated, not preserved
 const originalTitles = Object.values(fixture.issues).map((issue: any) => issue.title); save();
 r = invoke(['labels', '1']); refresh();
 check('labels replace conflicting managed state without title or unrelated-label mutation', r.code === 0 &&

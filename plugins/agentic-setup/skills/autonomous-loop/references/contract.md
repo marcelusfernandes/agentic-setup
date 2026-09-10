@@ -157,14 +157,17 @@ Create an issue containing `Question`, `Options`, `Recommendation`, `Impact` and
 under the objective's `Checkpoints` before continuing. `all` also pauses planning
 and goal completion; task-specific blocks propagate through task dependencies.
 
-When an objective/task/PR is tagged `human` without a linked checkpoint, create the scoped
-checkpoint and list it in the objective before dependent work resumes. Link the originating
-request and preserve its label until the answer is recorded. After an authorized answer,
-apply its conditions and remove the originating `human` with a comment linking the decision.
-Never automatically clear someone else's request or treat ordinary test success as its answer.
-The helper surfaces these requests as `humanRequests`; the headless runner stops without
-another model call. Checkpoints remain blocked without an answer even if their label is removed;
-an answered checkpoint's stale label does not deadlock recovery and is cleared by `labels`.
+When an objective/task/PR is tagged `human:pending` (or bare `human`) without a linked
+checkpoint, create the scoped checkpoint and list it in the objective before dependent work
+resumes. Link the originating request and preserve its label until the answer is recorded.
+After an authorized answer, apply its conditions; the person who decided flips the
+originating label to `human:reviewed` with a comment linking the decision, and that label
+is never removed afterwards. Never automatically clear someone else's request or treat
+ordinary test success as its answer. The helper surfaces these requests as `humanRequests`
+(each with the label found); the headless runner stops without another model call.
+Checkpoints remain blocked without an answer even if their label is removed; an answered
+checkpoint's stale pending label does not deadlock recovery and is replaced by
+`human:reviewed` when `labels` runs.
 
 `status` reports the checkpoint's revision and this reply format:
 
