@@ -49,10 +49,10 @@ implementation at a time. The main agent may both plan and implement.
    subagent). Give it the spec, relevant decisions and diff, not the implementer's
    reasoning history. A local review is not a GitHub approval: publish the review
    under the configured separate reviewer identity. If missing reviewer access or
-   repository policy needs a human decision, record a scoped `human` checkpoint for
-   that setup; do not turn every routine PR into a new permission request.
+   repository policy needs a human decision, record a scoped `human:pending` checkpoint
+   for that setup; do not turn every routine PR into a new permission request.
 5. **Land:** `land <objective> <task>` enforces the merge permission, unresolved
-   `human` requests/checkpoints, current-head approval and required server checks. Never bypass a
+   `human:pending` requests/checkpoints, current-head approval and required server checks. Never bypass a
    refusal with a direct merge. When CI/review is pending, use a waiting mechanism
    or return `waiting_ci`; do not repeatedly ask the model to poll unchanged state.
 6. **Reconcile:** read `status` again, incorporate evidence and take the next task.
@@ -69,17 +69,19 @@ implementation at a time. The main agent may both plan and implement.
 - Present the question, recommendation, alternatives, consequences and which tasks
   depend on it. Record a checkpoint using the contract before dependent work proceeds.
   An unanswered or merely closed checkpoint is not approval. Continue independent work.
-- A `human` label on the objective blocks all work; on a task or its PR it blocks that
-  task and its dependents. Turn such requests into scoped, linked checkpoints before
-  resuming. Remove the source `human` only after a real answer, with decision provenance.
-  Never clear the label merely to unblock execution. Technical failures call for repair,
+- A `human:pending` label (or legacy bare `human`) on the objective blocks all work; on a
+  task or its PR it blocks that task and its dependents. Turn such requests into scoped,
+  linked checkpoints before resuming. Only a person flips the source label to
+  `human:reviewed`, after a real answer with decision provenance; the workflow never edits
+  human states outside checkpoint issues, and `human:reviewed` stays as the audit trail.
+  Never clear a pending label merely to unblock execution. Technical failures call for repair,
   not a new merge-permission question; escalate only a concrete missing human decision.
 - Record a user's explicit answer with its source; never manufacture a decision from
   silence, a recommendation, elapsed time or a tool's success. Reuse accepted answers
   while the question and objective boundaries remain unchanged.
 - Persist failed attempts and evidence in task comments. After two failed repair
   attempts without new evidence, return `blocked` with the smallest missing decision
-  or resource. If a person must decide or supply it, record a linked `human` checkpoint.
+  or resource. If a person must decide or supply it, record a linked `human:pending` checkpoint.
   A restart does not reset this budget. A new human direction can.
 - Keep updates short. Return one of `continue`, `waiting_human`, `waiting_ci`,
   `blocked`, or `complete`, with the objective number and a concise summary. When a

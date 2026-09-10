@@ -1,6 +1,6 @@
 {
   "name": "agentic-setup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Autonomous GitHub planning, specification and implementation with durable human checkpoints.",
   "author": {
     "name": "Marcelus Fernandes"

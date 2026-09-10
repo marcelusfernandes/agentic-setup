@@ -101,14 +101,16 @@ function snapshot(goalNumber: number) {
       : missing.length ? 'needs_spec' : pr ? (pr.reviewDecision === 'APPROVED' ? 'waiting_ci' : 'review') : remote ? 'in_progress' : 'ready';
     return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state, labels: (item.labels ?? []).map((label) => label.name) };
   });
-  const hasHuman = (labels: string[]) => labels.some((label) => label.toLowerCase() === 'human');
-  const humanRequests: Array<{ kind: 'objective' | 'task' | 'pr' | 'dependency'; number: number; blocks: 'all' | number[] }> = [];
-  if (hasHuman((goal.labels ?? []).map((label) => label.name))) humanRequests.push({ kind: 'objective', number: goalNumber, blocks: 'all' });
+  // Exact names only: `human:reviewed` records a past decision and never gates.
+  const pendingHuman = (labels: string[]) => labels.find((label) => PENDING_HUMAN.has(label.toLowerCase())) ?? null;
+  const humanRequests: Array<{ kind: 'objective' | 'task' | 'pr' | 'dependency'; number: number; label: string; blocks: 'all' | number[] }> = [];
+  const goalHuman = pendingHuman((goal.labels ?? []).map((label) => label.name));
+  if (goalHuman) humanRequests.push({ kind: 'objective', number: goalNumber, label: goalHuman, blocks: 'all' });
   for (const task of tasks) {
-    if (hasHuman(task.labels)) humanRequests.push({ kind: 'task', number: task.number, blocks: [task.number] });
-    if (task.pr && hasHuman((task.pr.labels ?? []).map((label) => label.name))) {
-      humanRequests.push({ kind: 'pr', number: task.pr.number, blocks: [task.number] });
-    }
+    const taskHuman = pendingHuman(task.labels);
+    if (taskHuman) humanRequests.push({ kind: 'task', number: task.number, label: taskHuman, blocks: [task.number] });
+    const prHuman = task.pr ? pendingHuman((task.pr.labels ?? []).map((label) => label.name)) : null;
+    if (task.pr && prHuman) humanRequests.push({ kind: 'pr', number: task.pr.number, label: prHuman, blocks: [task.number] });
   }
   const pending = checkpoints.filter((c) => !c.answer);
   const global = pending.filter((c) => c.blocks === 'all').map((c) => c.number);
@@ -119,11 +121,11 @@ function snapshot(goalNumber: number) {
       if (dep === goalNumber || dep === task.number) throw new Error(`task #${task.number} depends on itself or its objective`);
       const other = tasks.find((t) => t.number === dep); const decision = checkpoints.find((c) => c.number === dep);
       if (other ? other.state !== 'done' : decision ? !decision.answer : (() => {
-        const external = issue(dep); const externalHuman = hasHuman((external.labels ?? []).map((label) => label.name));
+        const external = issue(dep); const externalHuman = pendingHuman((external.labels ?? []).map((label) => label.name));
         if (externalHuman) {
           const request = humanRequests.find((entry) => entry.kind === 'dependency' && entry.number === dep);
           if (request && request.blocks !== 'all') request.blocks.push(task.number);
-          else humanRequests.push({ kind: 'dependency', number: dep, blocks: [task.number] });
+          else humanRequests.push({ kind: 'dependency', number: dep, label: externalHuman, blocks: [task.number] });
         }
         return !finished(external) || externalHuman;
       })()) task.blockers.push(dep);
@@ -152,8 +154,13 @@ const LABELS = [
   ['state:qa-failed', 'Review or required checks need repair', 'd73a4a'],
   ['state:blocked', 'Blocked by specification, dependency, cancellation, or decision', 'b60205'],
   ['state:done', 'Completed from verified GitHub state', '0e8a16'],
-  ['human', 'A recorded human decision is required', 'c5def5'],
+  ['human:pending', 'A human decision is required; affected work is paused', 'f9d0c4'],
+  ['human:reviewed', 'A human decision was recorded; kept as the audit trail', 'c2e0c6'],
+  ['human', 'Legacy alias of human:pending', 'c5def5'],
 ] as const;
+// Gate labels, matched by exact name. Bare `human` predates the two states and still pauses work.
+const PENDING_HUMAN = new Set(['human', 'human:pending']);
+const HUMAN_STATES = new Set([...PENDING_HUMAN, 'human:reviewed']);
 const STATES = new Set(LABELS.filter(([name]) => name.startsWith('state:')).map(([name]) => name));
 
 function qaFailed(pr: PR | null): boolean {
@@ -172,7 +179,7 @@ function qaFailed(pr: PR | null): boolean {
 
 function reconcileLabels(state: ReturnType<typeof snapshot>) {
   if (!state.permissions.publish) throw new Error('label publication is not authorized by the objective');
-  type Target = { kind: 'issue' | 'pr'; number: number; labels: string[]; desired: string; human?: boolean };
+  type Target = { kind: 'issue' | 'pr'; number: number; labels: string[]; desired: string; human?: 'human:pending' | 'human:reviewed' };
   const qa = new Map<number, boolean>();
   for (const task of state.tasks) if (task.pr) qa.set(task.pr.number, qaFailed(task.pr));
   const taskState = (task: Task) => task.state === 'done' ? 'state:done'
@@ -195,7 +202,7 @@ function reconcileLabels(state: ReturnType<typeof snapshot>) {
       desired: task.pr.state === 'MERGED' ? 'state:done' : desired });
   }
   for (const checkpoint of state.checkpoints) targets.push({ kind: 'issue', number: checkpoint.number,
-    labels: checkpoint.labels, desired: checkpoint.answer ? 'state:done' : 'state:blocked', human: !checkpoint.answer });
+    labels: checkpoint.labels, desired: checkpoint.answer ? 'state:done' : 'state:blocked', human: checkpoint.answer ? 'human:reviewed' : 'human:pending' });
   const pages = gh<Array<Array<{ name: string }>>>(['api', 'repos/{owner}/{repo}/labels', '--paginate', '--slurp']);
   if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) throw new Error('repository labels cannot be read');
   const existing = new Set(pages.flat().map((label) => label.name.toLowerCase()));
@@ -205,11 +212,10 @@ function reconcileLabels(state: ReturnType<typeof snapshot>) {
   let updated = 0;
   for (const target of targets) {
     const remove = target.labels.filter((label) => STATES.has(label.toLowerCase() as typeof LABELS[number][0]) && label.toLowerCase() !== target.desired);
-    if (target.kind === 'issue' && state.checkpoints.some((checkpoint) => checkpoint.number === target.number)) {
-      if (!target.human) remove.push(...target.labels.filter((label) => label.toLowerCase() === 'human'));
-    }
+    // Human states are owned by the workflow on checkpoint issues only; elsewhere they are preserved as found.
+    if (target.human) remove.push(...target.labels.filter((label) => HUMAN_STATES.has(label.toLowerCase()) && label.toLowerCase() !== target.human));
     const present = new Set(target.labels.map((label) => label.toLowerCase()));
-    const add = [target.desired, ...(target.human ? ['human'] : [])].filter((label) => !present.has(label));
+    const add = [target.desired, ...(target.human ? [target.human] : [])].filter((label) => !present.has(label));
     if (!add.length && !remove.length) continue;
     run('gh', [target.kind, 'edit', String(target.number), ...add.flatMap((label) => ['--add-label', label]),
       ...[...new Set(remove)].flatMap((label) => ['--remove-label', label])]);

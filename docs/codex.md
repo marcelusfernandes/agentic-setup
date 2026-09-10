@@ -42,7 +42,10 @@ for acceptance criteria. The coordinator runs `labels <objective>` on resume and
 durable transitions, including completion. `status` and runner preflight remain read-only;
 there is no background label polling. Classification labels are selected by the coordinator,
 not inferred from titles. The contract defines managed states and human-label ownership.
-`human` requests on objectives/tasks/PRs are execution gates, not decorative metadata.
+Human requests have two exclusive states: `human:pending` (bare `human` is its legacy alias)
+pauses the affected work; `human:reviewed` records that a person decided and never blocks.
+On checkpoint issues the workflow moves between them from the recorded answer; on
+objectives/tasks/PRs only a person does, and the reviewed label stays as the audit trail.
 The runner stops for unresolved human requests without a model call. Starting a loop grants
 routine publication/validated merge by default; record it once in the objective, preserving
 explicit restrictions. Fix technical failures autonomously instead of asking for each merge.
@@ -102,7 +105,8 @@ decision authors, revision invalidation, PRs merged into the wrong base branch,
 independent work while another task waits, downstream blocking, duplicate claims, default
 branch advancement, retry branches, incomplete specifications and cancelled work.
 Label tests exercise authorized/idempotent writes, current PR failures, checkpoint revisions,
-scoped human-request gates and runner waits, preservation of unrelated labels/titles and
+scoped human-request gates and runner waits, the `human:pending`/`human:reviewed`
+transitions on checkpoints and their inert reviewed state elsewhere, preservation of unrelated labels/titles and
 recovery from partial API failure. Fake status or
 approval labels do not satisfy the original execution and merge gates.
 Installer tests verify previews, self-contained installation, repeated installation and

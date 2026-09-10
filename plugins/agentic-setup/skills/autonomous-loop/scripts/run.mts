@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 type Result = { status: 'continue' | 'waiting_human' | 'waiting_ci' | 'blocked' | 'complete'; objective: number; summary: string };
-type Snapshot = { goal: number; status: string; next: { pr: { number: number } | null } | null; checkpoints: Array<{ number: number; answer: unknown; reply: string }>; humanRequests: Array<{ kind: string; number: number }> };
+type Snapshot = { goal: number; status: string; next: { pr: { number: number } | null } | null; checkpoints: Array<{ number: number; answer: unknown; reply: string }>; humanRequests: Array<{ kind: string; number: number; label: string }> };
 const here = dirname(fileURLToPath(import.meta.url));
 
 function state(goal: number): Snapshot {
@@ -48,7 +48,7 @@ async function main() {
     if (before.status === 'complete') return finish({ status: 'complete', objective: goal, summary: 'Objective completion confirmed by GitHub.' });
     if (before.status === 'waiting_human') return finish({ status: 'waiting_human', objective: goal,
       summary: [...before.checkpoints.filter((c) => !c.answer).map((c) => `checkpoint #${c.number}: ${c.reply}`),
-        ...before.humanRequests.map((request) => `${request.kind} #${request.number}: human decision requested`)].join('; ') });
+        ...before.humanRequests.map((request) => `${request.kind} #${request.number}: human decision requested (${request.label})`)].join('; ') });
     if (before.status === 'blocked') return finish({ status: 'blocked', objective: goal, summary: 'Reconcile dependencies, cancelled tasks or the closed objective before resuming.' });
     if (before.status === 'waiting_ci' && before.next?.pr) {
       const checks = spawnSync('gh', ['pr', 'checks', String(before.next.pr.number), '--required', '--json', 'name,bucket'], { encoding: 'utf8' });
