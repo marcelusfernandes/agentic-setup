@@ -153,6 +153,11 @@ check('init enables auto-merge and reports it', /\+ auto-merge enabled/.test(gh1
 check('init enables delete-branch-on-merge and reports it', /\+ delete-branch-on-merge enabled/.test(gh1.stdout) && /repo edit --delete-branch-on-merge/.test(ghLog(state1)), gh1.stdout);
 check('init no longer seeds state:done', !/label create state:done\b/.test(ghLog(state1)), ghLog(state1));
 check('init still seeds other state labels', /label create state:ready\b/.test(ghLog(state1)), ghLog(state1));
+check('init seeds human:pending with the colour and description shared with the Codex route',
+  /label create human:pending --color f9d0c4 --description A human decision is required; affected work is paused/.test(ghLog(state1)), ghLog(state1));
+check('init seeds human:reviewed with the colour and description shared with the Codex route',
+  /label create human:reviewed --color c2e0c6 --description A human decision was recorded; kept as the audit trail/.test(ghLog(state1)), ghLog(state1));
+check('init no longer seeds the bare human label, so a pre-existing one is left untouched', !/label create human --color/.test(ghLog(state1)), ghLog(state1));
 
 const gh2 = initWithGh(ghRepo, state1); // same state dir: both markers now present
 check('init rerun (both settings already enabled) exits 0', gh2.status === 0, `${gh2.stdout}${gh2.stderr}`);
