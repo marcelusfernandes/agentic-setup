@@ -59,6 +59,7 @@ One verifiable sentence.
 ## Proof
 The test command and what it covers.
 Negative control: which assertions must fail before the change (CI verifies this).
+(`## Validation`, the Codex route's name for this section, is accepted instead.)
 
 ## Files
 Globs this issue may touch (the `scope` check enforces them):

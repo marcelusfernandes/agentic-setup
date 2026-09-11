@@ -120,6 +120,17 @@ check('missing ## Context fails and names it', missingContext.status === 1 && /#
 const emptyProof = lint(103, issueBody({ proof: '## Proof\n' }));
 check('an empty ## Proof section fails and names it', emptyProof.status === 1 && /## Proof/.test(emptyProof.out), emptyProof.out);
 
+// `## Validation` is the Codex route's name for the same section (#114): a
+// task written for that route must lint clean here without a second heading.
+const validationOnly = lint(1051, issueBody({ proof: '## Validation\nnode --test answer.test.mts\n' }));
+check('## Validation satisfies the proof section in place of ## Proof', validationOnly.status === 0 && parse(validationOnly.out)?.ok === true, validationOnly.out);
+const neitherProof = lint(1052, issueBody({ proof: null }));
+check('neither ## Proof nor ## Validation fails naming both', neitherProof.status === 1 && /## Proof \(or ## Validation\)/.test(neitherProof.out), neitherProof.out);
+const emptyValidation = lint(1053, issueBody({ proof: '## Validation\n' }));
+check('an empty ## Validation with no ## Proof fails naming both', emptyValidation.status === 1 && /## Proof \(or ## Validation\)/.test(emptyValidation.out), emptyValidation.out);
+const bothProof = lint(1054, issueBody({ proof: '## Proof\nnpm test covers it.\n\n## Validation\nnode --test answer.test.mts\n' }));
+check('a body carrying both non-empty headings passes', bothProof.status === 0 && parse(bothProof.out)?.ok === true, bothProof.out);
+
 const noCheckbox = lint(104, issueBody({ ac: '## Acceptance criteria\nJust prose, no checkbox.\n' }));
 check('## Acceptance criteria with no "- [ ]" item fails', noCheckbox.status === 1 && /Acceptance criteria/.test(noCheckbox.out), noCheckbox.out);
 

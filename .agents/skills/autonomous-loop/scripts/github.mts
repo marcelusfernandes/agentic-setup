@@ -87,7 +87,9 @@ function snapshot(goalNumber: number) {
   });
   const tasks: Task[] = taskNumbers.map((number) => {
     const item = issue(number); const text = item.body ?? ''; const branch = branchFor(number);
-    const missing = ['Goal', 'Acceptance criteria', 'Validation'].filter((h) => !section(text, h));
+    // `Proof` is the Claude route's name for the `Validation` section; either non-empty heading specifies the task.
+    const specified = (h: string) => Boolean(section(text, h).trim()) || (h === 'Validation' && Boolean(section(text, 'Proof').trim()));
+    const missing = ['Goal', 'Acceptance criteria', 'Validation'].filter((h) => !specified(h));
     const dependencies = dependencyRefs(section(text, 'Dependencies'));
     const prs = gh<PR[]>(['pr', 'list', '--head', branch, '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,headRefOid,baseRefName,reviewDecision,isDraft,isCrossRepository,labels']);
     if (!Array.isArray(prs) || prs.length === 100) throw new Error(`ambiguous PR list for #${number}`);

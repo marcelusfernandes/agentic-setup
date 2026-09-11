@@ -47,7 +47,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
 import { parseIssueGlobs } from './lib/scope.mts';
-import { blockedBy, checkboxes, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
+import { blockedBy, checkboxes, PROOF_HEADINGS, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
 const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
@@ -165,7 +165,8 @@ const sec = sections(body);
 for (const heading of REQUIRED_SECTIONS) {
   const text = sec[heading];
   if (text === null || text.trim() === '') {
-    failures.push(`missing or empty section: ## ${heading}`);
+    const [name, ...aliases] = heading === 'Proof' ? PROOF_HEADINGS : [heading];
+    failures.push(`missing or empty section: ## ${name}${aliases.map((alias) => ` (or ## ${alias})`).join('')}`);
   }
 }
 if (sec['Acceptance criteria'] && checkboxes(sec['Acceptance criteria']).length === 0) {
