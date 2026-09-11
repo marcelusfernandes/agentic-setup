@@ -74,6 +74,11 @@ check('an empty objective asks for planning rather than reporting completion', r
 fixture.issues[1].body = objective('- #2'); fixture.issues[2] = item(2, '## Goal\nReturn 2.'); save();
 r = status(); check('a planned task with no criteria or validation needs specification', r.data.next?.state === 'needs_spec', r.out);
 r = invoke(['claim', '1', '2']); check('unspecified work cannot claim a branch', r.code === 1 && !git(['ls-remote', '--heads', 'origin', 'codex/task-2'], repo), r.out);
+// The Claude route's task template (`.github/ISSUE_TEMPLATE/task.md`) names the same section `## Proof` (#114).
+fixture.issues[2].body = '## Context\nWhy it exists.\n\n## Goal\nReturn 2.\n\n## Acceptance criteria\n- [ ] answer equals 2\n\n## Proof\nnode --test answer.test.mts\n\n## Files\n- `answer.mts`\n\n## Dependencies\nBlocked by: none\n'; save();
+r = status(); check('a Claude-template task with ## Proof and no ## Validation is specified', r.data.next?.state === 'ready' && r.data.next?.missing?.length === 0, r.out);
+fixture.issues[2].body = '## Goal\nReturn 2.\n\n## Acceptance criteria\n- [ ] answer equals 2\n\n## Validation\n\n## Proof\n\n'; save();
+r = status(); check('empty ## Validation and ## Proof headings still need specification', r.data.next?.state === 'needs_spec', r.out);
 fixture.issues[2].body = task(); save();
 r = status(); check('specified work becomes ready without labels, milestones or globs', r.data.next?.state === 'ready', r.out);
 fixture.issues[1].body = objective('- #2').replace('publish: yes', 'publish: no'); save();
