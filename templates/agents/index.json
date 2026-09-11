@@ -1,0 +1,17 @@
+{
+  "description": "Maps a project's scope:<label> to the discipline card the dispatcher should inline into the implementer/reviewer prompt (dispatch wiring itself is issue #128, not this file). Cards not listed under \"scopes\" sit outside scope-based dispatch: planner drives milestone planning, investigator runs ad hoc bug/spec investigations, and profiler is the one-time first-run step removed once it has run.",
+  "scopes": {
+    "scope:qa": "qa",
+    "scope:architecture": "architecture",
+    "scope:backend": "backend",
+    "scope:frontend": "frontend",
+    "scope:design": "design",
+    "scope:product": "product",
+    "scope:research": "research",
+    "scope:security": "security-reviewer",
+    "scope:data": "data-migrations",
+    "scope:infra": "devops",
+    "scope:release": "release-manager"
+  },
+  "runs_with_reviewer": ["security-reviewer"]
+}

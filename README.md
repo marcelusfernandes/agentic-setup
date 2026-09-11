@@ -136,6 +136,14 @@ To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
 review and required-check protections still apply. A milestone can group the pilot's issues.
 
+## Optional: discipline agent catalogue
+
+[`docs/agents.md`](docs/agents.md) describes an opt-in catalogue of preset discipline
+agent cards (QA, architecture, backend, frontend, design, product, research, planner,
+investigator, security-reviewer, data-migrations, devops, release-manager, profiler)
+under `templates/agents/`, in both routes' formats. Nothing installs it yet; it is
+source material for a person to read and adapt by hand until the installer flag ships.
+
 ## Development and migration
 
 ```sh
