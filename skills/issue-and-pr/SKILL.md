@@ -101,7 +101,8 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
   reported as `sequenced`, not a failure).
 - **Proof** names the test command and what it covers; `negative-control` reads the PR's
   diff, not the `test(red):` commit — the changed test files are copied onto the base
-  and the suite must fail there.
+  and the suite must fail there. `issue-lint` accepts `## Validation` (the Codex route's
+  name for the same section) in place of `## Proof`; one non-empty heading is enough.
 - **Dependencies** as `Blocked by: #N`; the orchestrator does not dispatch a blocked issue.
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.
 - An issue that adds an entry point to an existing table, menu or list **names that file in

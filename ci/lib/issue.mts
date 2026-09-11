@@ -7,14 +7,28 @@ export const REQUIRED_SECTIONS = ['Context', 'Goal', 'Acceptance criteria', 'Pro
 export type SectionName = (typeof REQUIRED_SECTIONS)[number];
 
 /**
+ * The headings accepted for the `Proof` section: `Proof` is this route's
+ * name, `Validation` the Codex route's name for the same section (#114).
+ * A task written for either route lints clean without a second heading.
+ */
+export const PROOF_HEADINGS = ['Proof', 'Validation'] as const;
+
+/** The first non-empty of the accepted proof headings; else the first present one; else `null`. */
+function proofSection(body: string): string | null {
+  const present = PROOF_HEADINGS.map((heading) => extractSection(body, heading)).filter((text): text is string => text !== null);
+  return present.find((text) => text.trim() !== '') ?? present[0] ?? null;
+}
+
+/**
  * The text under each of the six required `## <heading>` sections, or
  * `null` per heading that is missing from the body. Mirrors
  * `extractSection`'s "up to the next `## `" slicing for every heading in
- * one pass.
+ * one pass; `Proof` reads through `proofSection` so either accepted
+ * heading fills it.
  */
 export function sections(body: string): Record<SectionName, string | null> {
   const out = {} as Record<SectionName, string | null>;
-  for (const heading of REQUIRED_SECTIONS) out[heading] = extractSection(body, heading);
+  for (const heading of REQUIRED_SECTIONS) out[heading] = heading === 'Proof' ? proofSection(body) : extractSection(body, heading);
   return out;
 }
 

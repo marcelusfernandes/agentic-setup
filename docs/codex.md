@@ -80,7 +80,8 @@ the old issue contract for the transition. Retiring any Claude components requir
 separate maintainer decision; successful Codex adoption alone is not permission to remove them.
 
 For existing adopters, the helper also accepts a single legacy `Blocked by:` dependency
-line. This permits retaining the existing issue CI and its Context/Proof/Files sections
+line, and reads a `## Proof` section as the task's `## Validation`, so one heading is
+enough on both routes. This permits retaining the existing issue CI and its Context/Proof/Files sections
 without importing the old scheduler or changing server requirements during a pilot.
 
 An existing untracked `AGENTS.md` or `.codex` directory belongs to the user. The installer

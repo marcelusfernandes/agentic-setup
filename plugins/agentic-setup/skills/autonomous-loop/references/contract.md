@@ -77,8 +77,10 @@ prerequisite must be closed as completed. Cycles or cancelled
 prerequisites block rather than disappearing. Add context or file hints only when useful.
 During migration, a single `Blocked by: #122, #123` or `Blocked by: none` line is also
 accepted under Dependencies for repositories whose existing issue CI requires it.
-Do not mix that line with the bullet format. Extra project-specific sections such as
-Context, Proof and Files may remain; they are not universal requirements of this skill.
+Do not mix that line with the bullet format. `## Proof`, the Claude route's name for the
+same section, is accepted in place of `## Validation`; one non-empty heading of the two is
+enough. Extra project-specific sections such as Context and Files may remain; they are not
+universal requirements of this skill.
 The canonical remote branch is `codex/task-<issue-number>`: it is independent of title,
 slug and retry number. `claim` creates it with an empty expected-ref lease and returns
 `held` if it exists. It does not create a checkout or infer agent liveness.

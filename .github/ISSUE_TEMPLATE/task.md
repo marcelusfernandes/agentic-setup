@@ -16,7 +16,7 @@ One verifiable sentence.
 - [ ] AC2 …
 
 ## Proof
-The test command and what it covers.
+The test command and what it covers. (`## Validation`, the Codex route's name for this section, is accepted instead.)
 Negative control: which assertions must fail before the change (the `negative-control` check verifies this).
 
 ## Files
