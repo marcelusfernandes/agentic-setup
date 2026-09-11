@@ -34,8 +34,14 @@ left by the last one, for an offline check against the last fetch. Fields:
 
 - `milestone` — the title it reconciled against.
 - `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose
-  `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
-  step 1's candidate list — no separate query needed.
+  `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none) and that
+  carry no pending human label (those go to `humanPending` instead). This is step 1's
+  candidate list — no separate query needed.
+- `humanPending` — `{ number, title, label }`: open issues in the milestone carrying
+  `human:pending` or the legacy bare `human` (any case; `label` is the name found),
+  whatever their `state:`. Never dispatch these; a person decides, records the decision
+  in a comment, flips the label to `human:reviewed` and sets the next `state:` (see
+  "Resume after a person decides"). `human:reviewed` issues are not listed here.
 - `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
   that are not `resumable` (below) — an open PR, a branch checked out in a *live* local
   worktree of this checkout (an agent of this checkout may be alive — a worktree in
