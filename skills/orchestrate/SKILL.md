@@ -40,8 +40,8 @@ left by the last one, for an offline check against the last fetch. Fields:
 - `humanPending` — `{ number, title, label }`: open issues in the milestone carrying
   `human:pending` or the legacy bare `human` (any case; `label` is the name found),
   whatever their `state:`. Never dispatch these; a person decides, records the decision
-  in a comment, flips the label to `human:reviewed` and sets the next `state:` (see
-  "Resume after a person decides"). `human:reviewed` issues are not listed here.
+  in a comment, flips the label to `human:decided` and sets the next `state:` (see
+  "Resume after a person decides"). `human:decided` issues are not listed here.
 - `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
   that are not `resumable` (below) — an open PR, a branch checked out in a *live* local
   worktree of this checkout (an agent of this checkout may be alive — a worktree in
@@ -250,6 +250,6 @@ initialized before the split is read exactly like `human:pending`.
 ## Resume after a person decides
 
 The person, not the orchestrator, writes the decision as a comment on the issue, replaces
-`human:pending` with `human:reviewed` and sets the next `state:` (`state:ready` to
-dispatch again). `human:reviewed` never blocks and is never added, removed or replaced by
+`human:pending` with `human:decided` and sets the next `state:` (`state:ready` to
+dispatch again). `human:decided` never blocks and is never added, removed or replaced by
 the orchestrator: it is the audit trail that a person intervened on that issue.

@@ -21,7 +21,7 @@ One Claude Code session at the repository root (not in a worktree), running
    itself first (`--no-fetch` reads the local refs left by the last fetch, for an offline
    check):
    carrying `human:pending` or a legacy bare `human`, whatever its state → not
-   dispatched; a person decides and flips it to `human:reviewed` (`humanPending`)
+   dispatched; a person decides and flips it to `human:decided` (`humanPending`)
    in-progress with no PR and no remote branch → ready (`stale`)
    in-progress with a remote branch, no PR and no local worktree on it → dispatch as
    round N+1 from origin/<branch>, no re-claim (`resumable`)
@@ -140,7 +140,7 @@ Five reasons, always with the `human:pending` label and a comment on the issue: 
 secret or variable; validation that needs hardware or an account the agent lacks; a
 production-affecting decision; a product decision the docs do not cover; **an issue in
 `state:blocked`** after two rounds. The person records the decision in a comment,
-replaces `human:pending` with `human:reviewed` and sets the next `state:`; the reviewed
+replaces `human:pending` with `human:decided` and sets the next `state:`; the decided
 label stays as the audit trail and never blocks. A bare `human` label from before the
 split is read as pending.
 

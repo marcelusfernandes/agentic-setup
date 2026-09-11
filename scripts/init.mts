@@ -39,7 +39,7 @@ const LABELS: [string, string, string][] = [
   // running both routes reads one vocabulary. The bare `human` label is no
   // longer seeded; an existing one is left as found and read as pending.
   ['human:pending', 'f9d0c4', 'A human decision is required; affected work is paused'],
-  ['human:reviewed', 'c2e0c6', 'A human decision was recorded; kept as the audit trail'],
+  ['human:decided', 'c2e0c6', 'A human decision was recorded; kept as the audit trail'],
 ];
 
 const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith('--') && !a.includes('=')));

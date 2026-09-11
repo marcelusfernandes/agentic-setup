@@ -115,7 +115,7 @@ JSON
 JSON
         ;;
       29) cat <<'JSON'
-{"number":29,"title":"feat: reviewed human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:decided"}],"state":"OPEN"}
+{"number":29,"title":"feat: decided human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:decided"}],"state":"OPEN"}
 JSON
         ;;
       26) cat <<'JSON'
@@ -225,7 +225,7 @@ check('no ## Files bullet -> refused, exit 1', noFiles.status === 1 && noFiles.j
 check('no ## Files bullet: no branch pushed', !remoteBranches().includes('feat/14-x'));
 check('no ## Files bullet: no assignee/label change', !noFiles.log.includes('issue edit'), noFiles.log);
 
-// --- human states: pending (any case) and legacy bare refuse; reviewed claims -
+// --- human states: pending (any case) and legacy bare refuse; decided claims -
 const pendingHuman = claim(['27', '--slug', 'x']);
 check('human:pending -> refused, exit 1, naming the label', pendingHuman.status === 1 && pendingHuman.json?.refused === 'issue carries Human:Pending', JSON.stringify(pendingHuman));
 check('human:pending: no branch pushed', !remoteBranches().includes('feat/27-x'));
@@ -233,8 +233,8 @@ check('human:pending: no assignee/label change', !pendingHuman.log.includes('iss
 const legacyHuman = claim(['28', '--slug', 'x']);
 check('legacy bare human -> refused, exit 1, naming the label', legacyHuman.status === 1 && legacyHuman.json?.refused === 'issue carries human', JSON.stringify(legacyHuman));
 check('legacy bare human: no branch pushed', !remoteBranches().includes('feat/28-x'));
-const reviewedHuman = claim(['29', '--slug', 'x']);
-check('human:decided does not refuse a claim', reviewedHuman.status === 0 && remoteBranches().includes('feat/29-x'), JSON.stringify(reviewedHuman));
+const decidedHuman = claim(['29', '--slug', 'x']);
+check('human:decided does not refuse a claim', decidedHuman.status === 0 && remoteBranches().includes('feat/29-x'), JSON.stringify(decidedHuman));
 
 // --- AC2/AC4/AC5: happy path, type from title, real branch created ----------
 const claimed10 = claim(['10', '--slug', 'script']);

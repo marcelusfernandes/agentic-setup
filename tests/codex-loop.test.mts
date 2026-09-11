@@ -285,7 +285,7 @@ r = status(); check('canonical PR human request blocks land regardless of approv
 r = invoke(['land', '1', '2']); check('land refuses a canonical PR with a human request', r.code === 1 && /not actionable/.test(r.out), r.out);
 fixture.prs[20].labels = [{ name: 'human:decided' }]; save();
 r = status(); check('canonical PR human:decided is not a request', r.data.humanRequests?.length === 0 && r.data.status !== 'waiting_human', r.out);
-r = invoke(['land', '1', '2']); check('land passes the human gate for a reviewed PR', !/not actionable/.test(r.out), r.out);
+r = invoke(['land', '1', '2']); check('land passes the human gate for a decided PR', !/not actionable/.test(r.out), r.out);
 
 fixture = { issues: { 1: item(1, objective('- #2', '- #3')), 2: item(2, task()), 3: item(3, checkpoint()) }, comments: {}, prs: {}, rules: [], checks: [] }; save();
 r = status(); const staleRevision = r.data.checkpoints[0].revision;
@@ -305,9 +305,9 @@ r = status(); check('closed external prerequisite human request blocks its depen
   r.data.humanRequests?.some((request: any) => request.kind === 'dependency' && request.number === 99), r.out);
 r = invoke(['finish', '1', '--evidence', evidence]); check('finish refuses unresolved human request on external prerequisite', r.code === 1, r.out);
 fixture.issues[99].labels = [{ name: 'human:decided' }]; save();
-r = status(); check('a reviewed external prerequisite no longer blocks its dependent',
+r = status(); check('a decided external prerequisite no longer blocks its dependent',
   r.data.status === 'ready_to_finish' && !r.data.tasks[0].blockers.includes(99) && r.data.humanRequests?.length === 0, r.out);
-r = invoke(['finish', '1', '--evidence', evidence]); check('finish passes a reviewed external prerequisite', r.code === 0, r.out);
+r = invoke(['finish', '1', '--evidence', evidence]); check('finish passes a decided external prerequisite', r.code === 0, r.out);
 
 // A third-party pilot must stay on its explicit integration branch, never main.
 const pilotBranch = 'test/openrouter';

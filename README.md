@@ -120,7 +120,7 @@ unchanged.
 Record publication and merge authority once when starting the objective; do not ask again
 for each routine PR. A `human:pending` label on the objective pauses all work; on a task or
 its PR, it pauses that task and dependents. Convert the request into a durable checkpoint and
-apply the real answer; a person then flips the originating label to `human:reviewed`, which
+apply the real answer; a person then flips the originating label to `human:decided`, which
 keeps the intervention traceable without blocking. Explicit user restrictions still apply.
 
 Automatic merge requires that standing permission, a separate GitHub review,

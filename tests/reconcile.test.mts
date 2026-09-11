@@ -335,7 +335,7 @@ try {
 check('milestone is the title', out?.milestone === 'M1');
 
 const readyNumbers = (out?.ready ?? []).map((i: any) => i.number).sort();
-check('ready excludes the issue blocked on an open issue and the one awaiting a person, keeps the reviewed one', JSON.stringify(readyNumbers) === JSON.stringify([10, 12, 14]), JSON.stringify(out?.ready));
+check('ready excludes the issue blocked on an open issue and the one awaiting a person, keeps the decided one', JSON.stringify(readyNumbers) === JSON.stringify([10, 12, 14]), JSON.stringify(out?.ready));
 const humanPending = (out?.humanPending ?? []).map((i: any) => i.number).sort();
 check('humanPending lists human:pending and legacy human issues, case-insensitively, never human:decided', JSON.stringify(humanPending) === JSON.stringify([13, 15]), JSON.stringify(out?.humanPending));
 check('humanPending carries title and the label found', (out?.humanPending ?? []).find((i: any) => i.number === 15)?.label === 'Human' && (out?.humanPending ?? []).find((i: any) => i.number === 13)?.title === 'Ready but a person must decide', JSON.stringify(out?.humanPending));
