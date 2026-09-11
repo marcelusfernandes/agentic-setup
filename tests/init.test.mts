@@ -155,8 +155,8 @@ check('init no longer seeds state:done', !/label create state:done\b/.test(ghLog
 check('init still seeds other state labels', /label create state:ready\b/.test(ghLog(state1)), ghLog(state1));
 check('init seeds human:pending with the colour and description shared with the Codex route',
   /label create human:pending --color f9d0c4 --description A human decision is required; affected work is paused/.test(ghLog(state1)), ghLog(state1));
-check('init seeds human:reviewed with the colour and description shared with the Codex route',
-  /label create human:reviewed --color c2e0c6 --description A human decision was recorded; kept as the audit trail/.test(ghLog(state1)), ghLog(state1));
+check('init seeds human:decided with the colour and description shared with the Codex route',
+  /label create human:decided --color c2e0c6 --description A human decision was recorded; kept as the audit trail/.test(ghLog(state1)), ghLog(state1));
 check('init no longer seeds the bare human label, so a pre-existing one is left untouched', !/label create human --color/.test(ghLog(state1)), ghLog(state1));
 
 const gh2 = initWithGh(ghRepo, state1); // same state dir: both markers now present

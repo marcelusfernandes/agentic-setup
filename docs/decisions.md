@@ -66,9 +66,9 @@ Approving these decisions (explicit OK; silence does not approve); secrets and
 variables; the main-protection choice below; anything that needs hardware or accounts
 the agent lacks; production cut-overs; any `state:blocked` issue.
 
-*2026-09-10 (#110, #111):* the single `human` label became two exclusive states.
+*2026-09-10 (#110, #111; renamed by #116 on 2026-09-11):* the single `human` label became two exclusive states.
 `human:pending` is the gate (`reconcile.mts` keeps it out of `ready`, `claim.mts` refuses
-it); `human:reviewed` is set by the person who decided and never removed, so an issue
+it); `human:decided` is set by the person who decided and never removed, so an issue
 that needed a person stays traceable from its labels. A bare `human` from before the
 split is read as pending. Earlier items above keep their original wording.
 

@@ -121,7 +121,7 @@ function hasLabel(labels: Label[] | undefined, name: string): boolean {
 }
 
 // Gate labels by exact name, case-insensitive: `human:pending`, or the bare
-// `human` that predates the two states. `human:reviewed` records a past
+// `human` that predates the two states. `human:decided` records a past
 // decision and never gates, so no prefix match.
 const PENDING_HUMAN = new Set(['human', 'human:pending']);
 function pendingHumanLabel(labels: Label[] | undefined): string | null {

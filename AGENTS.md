@@ -61,7 +61,7 @@ feature parity between the two runtimes.
   Ordinary edits do not start or resume an objective. GitHub is the durable state;
   starting the loop grants routine publication and validated merge within its boundaries,
   unless the user restricts either. Record that standing authority once. Codex synchronizes
-  status labels from evidence; `human:pending` blocks affected work and `human:reviewed`
+  status labels from evidence; `human:pending` blocks affected work and `human:decided`
   records a past decision, while labels never grant approval.
   Do not import the Claude scheduler,
   hooks, PID cleanup or merge exceptions into the Codex objective loop.

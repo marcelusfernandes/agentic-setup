@@ -72,8 +72,8 @@ implementation at a time. The main agent may both plan and implement.
 - A `human:pending` label (or legacy bare `human`) on the objective blocks all work; on a
   task or its PR it blocks that task and its dependents. Turn such requests into scoped,
   linked checkpoints before resuming. Only a person flips the source label to
-  `human:reviewed`, after a real answer with decision provenance; the workflow never edits
-  human states outside checkpoint issues, and `human:reviewed` stays as the audit trail.
+  `human:decided`, after a real answer with decision provenance; the workflow never edits
+  human states outside checkpoint issues, and `human:decided` stays as the audit trail.
   Never clear a pending label merely to unblock execution. Technical failures call for repair,
   not a new merge-permission question; escalate only a concrete missing human decision.
 - Record a user's explicit answer with its source; never manufacture a decision from

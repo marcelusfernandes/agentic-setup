@@ -103,7 +103,7 @@ function snapshot(goalNumber: number) {
       : missing.length ? 'needs_spec' : pr ? (pr.reviewDecision === 'APPROVED' ? 'waiting_ci' : 'review') : remote ? 'in_progress' : 'ready';
     return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state, labels: (item.labels ?? []).map((label) => label.name) };
   });
-  // Exact names only: `human:reviewed` records a past decision and never gates.
+  // Exact names only: `human:decided` records a past decision and never gates.
   const pendingHuman = (labels: string[]) => labels.find((label) => PENDING_HUMAN.has(label.toLowerCase())) ?? null;
   const humanRequests: Array<{ kind: 'objective' | 'task' | 'pr' | 'dependency'; number: number; label: string; blocks: 'all' | number[] }> = [];
   const goalHuman = pendingHuman((goal.labels ?? []).map((label) => label.name));
@@ -157,12 +157,12 @@ const LABELS = [
   ['state:blocked', 'Blocked by specification, dependency, cancellation, or decision', 'b60205'],
   ['state:done', 'Completed from verified GitHub state', '0e8a16'],
   ['human:pending', 'A human decision is required; affected work is paused', 'f9d0c4'],
-  ['human:reviewed', 'A human decision was recorded; kept as the audit trail', 'c2e0c6'],
+  ['human:decided', 'A human decision was recorded; kept as the audit trail', 'c2e0c6'],
   ['human', 'Legacy alias of human:pending', 'c5def5'],
 ] as const;
 // Gate labels, matched by exact name. Bare `human` predates the two states and still pauses work.
 const PENDING_HUMAN = new Set(['human', 'human:pending']);
-const HUMAN_STATES = new Set([...PENDING_HUMAN, 'human:reviewed']);
+const HUMAN_STATES = new Set([...PENDING_HUMAN, 'human:decided']);
 const STATES = new Set(LABELS.filter(([name]) => name.startsWith('state:')).map(([name]) => name));
 
 function qaFailed(pr: PR | null): boolean {
@@ -181,7 +181,7 @@ function qaFailed(pr: PR | null): boolean {
 
 function reconcileLabels(state: ReturnType<typeof snapshot>) {
   if (!state.permissions.publish) throw new Error('label publication is not authorized by the objective');
-  type Target = { kind: 'issue' | 'pr'; number: number; labels: string[]; desired: string; human?: 'human:pending' | 'human:reviewed' };
+  type Target = { kind: 'issue' | 'pr'; number: number; labels: string[]; desired: string; human?: 'human:pending' | 'human:decided' };
   const qa = new Map<number, boolean>();
   for (const task of state.tasks) if (task.pr) qa.set(task.pr.number, qaFailed(task.pr));
   const taskState = (task: Task) => task.state === 'done' ? 'state:done'
@@ -204,7 +204,7 @@ function reconcileLabels(state: ReturnType<typeof snapshot>) {
       desired: task.pr.state === 'MERGED' ? 'state:done' : desired });
   }
   for (const checkpoint of state.checkpoints) targets.push({ kind: 'issue', number: checkpoint.number,
-    labels: checkpoint.labels, desired: checkpoint.answer ? 'state:done' : 'state:blocked', human: checkpoint.answer ? 'human:reviewed' : 'human:pending' });
+    labels: checkpoint.labels, desired: checkpoint.answer ? 'state:done' : 'state:blocked', human: checkpoint.answer ? 'human:decided' : 'human:pending' });
   const pages = gh<Array<Array<{ name: string }>>>(['api', 'repos/{owner}/{repo}/labels', '--paginate', '--slurp']);
   if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) throw new Error('repository labels cannot be read');
   const existing = new Set(pages.flat().map((label) => label.name.toLowerCase()));
