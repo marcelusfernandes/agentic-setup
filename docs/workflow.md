@@ -30,9 +30,16 @@ parent issue is the orchestrator's job when the current one has nothing left.
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
 | `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | whoever writes the issue |
 | `review:approved` | the reviewer returned approved | reviewer |
-| `human` | needs a person | orchestrator |
+| `human:pending` | a person must decide; not dispatched until they do | orchestrator (and `guard-main`) |
+| `human:reviewed` | the decision is recorded; kept as the audit trail, never blocks | a person |
 
-`/agentic-setup:init` seeds `state:`, `type:`, `review:approved` and `human`; you add the
+The two human states are exclusive and matched by exact name. `reconcile.mts` lists
+`human:pending` issues under `humanPending` and keeps them out of `ready`; `claim.mts`
+refuses them. Agents never add, remove or replace `human:reviewed`. A bare `human` label
+from a repository initialized before the split is read exactly like `human:pending`.
+
+`/agentic-setup:init` seeds `state:`, `type:`, `review:approved`, `human:pending` and
+`human:reviewed`; you add the
 `scope:` values that match your repository. The `state:` set above has no `done` value:
 `Closes #N` closes the linked issue when its PR merges, and a closed issue is a done
 issue — nothing left to relabel.

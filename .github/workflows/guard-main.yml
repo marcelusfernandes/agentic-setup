@@ -3,7 +3,9 @@
 # A ruleset blocks direct pushes on the server when your plan allows one;
 # this action covers the case where it does not (private repository, free
 # plan). If a commit that lands on main belongs to no PR, it opens an issue
-# labelled `human` and fails, so the history turns red and someone looks.
+# labelled `human:pending` and fails, so the history turns red and someone
+# looks. The label is created first (idempotently) so a repository that
+# never re-ran `init` after the label split does not fail here instead.
 #
 # Declared exception: a commit whose message contains "[allow-push-main]"
 # (bootstrap only).
@@ -38,7 +40,9 @@ jobs:
           title="Direct push to main without a PR ($ACTOR, ${SHA:0:7})"
           exists="$(gh issue list --repo "$REPO" --search "\"$title\" in:title" --state open --json number --jq 'length')"
           if [ "$exists" = "0" ]; then
-            gh issue create --repo "$REPO" --title "$title" --label human \
+            gh label create human:pending --repo "$REPO" --color f9d0c4 \
+              --description "A human decision is required; affected work is paused" --force
+            gh issue create --repo "$REPO" --title "$title" --label human:pending \
               --body "Commit \`$SHA\` reached \`main\` without a PR (actor: $ACTOR). Check what came in and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
           fi
           echo "::error::direct push to main without a PR ($SHA)"; exit 1

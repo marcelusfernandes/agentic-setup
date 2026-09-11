@@ -106,6 +106,18 @@ JSON
 {"number":25,"title":"feat: warnings only","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`covered.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      27) cat <<'JSON'
+{"number":27,"title":"feat: pending human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"Human:Pending"}],"state":"OPEN"}
+JSON
+        ;;
+      28) cat <<'JSON'
+{"number":28,"title":"feat: legacy human label","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human"}],"state":"OPEN"}
+JSON
+        ;;
+      29) cat <<'JSON'
+{"number":29,"title":"feat: reviewed human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:reviewed"}],"state":"OPEN"}
+JSON
+        ;;
       26) cat <<'JSON'
 {"number":26,"title":"feat: milestone lookup fails","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`scripts/claim.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN","milestone":{"title":"M2"}}
 JSON
@@ -212,6 +224,17 @@ const noFiles = claim(['14', '--slug', 'x']);
 check('no ## Files bullet -> refused, exit 1', noFiles.status === 1 && noFiles.json?.refused === 'missing ## Files section', JSON.stringify(noFiles));
 check('no ## Files bullet: no branch pushed', !remoteBranches().includes('feat/14-x'));
 check('no ## Files bullet: no assignee/label change', !noFiles.log.includes('issue edit'), noFiles.log);
+
+// --- human states: pending (any case) and legacy bare refuse; reviewed claims -
+const pendingHuman = claim(['27', '--slug', 'x']);
+check('human:pending -> refused, exit 1, naming the label', pendingHuman.status === 1 && pendingHuman.json?.refused === 'issue carries Human:Pending', JSON.stringify(pendingHuman));
+check('human:pending: no branch pushed', !remoteBranches().includes('feat/27-x'));
+check('human:pending: no assignee/label change', !pendingHuman.log.includes('issue edit'), pendingHuman.log);
+const legacyHuman = claim(['28', '--slug', 'x']);
+check('legacy bare human -> refused, exit 1, naming the label', legacyHuman.status === 1 && legacyHuman.json?.refused === 'issue carries human', JSON.stringify(legacyHuman));
+check('legacy bare human: no branch pushed', !remoteBranches().includes('feat/28-x'));
+const reviewedHuman = claim(['29', '--slug', 'x']);
+check('human:reviewed does not refuse a claim', reviewedHuman.status === 0 && remoteBranches().includes('feat/29-x'), JSON.stringify(reviewedHuman));
 
 // --- AC2/AC4/AC5: happy path, type from title, real branch created ----------
 const claimed10 = claim(['10', '--slug', 'script']);

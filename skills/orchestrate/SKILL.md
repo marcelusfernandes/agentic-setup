@@ -34,8 +34,14 @@ left by the last one, for an offline check against the last fetch. Fields:
 
 - `milestone` — the title it reconciled against.
 - `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose
-  `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none). This is
-  step 1's candidate list — no separate query needed.
+  `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none) and that
+  carry no pending human label (those go to `humanPending` instead). This is step 1's
+  candidate list — no separate query needed.
+- `humanPending` — `{ number, title, label }`: open issues in the milestone carrying
+  `human:pending` or the legacy bare `human` (any case; `label` is the name found),
+  whatever their `state:`. Never dispatch these; a person decides, records the decision
+  in a comment, flips the label to `human:reviewed` and sets the next `state:` (see
+  "Resume after a person decides"). `human:reviewed` issues are not listed here.
 - `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
   that are not `resumable` (below) — an open PR, a branch checked out in a *live* local
   worktree of this checkout (an agent of this checkout may be alive — a worktree in
@@ -222,7 +228,7 @@ takes minutes, look once per pass.
   construction rather than closing it after the fact (item 13).
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
   summary and the reviewer's JSON (round 2; skill `safe-worktree` §C).
-- Rejected a second time → `state:blocked` + `human`, comment with the summary, move on.
+- Rejected a second time → `state:blocked` + `human:pending`, comment with the summary, move on.
   Exception: a purely mechanical defect with the exact fix named by the reviewer earns one
   short extra round. Log the exception in the issue.
 - Conflict with `main` → the implementer runs `git merge origin/main` on the branch.
@@ -233,8 +239,17 @@ takes minutes, look once per pass.
 - Milestone with no open issue → open the next milestone's parent issue and, as planner,
   its sub-issues (skill `issue-and-pr`, "Write sub-issues").
 
-## Escalate to a person (label `human`, comment on the issue)
+## Escalate to a person (label `human:pending`, comment on the issue)
 
 A missing secret or variable; validation that needs hardware or an account you lack; a
 production-affecting decision; a product decision the docs do not cover; any issue in
-`state:blocked`.
+`state:blocked`. `reconcile.mts` lists these issues under `humanPending` and keeps them
+out of `ready`; `claim.mts` refuses them. A bare `human` label from a repository
+initialized before the split is read exactly like `human:pending`.
+
+## Resume after a person decides
+
+The person, not the orchestrator, writes the decision as a comment on the issue, replaces
+`human:pending` with `human:reviewed` and sets the next `state:` (`state:ready` to
+dispatch again). `human:reviewed` never blocks and is never added, removed or replaced by
+the orchestrator: it is the audit trail that a person intervened on that issue.

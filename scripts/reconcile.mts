@@ -33,6 +33,12 @@
 //                                                              // in-review PR, not from the
 //                                                              // list-call's rollup
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
+//     humanPending: [{ number, title, label }],               // carries human:pending or the
+//                                                              // legacy bare human (any case);
+//                                                              // never in ready, whatever its
+//                                                              // state label. human:reviewed
+//                                                              // is not listed: it records a
+//                                                              // past decision and never gates
 //     orphanWorktrees: [path],                                // linked worktree, branch gone from origin
 //     deadWorktrees: [{ path, branch, pid, dirty, unpushed }], // locked by a pid that no
 //                                                              // longer exists. dirty: true
@@ -163,6 +169,14 @@ function git(args: string[]): string {
 
 function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
+}
+
+// Gate labels by exact name, case-insensitive: `human:pending`, or the bare
+// `human` that predates the two states. `human:reviewed` records a past
+// decision and never gates, so no prefix match.
+const PENDING_HUMAN = new Set(['human', 'human:pending']);
+function pendingHumanLabel(labels: Label[] | undefined): string | null {
+  return (labels ?? []).find((l) => PENDING_HUMAN.has(l.name.toLowerCase()))?.name ?? null;
 }
 
 /**
@@ -345,8 +359,15 @@ function prFor(branch: string | null): PR | null {
   return prs.find((p) => p.headRefName === branch) ?? null;
 }
 
+// Issues a person must decide on before any agent touches them. They are
+// excluded from `ready` whatever their state label says.
+const humanPending = issues
+  .map((i) => ({ number: i.number, title: i.title, label: pendingHumanLabel(i.labels) }))
+  .filter((i): i is { number: number; title: string; label: string } => i.label !== null);
+const humanPendingNumbers = new Set(humanPending.map((i) => i.number));
+
 const ready = issues
-  .filter((i) => hasLabel(i.labels, 'state:ready'))
+  .filter((i) => hasLabel(i.labels, 'state:ready') && !humanPendingNumbers.has(i.number))
   .map((i) => ({ number: i.number, title: i.title, blockedBy: parseBlockedBy(i.body ?? '') }))
   .filter((i) => i.blockedBy.every((n) => closedNumbers.has(n)));
 
@@ -411,4 +432,4 @@ const stale = inProgress
 
 const orphanWorktrees = linkedWorktrees.filter((w) => w.branch && !remoteHeads.has(w.branch)).map((w) => w.path);
 
-console.log(JSON.stringify({ milestone, ready, inProgress, resumable, inReview, stale, orphanWorktrees, deadWorktrees }, null, 2));
+console.log(JSON.stringify({ milestone, ready, humanPending, inProgress, resumable, inReview, stale, orphanWorktrees, deadWorktrees }, null, 2));
