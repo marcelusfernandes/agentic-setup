@@ -31,7 +31,7 @@ case "\${1:-} \${2:-}" in
   {"number":11,"title":"Ready blocked open","body":"## Dependencies\\nBlocked by: #99\\n","labels":[{"name":"state:ready"}]},
   {"number":12,"title":"Ready blocked closed","body":"## Dependencies\\nBlocked by: #3\\n","labels":[{"name":"state:ready"}]},
   {"number":13,"title":"Ready but a person must decide","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:pending"}]},
-  {"number":14,"title":"Ready after a person decided","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:reviewed"}]},
+  {"number":14,"title":"Ready after a person decided","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:decided"}]},
   {"number":15,"title":"Blocked with the legacy label","body":"","labels":[{"name":"state:blocked"},{"name":"Human"}]},
   {"number":20,"title":"In progress with pr","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":21,"title":"In progress stale","body":"","labels":[{"name":"state:in-progress"}]},
@@ -337,7 +337,7 @@ check('milestone is the title', out?.milestone === 'M1');
 const readyNumbers = (out?.ready ?? []).map((i: any) => i.number).sort();
 check('ready excludes the issue blocked on an open issue and the one awaiting a person, keeps the reviewed one', JSON.stringify(readyNumbers) === JSON.stringify([10, 12, 14]), JSON.stringify(out?.ready));
 const humanPending = (out?.humanPending ?? []).map((i: any) => i.number).sort();
-check('humanPending lists human:pending and legacy human issues, case-insensitively, never human:reviewed', JSON.stringify(humanPending) === JSON.stringify([13, 15]), JSON.stringify(out?.humanPending));
+check('humanPending lists human:pending and legacy human issues, case-insensitively, never human:decided', JSON.stringify(humanPending) === JSON.stringify([13, 15]), JSON.stringify(out?.humanPending));
 check('humanPending carries title and the label found', (out?.humanPending ?? []).find((i: any) => i.number === 15)?.label === 'Human' && (out?.humanPending ?? []).find((i: any) => i.number === 13)?.title === 'Ready but a person must decide', JSON.stringify(out?.humanPending));
 const ready10 = (out?.ready ?? []).find((i: any) => i.number === 10);
 const ready12 = (out?.ready ?? []).find((i: any) => i.number === 12);

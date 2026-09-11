@@ -201,7 +201,7 @@ check('pending checkpoint owns human:pending while tasks preserve manually added
   fixture.issues[2].labels.some((label: any) => label.name === 'human'));
 check('both human states are seeded with distinct colours next to the legacy label',
   fixture.catalog.find((label: any) => label.name === 'human:pending')?.color === 'f9d0c4' &&
-  fixture.catalog.find((label: any) => label.name === 'human:reviewed')?.color === 'c2e0c6' &&
+  fixture.catalog.find((label: any) => label.name === 'human:decided')?.color === 'c2e0c6' &&
   fixture.catalog.some((label: any) => label.name === 'human'));
 check('existing label catalog metadata is preserved',
   fixture.catalog.find((label: any) => label.name.toLowerCase() === 'state:ready')?.description === 'keep existing catalog metadata' &&
@@ -210,20 +210,20 @@ r = status(); const labelRevision = r.data.checkpoints[0].revision;
 fixture.comments[3] = [humanAnswer(labelRevision)]; save();
 r = invoke(['labels', '1']); refresh();
 const humanLabels = (record: any) => record.labels.map((label: any) => label.name).filter((name: string) => name.toLowerCase().startsWith('human')).sort();
-check('recorded current-revision answer moves checkpoint to done and human:reviewed', r.code === 0 &&
+check('recorded current-revision answer moves checkpoint to done and human:decided', r.code === 0 &&
   fixture.issues[3].labels.some((label: any) => label.name === 'state:done') &&
-  JSON.stringify(humanLabels(fixture.issues[3])) === JSON.stringify(['human:reviewed']), r.out);
+  JSON.stringify(humanLabels(fixture.issues[3])) === JSON.stringify(['human:decided']), r.out);
 r = invoke(['labels', '1']); check('label reconciliation is idempotent', r.code === 0 && r.data.updated === 0, r.out);
 fixture.issues[3].body = checkpoint().replace('public result', 'public response contract'); save();
 r = invoke(['labels', '1']); refresh();
-check('a new decision revision restores human:pending and removes human:reviewed', r.code === 0 &&
+check('a new decision revision restores human:pending and removes human:decided', r.code === 0 &&
   fixture.issues[3].labels.some((label: any) => label.name === 'state:blocked') &&
   JSON.stringify(humanLabels(fixture.issues[3])) === JSON.stringify(['human:pending']), r.out);
 r = status(); fixture.comments[3].push(humanAnswer(r.data.checkpoints[0].revision)); save();
 r = invoke(['labels', '1']); refresh();
-check('answering the new revision returns the checkpoint to human:reviewed', r.code === 0 &&
-  JSON.stringify(humanLabels(fixture.issues[3])) === JSON.stringify(['human:reviewed']), r.out);
-r = invoke(['labels', '1']); check('the reviewed state is idempotent too', r.code === 0 && r.data.updated === 0, r.out);
+check('answering the new revision returns the checkpoint to human:decided', r.code === 0 &&
+  JSON.stringify(humanLabels(fixture.issues[3])) === JSON.stringify(['human:decided']), r.out);
+r = invoke(['labels', '1']); check('the decided state is idempotent too', r.code === 0 && r.data.updated === 0, r.out);
 
 fixture.issues[2].labels = fixture.issues[2].labels.filter((label: any) => label.name !== 'human');
 fixture.prs[20] = { number: 20, state: 'OPEN', headRefName: 'codex/task-2', headRefOid: base, baseRefName: 'main', reviewDecision: 'CHANGES_REQUESTED', isDraft: false, isCrossRepository: false, labels: [{ name: 'review:approved' }] }; save();
@@ -265,12 +265,12 @@ check('task human request leaves independent work actionable', r.data.next?.numb
 fixture.issues[2].labels = [{ name: 'human:pending' }, { name: 'state:done' }]; save();
 r = status(); check('task human:pending blocks exactly like the legacy label',
   r.data.tasks.find((entry: any) => entry.number === 5).blockers.includes(2) && r.data.humanRequests?.[0]?.label === 'human:pending', r.out);
-fixture.issues[2].labels = [{ name: 'human:reviewed' }, { name: 'state:done' }]; save();
-r = status(); check('task human:reviewed never blocks and creates no request',
+fixture.issues[2].labels = [{ name: 'human:decided' }, { name: 'state:done' }]; save();
+r = status(); check('task human:decided never blocks and creates no request',
   r.data.tasks.every((entry: any) => !entry.blockers.includes(2)) && r.data.humanRequests?.length === 0, r.out);
 r = invoke(['labels', '1']); refresh();
-check('reconciliation preserves a manually set human:reviewed on a task',
-  r.code === 0 && fixture.issues[2].labels.some((label: any) => label.name === 'human:reviewed'), r.out);
+check('reconciliation preserves a manually set human:decided on a task',
+  r.code === 0 && fixture.issues[2].labels.some((label: any) => label.name === 'human:decided'), r.out);
 fixture.issues[2].labels = [{ name: 'human' }, { name: 'state:done' }];
 fixture.issues[2].state = 'open'; fixture.issues[2].state_reason = undefined; save();
 r = invoke(['claim', '1', '2']); check('claim refuses a task with a human request', r.code === 1 && /not actionable/.test(r.out), r.out);
@@ -283,8 +283,8 @@ fixture.prs[20] = { number: 20, state: 'OPEN', headRefName: 'codex/task-2', head
 r = status(); check('canonical PR human request blocks land regardless of approval or state labels',
   r.data.status === 'waiting_human' && r.data.humanRequests?.some((request: any) => request.kind === 'pr' && request.number === 20), r.out);
 r = invoke(['land', '1', '2']); check('land refuses a canonical PR with a human request', r.code === 1 && /not actionable/.test(r.out), r.out);
-fixture.prs[20].labels = [{ name: 'human:reviewed' }]; save();
-r = status(); check('canonical PR human:reviewed is not a request', r.data.humanRequests?.length === 0 && r.data.status !== 'waiting_human', r.out);
+fixture.prs[20].labels = [{ name: 'human:decided' }]; save();
+r = status(); check('canonical PR human:decided is not a request', r.data.humanRequests?.length === 0 && r.data.status !== 'waiting_human', r.out);
 r = invoke(['land', '1', '2']); check('land passes the human gate for a reviewed PR', !/not actionable/.test(r.out), r.out);
 
 fixture = { issues: { 1: item(1, objective('- #2', '- #3')), 2: item(2, task()), 3: item(3, checkpoint()) }, comments: {}, prs: {}, rules: [], checks: [] }; save();
@@ -293,9 +293,9 @@ check('unanswered checkpoint remains a gate without its human label', r.data.sta
 fixture.comments[3] = [humanAnswer(staleRevision)]; fixture.issues[3].labels = [{ name: 'Human' }]; save();
 r = status(); check('answered checkpoint stale human label does not create an ad hoc request',
   r.data.status === 'working' && r.data.humanRequests?.length === 0, r.out);
-r = invoke(['labels', '1']); refresh(); check('label reconciliation replaces case-variant stale human on an answered checkpoint with human:reviewed',
+r = invoke(['labels', '1']); refresh(); check('label reconciliation replaces case-variant stale human on an answered checkpoint with human:decided',
   r.code === 0 && !fixture.issues[3].labels.some((label: any) => label.name.toLowerCase() === 'human') &&
-  fixture.issues[3].labels.some((label: any) => label.name === 'human:reviewed'), r.out);
+  fixture.issues[3].labels.some((label: any) => label.name === 'human:decided'), r.out);
 fixture.issues[2].state = 'closed'; fixture.issues[2].state_reason = 'completed'; fixture.issues[2].labels = [{ name: 'human' }]; save();
 r = invoke(['finish', '1', '--evidence', evidence]); check('finish refuses human requests on completed tasks', r.code === 1 && /human|planning|tasks|decisions/.test(r.out), r.out);
 fixture = { issues: { 1: item(1, objective('- #2')), 2: item(2, task('- #99'), 'closed'), 99: item(99, task(), 'closed') }, comments: {}, prs: {}, rules: [], checks: [] };
@@ -304,7 +304,7 @@ r = status(); check('closed external prerequisite human request blocks its depen
   r.data.status === 'waiting_human' && r.data.tasks[0].blockers.includes(99) &&
   r.data.humanRequests?.some((request: any) => request.kind === 'dependency' && request.number === 99), r.out);
 r = invoke(['finish', '1', '--evidence', evidence]); check('finish refuses unresolved human request on external prerequisite', r.code === 1, r.out);
-fixture.issues[99].labels = [{ name: 'human:reviewed' }]; save();
+fixture.issues[99].labels = [{ name: 'human:decided' }]; save();
 r = status(); check('a reviewed external prerequisite no longer blocks its dependent',
   r.data.status === 'ready_to_finish' && !r.data.tasks[0].blockers.includes(99) && r.data.humanRequests?.length === 0, r.out);
 r = invoke(['finish', '1', '--evidence', evidence]); check('finish passes a reviewed external prerequisite', r.code === 0, r.out);
