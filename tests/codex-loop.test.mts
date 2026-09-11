@@ -79,6 +79,8 @@ fixture.issues[2].body = '## Context\nWhy it exists.\n\n## Goal\nReturn 2.\n\n##
 r = status(); check('a Claude-template task with ## Proof and no ## Validation is specified', r.data.next?.state === 'ready' && r.data.next?.missing?.length === 0, r.out);
 fixture.issues[2].body = '## Goal\nReturn 2.\n\n## Acceptance criteria\n- [ ] answer equals 2\n\n## Validation\n\n## Proof\n\n'; save();
 r = status(); check('empty ## Validation and ## Proof headings still need specification', r.data.next?.state === 'needs_spec', r.out);
+fixture.issues[2].body = task() + '\n## Proof\nnpm test covers it.\n'; save();
+r = status(); check('a task carrying both non-empty headings is specified', r.data.next?.state === 'ready' && r.data.next?.missing?.length === 0, r.out);
 fixture.issues[2].body = task(); save();
 r = status(); check('specified work becomes ready without labels, milestones or globs', r.data.next?.state === 'ready', r.out);
 fixture.issues[1].body = objective('- #2').replace('publish: yes', 'publish: no'); save();

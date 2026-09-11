@@ -65,6 +65,7 @@ One useful change toward the objective.
 
 ## Validation
 The relevant test/check command, or a concrete manual verification for non-code work.
+(`## Proof`, the Claude route's name for this section, is accepted instead.)
 
 ## Dependencies
 - #122

@@ -128,6 +128,8 @@ const neitherProof = lint(1052, issueBody({ proof: null }));
 check('neither ## Proof nor ## Validation fails naming both', neitherProof.status === 1 && /## Proof \(or ## Validation\)/.test(neitherProof.out), neitherProof.out);
 const emptyValidation = lint(1053, issueBody({ proof: '## Validation\n' }));
 check('an empty ## Validation with no ## Proof fails naming both', emptyValidation.status === 1 && /## Proof \(or ## Validation\)/.test(emptyValidation.out), emptyValidation.out);
+const bothProof = lint(1054, issueBody({ proof: '## Proof\nnpm test covers it.\n\n## Validation\nnode --test answer.test.mts\n' }));
+check('a body carrying both non-empty headings passes', bothProof.status === 0 && parse(bothProof.out)?.ok === true, bothProof.out);
 
 const noCheckbox = lint(104, issueBody({ ac: '## Acceptance criteria\nJust prose, no checkbox.\n' }));
 check('## Acceptance criteria with no "- [ ]" item fails', noCheckbox.status === 1 && /Acceptance criteria/.test(noCheckbox.out), noCheckbox.out);
