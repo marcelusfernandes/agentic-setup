@@ -99,6 +99,14 @@ export function findMisplacedAuthorisedLines(prBody: string): string[] {
   return misplaced;
 }
 
+export type FileLinesEntry = { path: string; baseLines: number | null; headLines: number; generated: boolean };
+export type FileGrowth = { path: string; baseLines: number | null; headLines: number };
+
+// TODO(#134): implement.
+export function fileGrowth(_entries: FileLinesEntry[]): FileGrowth[] {
+  throw new Error('not implemented');
+}
+
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
   const globs = [...issueGlobs, ...authorisedGlobs];
   const violations = files.filter((f) => !matchesAny(f, globs));

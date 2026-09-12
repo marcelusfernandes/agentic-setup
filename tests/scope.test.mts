@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
-import { findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
+import { fileGrowth, findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
 
 const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
 cleanup(() => rmSync(dir, { recursive: true, force: true }));
@@ -373,5 +373,82 @@ const rLockExcluded = ci('scope-check.mts', [
   '--root', lockRepo,
 ]);
 check('scope: a lockfile naming a removed path is excluded from the dangling-reference search', rLockExcluded.status === 0, rLockExcluded.out);
+
+// #134: `scope` fails a PR that adds a file over 800 lines or grows a file
+// past 800 lines, `@generated` first line exempt. Real repos: the growth
+// check runs `git show base:path` / `git show head:path`.
+const linesOf = (n: number, fill = 'line'): string => `${Array.from({ length: n }, (_, i) => `${fill} ${i}`).join('\n')}\n`;
+const issueSrcStar = file('issue-src-star.md', '## Files\n- `src/**`\n');
+const prClosesOnlyGeneric = file('pr-closes-only-generic.md', 'Closes #1\n\n## Files\nGlobs touched.\n');
+const scopeGrowth = (base: string, head: string, root: string) =>
+  ci('scope-check.mts', ['--base', base, '--head', head, '--issue-body-file', issueSrcStar, '--pr-body-file', prClosesOnlyGeneric, '--root', root]);
+
+const growthRepo = tempRepo();
+const growthBase = commit(growthRepo, { 'src/big.ts': linesOf(700) }, 'chore: base at 700 lines');
+git(['checkout', '-q', '-b', 'feat/134-grow'], growthRepo);
+const growthHead = commit(growthRepo, { 'src/big.ts': linesOf(900) }, 'feat: grow src/big.ts to 900 lines');
+const rGrowth = scopeGrowth(growthBase, growthHead, growthRepo);
+check(
+  'scope fails when a file grows from 700 to 900 lines, naming the file',
+  rGrowth.status === 1 && /src\/big\.ts/.test(rGrowth.out) && /### File growth/.test(rGrowth.out),
+  rGrowth.out,
+);
+
+// Already over 800 and edited, without growing further, is not a violation.
+git(['checkout', '-q', '-b', 'feat/134-already-900', growthHead], growthRepo);
+const growthEditedHead = commit(growthRepo, { 'src/big.ts': linesOf(900, 'edited') }, 'refactor: edit src/big.ts without changing its line count');
+const rGrowthEdited = scopeGrowth(growthHead, growthEditedHead, growthRepo);
+check(
+  'scope passes editing a file already over 800 lines, when it does not grow further',
+  rGrowthEdited.status === 0 && !/### File growth/.test(rGrowthEdited.out),
+  rGrowthEdited.out,
+);
+
+// A new file over 800 lines marked `@generated` on its first line is exempt.
+git(['checkout', '-q', '-b', 'feat/134-generated', growthBase], growthRepo);
+const generatedHead = commit(growthRepo, { 'src/generated.ts': `// @generated\n${linesOf(900)}` }, 'feat: add generated src/generated.ts');
+const rGenerated = scopeGrowth(growthBase, generatedHead, growthRepo);
+check(
+  'scope passes a new file over 800 lines whose first line marks it @generated',
+  rGenerated.status === 0 && !/### File growth/.test(rGenerated.out),
+  rGenerated.out,
+);
+
+// A --files-file run (no base/head) is unaffected by the growth check.
+const rFilesFileOnly = scope(files, issueSrc, prPlain);
+check(
+  'scope --files-file run without base/head has no File growth section',
+  rFilesFileOnly.status === 0 && !/### File growth/.test(rFilesFileOnly.out),
+  rFilesFileOnly.out,
+);
+
+// Direct unit test of the pure fileGrowth: growth past the limit fails,
+// already-over-the-limit-but-not-growing does not, @generated is exempt.
+check(
+  'fileGrowth: a file growing past 800 lines is a violation',
+  JSON.stringify(fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: false }])) ===
+    JSON.stringify([{ path: 'a.ts', baseLines: 700, headLines: 900 }]),
+);
+check('fileGrowth: a new file over 800 lines is a violation', fileGrowth([{ path: 'a.ts', baseLines: null, headLines: 900, generated: false }]).length === 1);
+check(
+  'fileGrowth: a new file under 800 lines is not a violation',
+  fileGrowth([{ path: 'a.ts', baseLines: null, headLines: 700, generated: false }]).length === 0,
+);
+check(
+  'fileGrowth: already over 800 lines and shrinking is not a violation',
+  fileGrowth([{ path: 'a.ts', baseLines: 900, headLines: 850, generated: false }]).length === 0,
+);
+check(
+  'fileGrowth: already over 800 lines and unchanged is not a violation',
+  fileGrowth([{ path: 'a.ts', baseLines: 900, headLines: 900, generated: false }]).length === 0,
+);
+check(
+  'fileGrowth: a file that grows but stays under 800 lines is not a violation',
+  fileGrowth([{ path: 'a.ts', baseLines: 500, headLines: 700, generated: false }]).length === 0,
+);
+check(
+  'fileGrowth: @generated on the first line exempts a file that would otherwise violate',
+  fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: true }]).length === 0,
+);
 
 finish();
