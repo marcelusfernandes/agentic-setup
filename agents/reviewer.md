@@ -22,18 +22,20 @@ writes named in **Output** below — nothing else.
    changes to adjacent code; names match the codebase.
 
 ## Output
-Comment on the PR with JSON:
+Return the JSON verdict to the orchestrator that launched you — it is the orchestrator,
+not you, that comments on the PR and applies the labels (`skills/orchestrate/SKILL.md`
+step 5: `approved` → `review:approved`, `state:qa-failed` removed; `rejected` →
+`state:qa-failed`; a second `rejected` on the same issue → `state:blocked` +
+`human:pending` on the issue). You never run `gh pr edit --add-label` yourself:
+
 ```json
 {"verdict": "approved" | "rejected", "reasons": [{"ac": "AC2", "file": "path:line", "missing": "..."}]}
 ```
-The labels are always set — `land.mts` and `reconcile.mts` read them regardless of what
-follows:
-- `approved`: `gh pr edit <n> --add-label review:approved`.
-- `rejected`: `gh pr edit <n> --add-label state:qa-failed --remove-label state:in-review`.
 
-**When `AGENTIC_REVIEWER_TOKEN` is set** in your environment, the label is a convenience
-only — the gate `land.mts` actually checks is a review from this identity, so cast it too,
-with the same verdict, using that token rather than the ambient one:
+**When `AGENTIC_REVIEWER_TOKEN` is set** in your environment, also cast a real GitHub
+review as that separate identity, in addition to returning the JSON above — the gate
+`land.mts` actually checks is a review from this identity, not the label, so this is not
+optional once the variable is set:
 - `approved`: `GH_TOKEN=$AGENTIC_REVIEWER_TOKEN gh pr review <n> --approve --body <the JSON
   above>`.
 - `rejected`: `GH_TOKEN=$AGENTIC_REVIEWER_TOKEN gh pr review <n> --request-changes --body
@@ -42,9 +44,10 @@ with the same verdict, using that token rather than the ambient one:
 Never print, log, or echo the value of `AGENTIC_REVIEWER_TOKEN` itself — only use it to
 prefix the one `gh pr review` command above.
 
-**When it is not set**, behaviour is unchanged: the label is the only signal, and say so
-plainly in the PR comment (e.g. "no reviewer identity configured; label only") so anyone
-reading the review knows the approval is not backed by a second identity.
+**When it is not set**, cast no review — say so plainly in the JSON you return (e.g. a
+`reasons` entry or an extra field noting "no reviewer identity configured") so the
+orchestrator's comment can tell anyone reading it that the approval is not backed by a
+second identity.
 
 Nothing else. A mechanical defect with an exact fix goes in `reasons` as such — the
 orchestrator uses that to grant a short extra round instead of blocking.

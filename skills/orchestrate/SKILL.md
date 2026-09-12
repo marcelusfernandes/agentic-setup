@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run one pass of the agent loop for the current milestone — reconcile from GitHub, dispatch ready issues to implementers in worktrees, review, merge. Use from the main session at the repository root; invoke as /agentic-setup:orchestrate.
+description: Run the agent loop across every open milestone — reconcile from GitHub, dispatch ready issues to implementers in worktrees, review, merge, then continue — stopping only for a closed list of reasons. Use from the main session at the repository root; invoke as /agentic-setup:orchestrate.
 ---
 
 # Orchestrate
@@ -9,8 +9,32 @@ You are the orchestrator: one session at the repository root, never in a worktre
 plan and dispatch; you never implement. The only role that touches the root manifest,
 the lockfile, `.claude/**`, `.github/**`, `main` and the labels.
 
-Run **one pass**. At the end, report what moved and stop; the person decides whether to
-run another.
+Run the loop below to completion, not one pass. Reconcile (step 0); dispatch up to four
+`state:ready` issues with disjoint `Files` as implementers, in the foreground (steps 1-3);
+on each implementer's return, launch the reviewer (step 4); on each verdict, comment it
+and apply the labels (step 5); when checks are green and the approval is on, `land.mts`,
+then poll `reconcile` until the issue's PR is actually merged — not a tight loop, a merge
+takes minutes; then move to the next ready issue, back at step 0. Step 6 closes a
+milestone with no open issue left and opens the next one, without stopping.
+
+## The closed list of stop reasons
+
+The loop stops only for one of these, never for anything else — in particular, never
+merely because a pass found nothing new to dispatch this instant:
+
+1. **No open milestone.** `reconcile.mts` reports `{ error: "no open milestone" }` (or
+   the equivalent: every milestone in the repository is closed).
+2. **Every open issue in the milestone is `state:blocked`, `human:pending`, or otherwise
+   waiting on a person** — nothing left that a fresh reconcile would move by itself. A
+   `reconcile`/`gh`/`git` call itself failing with `{ error }` (step 0) counts here too:
+   it needs a person to look at the failure, not an automatic retry.
+3. **An explicit turn or time budget given on the command line is spent** — `claude -p
+   ... --max-turns <n>` for a turn budget, an external `timeout <seconds> claude -p ...`
+   for a time budget. The orchestrator never invents either budget itself; when neither is
+   given on the command line, only reasons 1 and 2 stop the loop.
+
+On stop, comment a summary on the milestone's parent issue: what moved this run, what is
+left, and which of the three reasons above applies.
 
 ## 0. Reconcile from GitHub — never from memory
 
@@ -175,10 +199,27 @@ verify what is already pushed, finish the work, and open the PR.
 ## 4. PR opened → review
 
 When an implementer returns with a PR: launch the `reviewer` agent with the PR number and
-the issue body. Check CI with `gh pr checks <n>`; do not poll in a tight loop — a check
-takes minutes, look once per pass.
+the issue body. The reviewer returns the JSON verdict to you; it does not comment on the
+PR or touch its labels any more (`agents/reviewer.md`) — commenting and labelling are this
+step's job now, done in step 5, so both happen from one place instead of two. Check CI
+with `gh pr checks <n>`; do not poll in a tight loop — a check takes minutes, look once
+per pass.
 
 ## 5. Decide
+
+On every verdict the reviewer returns, first comment its JSON on the PR yourself, then
+apply the labels — `land.mts` and `reconcile.mts` read them regardless of what follows:
+
+- `approved` → `gh pr edit <pr> --add-label review:approved --remove-label state:qa-failed`
+  (the remove is harmless when the label was never there — a first-round approval has
+  nothing to remove).
+- `rejected` → `gh pr edit <pr> --add-label state:qa-failed --remove-label state:in-review`.
+- a **second** `rejected` verdict on the same issue → additionally `gh issue edit <n>
+  --add-label state:blocked --add-label human:pending`, comment the summary on the issue,
+  and move on — unless the defect is purely mechanical with the exact fix named by the
+  reviewer, which earns one more round instead (log the exception on the issue).
+
+Then act on the verdict:
 
 - Checks green **and** an approved review (or the `type:docs` label, which `land.mts`
   merges without one) → run `scripts/land.mts`, located the same way as the scripts
@@ -226,18 +267,32 @@ takes minutes, look once per pass.
   caught the inconsistency a minute later (`docs/decisions.md` item 11). Queuing
   `--auto` instead of polling and merging by hand removes the stale-read race by
   construction rather than closing it after the fact (item 13).
+
+  After `land.mts` reports `{ queued }` (or `{ merged }` already), do not move to the next
+  issue yet — `Closes #N` is what actually closes it, and step 1's candidates must never
+  include one whose PR merge is still only queued. Poll `scripts/reconcile.mts --milestone
+  "<current>"` again after a short fixed pause (a merge takes low minutes, not a tight
+  loop) until the issue no longer appears in `inReview`, `inProgress` or `resumable` —
+  closed, its PR merged — then continue the loop from step 0.
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
-  summary and the reviewer's JSON (round 2; skill `safe-worktree` §C).
-- Rejected a second time → `state:blocked` + `human:pending`, comment with the summary, move on.
-  Exception: a purely mechanical defect with the exact fix named by the reviewer earns one
-  short extra round. Log the exception in the issue.
+  summary and the reviewer's JSON (round 2; skill `safe-worktree` §C); once it returns,
+  back to step 4.
 - Conflict with `main` → the implementer runs `git merge origin/main` on the branch.
 
-## 6. Close the pass
+The second-rejection labels (`state:blocked` + `human:pending`) are applied above, at the
+point the verdict arrives — this bullet list is only what happens next, not where the
+labelling happens.
 
-- Nothing left to do → comment on the milestone's parent issue with what is blocked and why.
-- Milestone with no open issue → open the next milestone's parent issue and, as planner,
-  its sub-issues (skill `issue-and-pr`, "Write sub-issues").
+## 6. Close the milestone, then keep going
+
+- Milestone with no open issue left → open the next milestone's parent issue and, as
+  planner, its sub-issues (skill `issue-and-pr`, "Write sub-issues"), then continue the
+  loop from step 0 on the new milestone. Do not stop here — this is not one of the three
+  stop reasons.
+- Nothing left to dispatch this instant, but the milestone still has open issues → check
+  the three stop reasons above before stopping. If none applies (for example, a `humanPending`
+  issue was just cleared by a person, or GitHub is still indexing a write from a moment
+  ago — `docs/orchestration.md` "L6"), reconcile again rather than stopping.
 
 ## Escalate to a person (label `human:pending`, comment on the issue)
 
