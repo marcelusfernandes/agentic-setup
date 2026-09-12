@@ -30,8 +30,10 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    `Resolves #N`, several may be linked and their globs unioned, never inside backticks
    or a fence — test summary, globs touched). Label `state:in-review`; copy the issue's
    `type:` and `scope:` labels onto the PR.
-8. Stop. Do not wait on CI. Do not merge. If CI or the reviewer sends it back, fix in the
-   same worktree and update the PR.
+8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator is the one
+   that watches the checks, launches the reviewer, comments its verdict, applies the
+   labels and polls until the merge lands (`skills/orchestrate/SKILL.md` steps 4-5). If CI
+   or the reviewer sends it back, fix in the same worktree and update the PR.
 
 ## Never
 `git stash`, `git reset --hard`, `git checkout <file>`, `git clean`, force-push, editing

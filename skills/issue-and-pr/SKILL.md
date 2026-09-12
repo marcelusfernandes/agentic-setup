@@ -127,7 +127,9 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
 `human:decided` when the decision is recorded, and the decided label stays as the audit
 trail (bare `human` from before the split reads as pending). There is no `done` value: `Closes #N`
 closes the issue when its PR merges, and a closed issue is a done issue — nothing to
-relabel. `review:approved` is set by the reviewer; when `AGENTIC_REVIEWER_TOKEN` is
+relabel. `review:approved` is applied by the orchestrator after the reviewer returns
+`approved` (the reviewer itself only returns the verdict — see `skills/orchestrate`
+step 5); when `AGENTIC_REVIEWER_TOKEN` is
 configured for the reviewer's own environment, it also casts a real GitHub review as that
 separate identity, and `scripts/land.mts` then requires that review, not the label
 (`docs/decisions.md` item 13). `scope:` and `type:` by whoever writes the issue. A new
