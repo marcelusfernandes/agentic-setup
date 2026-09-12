@@ -99,12 +99,19 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // does not have an `autoMergeAllowed` field on `repo view --json`, so that
 // command is deliberately left unmocked -- it falls to the catch-all);
 // `repo edit --enable-auto-merge` / `--delete-branch-on-merge` create the
-// matching marker; `label create` is a no-op.
+// matching marker; `label create` is a no-op. `repo view --json
+// defaultBranchRef` (the ruleset's target) always answers "main". Every
+// call touching `.../rulesets` (list, POST, PUT) is handled by one case arm
+// keyed on the endpoint prefix: a 403 fixture (`$state/rulesets-403`) wins
+// over everything; otherwise `-X POST`/`-X PUT` write the request body to
+// `$state/ruleset-{post,put}-body.json` and report a canned id, and a plain
+// GET echoes `$state/rulesets-list.json` (default `[]`).
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
 case "\${1:-} \${2:-}" in
   "auth status") exit 0 ;;
+  "repo view") echo '{"defaultBranchRef":{"name":"main"}}' ;;
   "api repos/{owner}/{repo}")
     case "$4" in
       .allow_auto_merge)
@@ -113,6 +120,21 @@ case "\${1:-} \${2:-}" in
         if [ -f "$state/deletebranch-enabled" ]; then echo "true"; else echo "false"; fi ;;
       *) echo "" ;;
     esac
+    ;;
+  "api repos/{owner}/{repo}/rulesets"*)
+    if [ -f "$state/rulesets-403" ]; then
+      echo "gh: HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature (https://docs.github.com)" >&2
+      exit 1
+    fi
+    if [ "\${3:-}" = "-X" ] && [ "\${4:-}" = "POST" ]; then
+      cat > "$state/ruleset-post-body.json"
+      echo '{"id":101,"name":"agentic-setup"}'
+    elif [ "\${3:-}" = "-X" ] && [ "\${4:-}" = "PUT" ]; then
+      cat > "$state/ruleset-put-body.json"
+      echo '{"id":42,"name":"agentic-setup"}'
+    else
+      cat "$state/rulesets-list.json" 2>/dev/null || echo '[]'
+    fi
     ;;
   "repo edit")
     case "$3" in
@@ -184,5 +206,62 @@ const ghDry = initWithGh(ghRepo, state2, '--dry-run');
 check('init --dry-run (with gh) exits 0', ghDry.status === 0, `${ghDry.stdout}${ghDry.stderr}`);
 check('init --dry-run reports it would enable auto-merge and delete-branch-on-merge', /\+ auto-merge enabled/.test(ghDry.stdout) && /\+ delete-branch-on-merge enabled/.test(ghDry.stdout), ghDry.stdout);
 check('init --dry-run never actually calls gh repo edit', !/repo edit/.test(ghLog(state2)), ghLog(state2));
+
+// --- --rules: creates or updates a branch ruleset named "agentic-setup"
+// with the checks the merge model depends on (docs/decisions.md item 9(a)).
+// `ghRepo` carries no workflow files of its own, so the third required
+// check falls back to its default, "test".
+check('init without --rules never touches the rulesets endpoint', !/rulesets/.test(ghLog(state1)), ghLog(state1));
+
+const stateRulesEmpty = mkdtempSync(join(tmpdir(), 'agentic-init-rules-empty-'));
+cleanup(() => rmSync(stateRulesEmpty, { recursive: true, force: true }));
+const rulesEmpty = initWithGh(ghRepo, stateRulesEmpty, '--rules');
+check('init --rules (no existing ruleset) exits 0', rulesEmpty.status === 0, `${rulesEmpty.stdout}${rulesEmpty.stderr}`);
+check('init --rules creates a ruleset when none named agentic-setup exists', /\+ ruleset created/.test(rulesEmpty.stdout), rulesEmpty.stdout);
+check('init --rules POSTs to the rulesets collection', ghLog(stateRulesEmpty).includes('rulesets -X POST'), ghLog(stateRulesEmpty));
+const postBody = JSON.parse(readFileSync(join(stateRulesEmpty, 'ruleset-post-body.json'), 'utf8'));
+check('the created ruleset targets the default branch', postBody.conditions.ref_name.include.includes('refs/heads/main'), JSON.stringify(postBody));
+check(
+  'the created ruleset requires scope, negative-control and the default test check',
+  JSON.stringify(postBody.rules.find((r: { type: string }) => r.type === 'required_status_checks').parameters.required_status_checks) ===
+    JSON.stringify([{ context: 'scope' }, { context: 'negative-control' }, { context: 'test' }]),
+  JSON.stringify(postBody),
+);
+check(
+  'the created ruleset requires a pull request and blocks force-push and deletion',
+  ['pull_request', 'non_fast_forward', 'deletion'].every((t) => postBody.rules.some((r: { type: string }) => r.type === t)),
+  JSON.stringify(postBody),
+);
+
+const stateRulesExisting = mkdtempSync(join(tmpdir(), 'agentic-init-rules-existing-'));
+cleanup(() => rmSync(stateRulesExisting, { recursive: true, force: true }));
+writeFileSync(join(stateRulesExisting, 'rulesets-list.json'), JSON.stringify([{ id: 42, name: 'agentic-setup', target: 'branch' }]));
+const rulesExisting = initWithGh(ghRepo, stateRulesExisting, '--rules');
+check('init --rules (existing agentic-setup ruleset) exits 0', rulesExisting.status === 0, `${rulesExisting.stdout}${rulesExisting.stderr}`);
+check('init --rules updates the existing ruleset instead of creating one', /= ruleset updated/.test(rulesExisting.stdout), rulesExisting.stdout);
+check('init --rules PUTs to the existing ruleset by id', ghLog(stateRulesExisting).includes('rulesets/42 -X PUT'), ghLog(stateRulesExisting));
+check('init --rules does not also create a second ruleset', !existsSync(join(stateRulesExisting, 'ruleset-post-body.json')));
+
+const stateRules403 = mkdtempSync(join(tmpdir(), 'agentic-init-rules-403-'));
+cleanup(() => rmSync(stateRules403, { recursive: true, force: true }));
+writeFileSync(join(stateRules403, 'rulesets-403'), '');
+const rules403 = initWithGh(ghRepo, stateRules403, '--rules');
+check('init --rules still exits 0 when the plan forbids rulesets', rules403.status === 0, `${rules403.stdout}${rules403.stderr}`);
+check(
+  'init --rules reports the free-plan private-repository limit on a 403',
+  rules403.stdout.includes('! ruleset: not available on this plan for a private repository'),
+  rules403.stdout,
+);
+
+const stateRulesDry = mkdtempSync(join(tmpdir(), 'agentic-init-rules-dry-'));
+cleanup(() => rmSync(stateRulesDry, { recursive: true, force: true }));
+const rulesDry = initWithGh(ghRepo, stateRulesDry, '--rules', '--dry-run');
+check('init --rules --dry-run exits 0', rulesDry.status === 0, `${rulesDry.stdout}${rulesDry.stderr}`);
+check('init --rules --dry-run reports the same outcome a real run would', /\+ ruleset created/.test(rulesDry.stdout), rulesDry.stdout);
+check(
+  'init --rules --dry-run reads the rulesets list but never writes one',
+  ghLog(stateRulesDry).includes('rulesets') && !ghLog(stateRulesDry).includes('-X POST') && !ghLog(stateRulesDry).includes('-X PUT'),
+  ghLog(stateRulesDry),
+);
 
 finish();

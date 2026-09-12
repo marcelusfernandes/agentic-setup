@@ -23,8 +23,9 @@ never created. Drop the flag to apply once the preview looks right.
 
 Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--dry-run` previews without
 writing anything; `--milestone "<title>"` creates the first milestone (optional); `--no-gh`
-skips labels and milestone (offline, or no `gh` auth); `--force` overwrites files you
-edited before (it never overwrites silently).
+skips labels, milestone and the ruleset (offline, or no `gh` auth); `--force` overwrites
+files you edited before (it never overwrites silently); `--rules` creates or updates the
+branch ruleset (see step 7 below) — omit it to leave rulesets untouched entirely.
 
 The script is idempotent. It:
 
@@ -41,17 +42,27 @@ The script is idempotent. It:
    both: the first for `gh pr merge --auto` to have anything to enable, the second so a
    merged branch is deleted for it;
 6. seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:decided`
-   labels, and the milestone. An existing bare `human` label is left as found.
+   labels, and the milestone. An existing bare `human` label is left as found;
+7. **with `--rules`:** reads `repos/{owner}/{repo}/rulesets` and creates (POST) or updates
+   (PUT) a ruleset named `agentic-setup` on the repository's default branch, requiring a
+   pull request and `required_status_checks` for `scope`, `negative-control` and this
+   repository's own test workflow's job (the sole job of the sole workflow file this plugin
+   does not own; defaults to `test` when that is not unambiguous), and blocking
+   force-push and deletion. The read happens even under `--dry-run` so the report can say
+   `+ ruleset created` vs `= ruleset updated` without writing; a 403 — rulesets are not
+   available on a private repository on the free plan — is reported as exactly that,
+   `! ruleset: not available on this plan for a private repository`, instead of `gh`'s raw
+   error. Without `--rules`, no `rulesets` call is made at all.
 
 Then, by hand — the script cannot do these:
 
 - Review `git status` and open the bootstrap PR with these files. Pushing the very first
   commit to `main` needs the message to contain `[allow-push-main]` (`guard-main`'s escape
   hatch, bootstrap only, visible in the history).
-- Make `scope`, `negative-control` and your own test workflow **required checks** on
-  `main`. Add a ruleset (PR required, no force-push, no deletion) if your plan allows one;
-  keep the hooks either way — they are the fallback for a repository with no ruleset yet
-  (a private repository on the free plan).
+- If `--rules` reported the free-plan limit (or you skipped it), make `scope`,
+  `negative-control` and your own test workflow **required checks** on `main` by hand
+  instead; keep the pre-push hook either way — it is the fallback for a repository with no
+  ruleset (a private repository on the free plan).
 - Add `scope:` labels that match your repository (`web`, `api`, `db`, …).
 - In `.github/workflows/agentic-checks.yml`, mirror your test workflow's toolchain setup
   in the `negative-control` job, and set `AGENTIC_TEST_CMD` if detection does not name the
@@ -61,7 +72,9 @@ Then, by hand — the script cannot do these:
   or a GitHub App installation with pull-request write, and store its token as
   `AGENTIC_REVIEWER_TOKEN` wherever the orchestrator and reviewer run (never in this
   repository — `init` never writes it anywhere). **Order matters:** first set the base
-  branch ruleset's `required_approving_review_count` to 1, *then* set the token. GitHub
+  branch ruleset's `required_approving_review_count` to 1 (`--rules` creates or updates the
+  ruleset but never sets this field itself — edit the `agentic-setup` ruleset it made),
+  *then* set the token. GitHub
   only computes a PR's `reviewDecision` on a branch where a review is actually required;
   set the token before that rule exists and `reviewDecision` stays `null` forever, so
   every PR refuses in `land.mts` with no way to satisfy it (`scripts/land.mts`'s header
