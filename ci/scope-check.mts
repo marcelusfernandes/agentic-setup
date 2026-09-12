@@ -31,7 +31,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import type { FileLinesEntry } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
 
@@ -104,6 +105,38 @@ function grepReferences(removedPath: string): string[] {
   return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
+// The content of `path` at `ref`, or null when it does not exist there (a
+// new file at head, or absent at base).
+function showAt(base: string, path: string): string | null {
+  const r = spawnSync('git', ['show', `${base}:${path}`], { cwd: root, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout : null;
+}
+
+function countLines(content: string): number {
+  if (content === '') return 0;
+  const withoutTrailingNewline = content.endsWith('\n') ? content.slice(0, -1) : content;
+  return withoutTrailingNewline.split('\n').length;
+}
+
+// One entry per changed path that still exists at head — a deleted path has
+// no head line count to check against the 800-line rule.
+function growthEntries(base: string, head: string, paths: string[]): FileLinesEntry[] {
+  const out: FileLinesEntry[] = [];
+  for (const path of paths) {
+    const headContent = showAt(head, path);
+    if (headContent === null) continue;
+    const baseContent = showAt(base, path);
+    const firstLine = headContent.split(/\r?\n/, 1)[0] ?? '';
+    out.push({
+      path,
+      baseLines: baseContent === null ? null : countLines(baseContent),
+      headLines: countLines(headContent),
+      generated: /@generated/.test(firstLine),
+    });
+  }
+  return out;
+}
+
 type DanglingRef = { removed: string; referencedBy: string };
 
 /** A hit is dangling unless it sits inside the diff itself (git grep runs
@@ -163,22 +196,33 @@ if (issueGlobs.length === 0) fail('the linked issue(s) declare no globs under `#
 const authorisedGlobs = parseAuthorisedGlobs(prBody);
 const result = checkScope({ files, issueGlobs, authorisedGlobs });
 const dangling = danglingReferences(removed, files, [...issueGlobs, ...authorisedGlobs]);
-const ok = result.ok && dangling.length === 0;
+const growth = baseRef && headRef ? fileGrowth(growthEntries(baseRef, headRef, files)) : [];
+const ok = result.ok && dangling.length === 0 && growth.length === 0;
 // A grant written outside ## Files never reaches parseAuthorisedGlobs, so
-// it silently doesn't count; only worth surfacing once the check actually
-// fails on something it might have covered.
-const misplacedAuthorised = ok ? [] : findMisplacedAuthorisedLines(prBody);
+// it silently doesn't count; only worth surfacing once the glob check
+// itself fails on something it might have covered — dangling references
+// and file growth are unrelated to authorised: grants.
+const misplacedAuthorised = result.ok ? [] : findMisplacedAuthorisedLines(prBody);
 
-console.log(JSON.stringify({ ...result, ok, danglingReferences: dangling, ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}) }, null, 2));
+let firstLine: string;
+if (!result.ok) {
+  firstLine = '**FAILED** — outside the linked issues\' globs:';
+} else if (ok) {
+  firstLine = `${files.length} file(s), all inside the linked issues' globs.`;
+} else if (growth.length === 0) {
+  firstLine = `**FAILED** — ${dangling.length} dangling reference(s); every changed file is inside the linked issues' globs.`;
+} else if (dangling.length === 0) {
+  firstLine = `**FAILED** — ${growth.length} file(s) new or grown past ${FILE_LINE_LIMIT} lines; every changed file is inside the linked issues' globs.`;
+} else {
+  firstLine = `**FAILED** — ${dangling.length} dangling reference(s) and ${growth.length} file(s) new or grown past ${FILE_LINE_LIMIT} lines; every changed file is inside the linked issues' globs.`;
+}
+
+console.log(JSON.stringify({ ...result, ok, danglingReferences: dangling, growth, ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}) }, null, 2));
 appendSummary(
   [
     '## scope',
     '',
-    result.ok
-      ? ok
-        ? `${files.length} file(s), all inside the linked issues' globs.`
-        : `**FAILED** — ${dangling.length} dangling reference(s); every changed file is inside the linked issues' globs.`
-      : '**FAILED** — outside the linked issues\' globs:',
+    firstLine,
     ...(result.ok ? [] : result.violations.map((f) => `- \`${f}\``)),
     ...(misplacedAuthorised.length
       ? [
@@ -197,6 +241,15 @@ appendSummary(
           '',
           '**FAILED** — removed or renamed, still referenced outside the diff:',
           ...dangling.map((d) => `- \`${d.removed}\` referenced by \`${d.referencedBy}\``),
+        ]
+      : []),
+    ...(growth.length
+      ? [
+          '',
+          '### File growth',
+          '',
+          `**FAILED** — new or grown past ${FILE_LINE_LIMIT} lines:`,
+          ...growth.map((g) => `- \`${g.path}\` ${g.baseLines === null ? 'is new at' : `grew from ${g.baseLines} to`} ${g.headLines} line(s)`),
         ]
       : []),
   ].join('\n'),

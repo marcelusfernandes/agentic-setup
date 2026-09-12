@@ -99,6 +99,30 @@ export function findMisplacedAuthorisedLines(prBody: string): string[] {
   return misplaced;
 }
 
+export const FILE_LINE_LIMIT = 800;
+
+export type FileLinesEntry = { path: string; baseLines: number | null; headLines: number; generated: boolean };
+export type FileGrowth = { path: string; baseLines: number | null; headLines: number };
+
+/**
+ * A file that is new or grew past FILE_LINE_LIMIT, unless its first line
+ * marks it `@generated`. `baseLines` is null for a file that did not exist
+ * at the base (new at head) — that always counts as "grew" when it lands
+ * over the limit. A file already over the limit that shrinks or holds
+ * steady is not a violation: only crossing further, or landing over it for
+ * the first time, is.
+ */
+export function fileGrowth(entries: FileLinesEntry[]): FileGrowth[] {
+  const out: FileGrowth[] = [];
+  for (const { path, baseLines, headLines, generated } of entries) {
+    if (generated) continue;
+    if (headLines <= FILE_LINE_LIMIT) continue;
+    if (baseLines !== null && headLines <= baseLines) continue;
+    out.push({ path, baseLines, headLines });
+  }
+  return out;
+}
+
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
   const globs = [...issueGlobs, ...authorisedGlobs];
   const violations = files.filter((f) => !matchesAny(f, globs));
