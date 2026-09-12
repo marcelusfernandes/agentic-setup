@@ -210,9 +210,10 @@ per pass.
 On every verdict the reviewer returns, first comment its JSON on the PR yourself, then
 apply the labels — `land.mts` and `reconcile.mts` read them regardless of what follows:
 
-- `approved` → `gh pr edit <pr> --add-label review:approved --remove-label state:qa-failed`
-  (the remove is harmless when the label was never there — a first-round approval has
-  nothing to remove).
+- `approved` → `gh pr edit <pr> --add-label review:approved --add-label state:in-review
+  --remove-label state:qa-failed` (the remove is harmless when the label was never there —
+  a first-round approval has nothing to remove; the add restores `state:in-review` when a
+  prior rejection removed it, per the rejected bullet below).
 - `rejected` → `gh pr edit <pr> --add-label state:qa-failed --remove-label state:in-review`.
 - a **second** `rejected` verdict on the same issue → additionally `gh issue edit <n>
   --add-label state:blocked --add-label human:pending`, comment the summary on the issue,
@@ -285,10 +286,12 @@ labelling happens.
 
 ## 6. Close the milestone, then keep going
 
-- Milestone with no open issue left → open the next milestone's parent issue and, as
-  planner, its sub-issues (skill `issue-and-pr`, "Write sub-issues"), then continue the
-  loop from step 0 on the new milestone. Do not stop here — this is not one of the three
-  stop reasons.
+- Milestone with no open issue left → close it first: look its number up by title
+  (`gh api repos/{owner}/{repo}/milestones --jq '.[] | select(.title=="<current>") |
+  .number'`), then `gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f
+  state=closed`. Only then open the next milestone's parent issue and, as planner, its
+  sub-issues (skill `issue-and-pr`, "Write sub-issues"), then continue the loop from step 0
+  on the new milestone. Do not stop here — this is not one of the three stop reasons.
 - Nothing left to dispatch this instant, but the milestone still has open issues → check
   the three stop reasons above before stopping. If none applies (for example, a `humanPending`
   issue was just cleared by a person, or GitHub is still indexing a write from a moment

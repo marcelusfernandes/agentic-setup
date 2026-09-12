@@ -29,7 +29,7 @@ parent issue is the orchestrator's job when the current one has nothing left.
 | `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
 | `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | whoever writes the issue |
-| `review:approved` | the reviewer returned approved | reviewer |
+| `review:approved` | the reviewer returned approved | orchestrator |
 | `human:pending` | a person must decide; not dispatched until they do | orchestrator (and `guard-main`) |
 | `human:decided` | the decision is recorded; kept as the audit trail, never blocks (named `decided`, not `reviewed`, so it is never mistaken for `review:approved`) | a person |
 

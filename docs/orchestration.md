@@ -54,7 +54,8 @@ Two roles:
    verdict; it no longer comments on the PR or touches its labels (that moved here, to the
    orchestrator, in step 5) — read `agents/reviewer.md`. Check CI with `gh pr checks <n>`
 5. on the verdict: comment it on the PR and apply the labels yourself — `approved` →
-   `review:approved` (+ remove `state:qa-failed`); `rejected` → `state:qa-failed`; a
+   `review:approved` + `state:in-review` (+ remove `state:qa-failed`, restoring
+   `state:in-review` when a prior rejection removed it); `rejected` → `state:qa-failed`; a
    *second* `rejected` on the same issue → additionally `state:blocked` + `human:pending`
    on the issue, comment the summary, move on (exception: a mechanical defect with the
    exact fix named by the reviewer earns one short extra round instead)
@@ -75,10 +76,12 @@ Two roles:
    (round 2), then back to 4
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
    a published branch)
-6. milestone with no open issue left → open the next milestone's parent issue and its
-   sub-issues, then keep looping on the new milestone — this is not a stop condition;
-   nothing left to dispatch this instant, but the milestone still has open issues → check
-   the closed list of stop reasons below before actually stopping
+6. milestone with no open issue left → close it (look its number up by title, then
+   `gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f state=closed`), then open the
+   next milestone's parent issue and its sub-issues, then keep looping on the new
+   milestone — this is not a stop condition; nothing left to dispatch this instant, but
+   the milestone still has open issues → check the closed list of stop reasons below
+   before actually stopping
 ```
 
 Why "reconcile from GitHub": the orchestrator's context is summarised, restarted and
