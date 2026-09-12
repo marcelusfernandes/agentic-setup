@@ -393,6 +393,35 @@ check(
   rGrowth.status === 1 && /src\/big\.ts/.test(rGrowth.out) && /### File growth/.test(rGrowth.out),
   rGrowth.out,
 );
+check(
+  "scope JSON's growth key names the one file that grew past the limit",
+  (() => {
+    const growth = scopeJson(rGrowth.out).growth;
+    return Array.isArray(growth) && growth.length === 1 && growth[0].path === 'src/big.ts';
+  })(),
+  rGrowth.out,
+);
+
+// #134 round 2: `misplacedAuthorised` must stay tied to a glob failure —
+// `result.ok` — and not to the overall `ok`, which also folds in growth
+// and dangling-reference failures. Globs here cover every changed file
+// (issueSrcStar matches src/**), so the glob check passes even though the
+// growth check still fails the run; a stray authorised: line outside
+// ## Files must not be reported as misplacedAuthorised in that case.
+const prGrowthMisplaced = file(
+  'pr-growth-misplaced.md',
+  'Closes #1\n\n- authorised: `src/other.ts`\n  (stray grant outside ## Files; globs already cover everything)\n\n## Files\nGlobs touched.\n',
+);
+const rGrowthMisplaced = ci('scope-check.mts', [
+  '--base', growthBase, '--head', growthHead,
+  '--issue-body-file', issueSrcStar, '--pr-body-file', prGrowthMisplaced,
+  '--root', growthRepo,
+]);
+check(
+  'scope does not report misplacedAuthorised when only the growth check fails and the glob check passes',
+  rGrowthMisplaced.status === 1 && !('misplacedAuthorised' in scopeJson(rGrowthMisplaced.out)),
+  rGrowthMisplaced.out,
+);
 
 // Already over 800 and edited, without growing further, is not a violation.
 git(['checkout', '-q', '-b', 'feat/134-already-900', growthHead], growthRepo);
