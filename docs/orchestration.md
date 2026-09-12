@@ -111,15 +111,19 @@ milestone unattended (#129 L13, PR #130):
 claude --plugin-dir <path-to-the-agentic-setup-plugin-checkout> \
   -p "/agentic-setup:orchestrate" \
   --permission-mode acceptEdits \
-  --allowedTools Bash Read Edit Write Glob Grep Agent \
-  --settings '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":"node \"<path-to-the-plugin-checkout>/hooks/worktree-create.mts\""}]}]}}'
+  --allowedTools Bash Read Edit Write Glob Grep Agent
 ```
 
 What each flag is for:
 
 - `--plugin-dir <path>` — points the session at a local checkout of this plugin instead of
   the marketplace install, so `CLAUDE_PLUGIN_ROOT` resolves for every script and hook
-  invocation the same way it does interactively.
+  invocation the same way it does interactively, and so `hooks/hooks.json` — which already
+  registers `worktree-create.mts` for `WorktreeCreate` (see the hooks table above) — loads
+  with it. Every agent's worktree then lands under
+  `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>` instead of Claude Code's own
+  default `.claude/worktrees/agent-<id>`, a path whose protected-path rules denied a
+  headless session's writes outright (#129 L10).
 - `-p "/agentic-setup:orchestrate"` — runs the skill once, to completion (the loop inside
   it, not one pass), and exits when the loop stops; there is no REPL to leave running.
 - `--permission-mode acceptEdits` — accepts file edits without a prompt; `Bash` calls still
@@ -128,17 +132,21 @@ What each flag is for:
   `main` or writing outside its worktree, not this flag.
 - `--allowedTools Bash Read Edit Write Glob Grep Agent` — the minimum set the orchestrator
   and the implementers/reviewers it dispatches need; `Agent` is what lets the orchestrator
-  launch them as foreground subagents (`docs/decisions.md`, #129 L11 — a backgrounded
-  implementer's work dies with the top-level session that returned before it finished, so
-  the prompt and this flag both matter, not the flag alone).
-- `--settings '{"hooks":{"WorktreeCreate":[...]}}'` — registers `worktree-create.mts` (see
-  the hooks table below) for this session only, so every agent's worktree lands under
-  `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>` instead of
-  `.claude/worktrees/agent-<id>`, a path Claude Code's own protected-path rules deny
-  writes into from a headless session (#129 L10). A project-wide install can instead add
-  the same entry to `hooks/hooks.json` (already done in this plugin) so every session picks
-  it up without the `--settings` flag; the flag is for a checkout that has not adopted it
-  yet, or for overriding the destination per invocation.
+  launch them as foreground subagents — a backgrounded implementer's work dies with the
+  top-level session that returned before it finished (#129 L11), so the prompt asking for
+  foreground agents and this flag both matter, not the flag alone.
+
+**Fallback, only when the loaded plugin predates this hook:** pass the same
+`WorktreeCreate` registration with `--settings <file>`, pointing at a small JSON file (the
+run that first proved this out, #129 L13, used exactly this — a settings file, not inline
+JSON, since a shell tends to mangle deeply nested quoting):
+
+```json
+{ "hooks": { "WorktreeCreate": [ { "hooks": [ { "type": "command", "command": "node \"<path-to-the-plugin-checkout>/hooks/worktree-create.mts\"" } ] } ] } }
+```
+
+Never pass both a plugin whose `hooks/hooks.json` already has the entry **and**
+`--settings` with another one for the same event — which command wins is undefined.
 
 Turn and time budgets, when wanted, are ordinary flags around the same command —
 `--max-turns <n>` on `claude` itself for a turn budget, an external `timeout <seconds>

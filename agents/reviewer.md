@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews a PR against the issue's acceptance criteria, its scope and the project's invariants. Never edits or merges. Returns JSON and sets review:approved (with a real review too, when a reviewer identity is configured) or the reason for rejection.
+description: Reviews a PR against the issue's acceptance criteria, its scope and the project's invariants. Never edits or merges. Returns the JSON verdict to the orchestrator, which comments it and applies the labels (review:approved or state:qa-failed); also casts a real GitHub review when a reviewer identity is configured.
 model: opus
 tools: Read, Grep, Glob, Bash
 memory: project

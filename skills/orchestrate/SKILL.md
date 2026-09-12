@@ -292,7 +292,7 @@ labelling happens.
 - Nothing left to dispatch this instant, but the milestone still has open issues → check
   the three stop reasons above before stopping. If none applies (for example, a `humanPending`
   issue was just cleared by a person, or GitHub is still indexing a write from a moment
-  ago — `docs/orchestration.md` "L6"), reconcile again rather than stopping.
+  ago — #129 L6), reconcile again rather than stopping.
 
 ## Escalate to a person (label `human:pending`, comment on the issue)
 
