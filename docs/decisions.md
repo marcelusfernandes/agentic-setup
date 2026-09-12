@@ -77,9 +77,16 @@ split is read as pending. Earlier items above keep their original wording.
 `main` is the only trunk. Protection has three layers; use as many as your plan allows.
 
 - **(a) Server-side, preferred:** a GitHub ruleset on `main` — PR required, required
-  checks, no force-push, no deletion. Free on public repositories and on paid
-  organisations; **not available on private repositories under the free plan** (rulesets
-  and branch protection return 403 there).
+  checks (`scope`, `negative-control`, and the adopting repository's own test workflow),
+  no force-push, no deletion. `node scripts/init.mts --rules` is the way in: it reads
+  `repos/{owner}/{repo}/rulesets` and creates (POST) or updates (PUT) a ruleset named
+  `agentic-setup` with exactly those rules, reporting `+ ruleset created` or
+  `= ruleset updated`; it never touches `required_approving_review_count` (item 13 covers
+  that separately). Free on public repositories and on paid organisations; **not available
+  on private repositories under the free plan** (rulesets and branch protection return
+  403 there) — `--rules` reports that as `! ruleset: not available on this plan for a
+  private repository` rather than surfacing `gh`'s raw error, and refuses to fall back to
+  anything silently: make the same three checks required by hand instead.
 - **(b) On every machine that runs Claude Code:** the plugin's `protect-main.mts` hook
   plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
   `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
