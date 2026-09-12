@@ -3,7 +3,9 @@
 ## The orchestrator
 
 One Claude Code session at the repository root (not in a worktree), running
-`/agentic-setup:orchestrate` one pass at a time. Two roles:
+`/agentic-setup:orchestrate` as a continuous loop over every open milestone — see
+"Headless" below for the unattended command and the loop's closed list of stop reasons.
+Two roles:
 
 - **planner:** decomposes the milestone's parent issue into self-sufficient sub-issues
   (context with `file:line` references, acceptance criteria, proof, globs,
@@ -48,29 +50,103 @@ One Claude Code session at the repository root (not in a worktree), running
    `implementer` in its own worktree with the whole issue in the prompt; a `resumable`
    issue skips `claim.mts` — the lock is already held — and launches straight to an
    implementer as round N+1 from origin/<branch>
-4. PR opened → launch a `reviewer` (read-only) and wait for CI
-5. green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`
+4. PR opened → launch a `reviewer` (read-only), wait for it. The reviewer returns the JSON
+   verdict; it no longer comments on the PR or touches its labels (that moved here, to the
+   orchestrator, in step 5) — read `agents/reviewer.md`. Check CI with `gh pr checks <n>`
+5. on the verdict: comment it on the PR and apply the labels yourself — `approved` →
+   `review:approved` (+ remove `state:qa-failed`); `rejected` → `state:qa-failed`; a
+   *second* `rejected` on the same issue → additionally `state:blocked` + `human:pending`
+   on the issue, comment the summary, move on (exception: a mechanical defect with the
+   exact fix named by the reviewer earns one short extra round instead)
+   green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`
    refuses unless the PR is OPEN and approved, then gates on the base branch's ruleset
    when it has a `required_status_checks` rule, else on `gh pr checks <pr> --required`,
    then queues `gh pr merge <pr> --squash --auto` — the server merges once its own rules
    are satisfied. `Closes #N` closes the issue on merge (closed is done, nothing to
    relabel); the repository's `delete_branch_on_merge` setting removes the branch, and
-   the now-orphaned worktree is picked up by `orphanWorktrees` on a later pass → back to 1
+   the now-orphaned worktree is picked up by `orphanWorktrees` on a later pass. After
+   `land.mts` reports `{ queued }`/`{ merged }`, poll `reconcile.mts` (a fixed pause
+   between reads, not a tight loop) until the issue drops out of `inReview`/`inProgress`/
+   `resumable` entirely, then loop back to 1
    `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `checks:required`,
    or `gh-pr-view`) → read it and decide between waiting and sending the PR back; never a
    retry with `--admin`
-   rejected (CI or reviewer) → back to the implementer with the summary (round 2)
+   rejected (CI or reviewer), first time → back to the implementer with the summary
+   (round 2), then back to 4
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
    a published branch)
-   second rejection → state:blocked + human, comment with the summary, move on
-     (exception: a mechanical defect with the exact fix named by the reviewer earns
-      one short extra round; a rejection with judgment pending blocks)
-6. pass with nothing to do → summary of what is blocked on the parent issue;
-   milestone with no open issue → open the next milestone's parent issue
+6. milestone with no open issue left → open the next milestone's parent issue and its
+   sub-issues, then keep looping on the new milestone — this is not a stop condition;
+   nothing left to dispatch this instant, but the milestone still has open issues → check
+   the closed list of stop reasons below before actually stopping
 ```
 
 Why "reconcile from GitHub": the orchestrator's context is summarised, restarted and
 lost. Labels, branches and PRs are not. Every pass starts by reading them.
+
+## Stop reasons
+
+The loop above runs to completion, not one pass; it stops only for one of these three
+reasons, spelled out in full in `skills/orchestrate/SKILL.md`:
+
+1. No open milestone.
+2. Every open issue in the milestone is `state:blocked`, `human:pending`, or otherwise
+   waiting on a person — including a `reconcile`/`gh`/`git` call itself failing with
+   `{ error }`, which needs a person, not a retry.
+3. An explicit turn or time budget given on the command line (`--max-turns`, or an
+   external `timeout`) is spent.
+
+On stop, the orchestrator comments a summary on the milestone's parent issue.
+
+## Headless
+
+Running the loop unattended, with no person watching the session, needs a Claude Code
+session started with `-p` (print mode: run to completion, no interactive prompts), a
+worktree hook so agent worktrees land outside `.claude/` (see the hooks table below), and
+enough tool permission granted up front that neither the orchestrator nor an implementer
+stalls on a permission prompt nobody is there to answer. The command that reached a closed
+milestone unattended (#129 L13, PR #130):
+
+```bash
+claude --plugin-dir <path-to-the-agentic-setup-plugin-checkout> \
+  -p "/agentic-setup:orchestrate" \
+  --permission-mode acceptEdits \
+  --allowedTools Bash Read Edit Write Glob Grep Agent \
+  --settings '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":"node \"<path-to-the-plugin-checkout>/hooks/worktree-create.mts\""}]}]}}'
+```
+
+What each flag is for:
+
+- `--plugin-dir <path>` — points the session at a local checkout of this plugin instead of
+  the marketplace install, so `CLAUDE_PLUGIN_ROOT` resolves for every script and hook
+  invocation the same way it does interactively.
+- `-p "/agentic-setup:orchestrate"` — runs the skill once, to completion (the loop inside
+  it, not one pass), and exits when the loop stops; there is no REPL to leave running.
+- `--permission-mode acceptEdits` — accepts file edits without a prompt; `Bash` calls still
+  go through the `allowedTools` list and the two `PreToolUse` hooks (`protect-main.mts`,
+  `protect-worktree.mts`), which is what actually keeps a headless session from pushing to
+  `main` or writing outside its worktree, not this flag.
+- `--allowedTools Bash Read Edit Write Glob Grep Agent` — the minimum set the orchestrator
+  and the implementers/reviewers it dispatches need; `Agent` is what lets the orchestrator
+  launch them as foreground subagents (`docs/decisions.md`, #129 L11 — a backgrounded
+  implementer's work dies with the top-level session that returned before it finished, so
+  the prompt and this flag both matter, not the flag alone).
+- `--settings '{"hooks":{"WorktreeCreate":[...]}}'` — registers `worktree-create.mts` (see
+  the hooks table below) for this session only, so every agent's worktree lands under
+  `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>` instead of
+  `.claude/worktrees/agent-<id>`, a path Claude Code's own protected-path rules deny
+  writes into from a headless session (#129 L10). A project-wide install can instead add
+  the same entry to `hooks/hooks.json` (already done in this plugin) so every session picks
+  it up without the `--settings` flag; the flag is for a checkout that has not adopted it
+  yet, or for overriding the destination per invocation.
+
+Turn and time budgets, when wanted, are ordinary flags around the same command —
+`--max-turns <n>` on `claude` itself for a turn budget, an external `timeout <seconds>
+claude -p ...` for a time budget — never invented by the orchestrator itself; see "Stop
+reasons" above.
+
+The loop stops only for the three reasons above; it does not stop merely because a
+person is not watching.
 
 ## The implementer, step by step
 
@@ -91,8 +167,10 @@ lost. Labels, branches and PRs are not. Every pass starts by reading them.
    several may be linked, the diff must fit the union of their globs, never quote a
    keyword inside backticks or a fence — test summary, globs touched). Label
    `state:in-review`. Copy the issue's `type:`/`scope:` labels onto the PR.
-8. Stop. Do not merge. If CI or the reviewer sends it back, fix in the same worktree
-   and update the PR.
+8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator watches
+   the checks and launches the reviewer; polling here would only burn the implementer's
+   own turns. If CI or the reviewer sends it back, fix in the same worktree and update
+   the PR.
 
 Forbidden: `git stash`, `git reset --hard`, `git checkout <file>`, `git clean`,
 force-push, editing outside the globs, touching the root manifest or lockfile. Need a
@@ -110,17 +188,19 @@ such). Returns JSON:
 {"verdict": "approved" | "rejected", "reasons": [{"ac": "AC2", "file": "path:line", "missing": "..."}]}
 ```
 
-and sets `review:approved`, or `state:qa-failed` with the reasons. When
-`AGENTIC_REVIEWER_TOKEN` is set in its environment, it also casts a real GitHub review
-(`gh pr review --approve` or `--request-changes`) as that separate identity — the label
-stays a convenience, but `land.mts` then requires the review itself, not the label
-(`agents/reviewer.md`, `docs/decisions.md` item 13). Never edits, never merges, never
-offers to fix.
+and returns it to the orchestrator that launched it — it is the orchestrator, not the
+reviewer, that comments the verdict on the PR and sets `review:approved` or
+`state:qa-failed` (`skills/orchestrate/SKILL.md` step 5). When `AGENTIC_REVIEWER_TOKEN` is
+set in its environment, the reviewer also casts a real GitHub review (`gh pr review
+--approve` or `--request-changes`) as that separate identity — `land.mts` then requires
+the review itself, not the label (`agents/reviewer.md`, `docs/decisions.md` item 13).
+Never edits, never merges, never offers to fix.
 
 ## Hooks (deterministic, instead of prose)
 
 | event | hook | what it does |
 |---|---|---|
+| WorktreeCreate | `worktree-create.mts` | creates every agent's worktree itself, outside the main checkout — `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>`, detached HEAD, `node_modules` symlinked in when the checkout has one, path printed on stdout. Ships because Claude Code's own default (`.claude/worktrees/agent-<id>`) sits under a protected path and a headless implementer's writes there were denied (#129 L10/L11); this hook replaces that default once registered. Fails **closed**: any error exits 1 with nothing on stdout, since there is no later layer to catch a bogus or missing worktree the way the ruleset catches a missed push |
 | PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin`. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion. Force-push, `reset --hard`, `clean` and `stash` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
 
@@ -130,9 +210,11 @@ queued — see item 13 of `docs/decisions.md` for why the earlier Stop-hook laye
 
 Hooks run with Claude Code's environment (`${CLAUDE_PLUGIN_ROOT}` resolves to the plugin,
 the payload's `cwd` to the agent's worktree). A change to a hook takes effect after the
-plugin updates, for every agent at once. Hooks fail **open** when Node is missing — the
-git `pre-push` hook, the ruleset (when the plan allows one) and the `guard-main` action
-are the other layers.
+plugin updates, for every agent at once. The two `PreToolUse` hooks fail **open** when
+Node is missing or they crash — the git `pre-push` hook, the ruleset (when the plan
+allows one) and the `guard-main` action are the other layers behind them.
+`worktree-create.mts` is the exception: it fails **closed**, because there is nothing
+behind it to create the worktree if it does not (see the table above).
 
 ## Escalation to a person
 
@@ -146,8 +228,13 @@ split is read as pending.
 
 ## Known limits
 
-- **Every subagent is born pinned to a fresh worktree** (`.claude/worktrees/agent-<id>`)
-  and the sandbox refuses git in another worktree. Round N+1 of an issue starts from
+- **Every subagent is born pinned to a fresh worktree.** Claude Code's own default is
+  `.claude/worktrees/agent-<id>`, a protected path whose writes a headless session denied
+  outright (#129 L10/L11); the plugin ships a `WorktreeCreate` hook (`worktree-create.mts`,
+  see the table above) that creates it outside the main checkout instead —
+  `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>` — once registered in the
+  session's settings. Either way the sandbox refuses git in another worktree. Round N+1
+  of an issue starts from
   `origin/<branch>` on a local branch `<branch>-rN` and pushes fast-forward to `<branch>`;
   the state that matters is always on the remote (commit at every green). The
   orchestrator removes the old worktree **after** the merge, never before: pruning a
@@ -163,7 +250,10 @@ split is read as pending.
 - What limits parallelism is file conflict, not the subagent ceiling. Four issues with
   disjoint globs is the practical number.
 - The implementer does not wait on CI. Polling CI burns tokens; the reviewer follows the
-  checks and the orchestrator reconciles.
+  checks and comments its verdict back, and the orchestrator does the rest of the
+  waiting — it watches the checks (step 4), then, after queuing the merge, polls
+  `reconcile.mts` at a fixed interval until the PR is actually `MERGED` (step 5) before
+  moving to the next issue. Neither wait is a tight loop.
 - **The check re-run window no longer needs a client-side read.** A label change (or a
   push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
   earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where

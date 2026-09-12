@@ -15,7 +15,10 @@ project instructions and `.codex` settings.
 /agentic-setup:orchestrate
 ```
 
-This workflow executes one orchestrator pass per invocation. Its contracts are
+This workflow runs the orchestrator's loop across every open milestone, stopping only for
+the closed list of reasons in [orchestration.md](orchestration.md#stop-reasons); for an
+unattended run with no person watching the session, see
+[orchestration.md](orchestration.md#headless). Its contracts are
 [workflow](workflow.md), [orchestration](orchestration.md) and [decisions](decisions.md).
 It requires Node 22.18+, Git and authenticated `gh`. The old installer copies its CI
 and templates, installs its git hook and configures labels and repository settings.
