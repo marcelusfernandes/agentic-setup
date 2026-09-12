@@ -39,11 +39,21 @@ check(
   'SKILL.md step 6 opens the next milestone and continues, rather than only reporting',
   /next (open )?milestone/i.test(card) && /continu/i.test(card),
 );
+const closeStep = card.slice(card.indexOf('## 6. Close the milestone'));
+check('SKILL.md step 6 exists', closeStep.length > 0 && closeStep.length < card.length);
+check(
+  'SKILL.md step 6 actually closes the milestone (not just the heading)',
+  /gh api -X PATCH repos\/\{owner\}\/\{repo\}\/milestones\/<n>\s+-f\s+state=closed/.test(closeStep),
+);
 
 // AC5: the label transitions live in the orchestrator's own step, not the reviewer's.
 const decideStep = card.slice(card.indexOf('## 5. Decide'));
 check('SKILL.md step 5 exists', decideStep.length > 0 && decideStep.length < card.length);
 check('SKILL.md step 5 states the approved label transition', /review:approved/.test(decideStep) && /state:qa-failed/.test(decideStep));
+check(
+  'SKILL.md step 5 restores state:in-review on approval, symmetric with the rejected bullet removing it',
+  /--add-label review:approved --add-label state:in-review/.test(decideStep),
+);
 check('SKILL.md step 5 states the rejected label transition', /state:qa-failed/.test(decideStep));
 check(
   'SKILL.md step 5 states the second-rejection label transition',
