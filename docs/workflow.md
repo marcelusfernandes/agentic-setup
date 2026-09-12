@@ -78,7 +78,11 @@ then reports a false violation on every real file. Put the reason on its own
 non-bullet line under the glob.
 
 A sub-issue fits in one PR of roughly ≤ 800 lines of useful diff. If it does not, split
-it before dispatching.
+it before dispatching. That figure is a per-PR recommendation for whoever plans the
+work — nothing enforces it mechanically. Separately, `scope` enforces a per-file rule in
+CI: a PR fails if it adds a file over 800 lines or grows an existing one past 800 lines,
+counted against the base; a file already over 800 that shrinks or holds steady is not a
+violation, and a file whose first line reads `@generated` is exempt.
 
 Sub-issues are linked to the parent through GitHub's sub-issue API, which wants the
 issue **id**, not the number:
