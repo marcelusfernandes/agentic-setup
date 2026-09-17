@@ -45,11 +45,15 @@
 //                                                              // local worktree of this
 //                                                              // checkout (dead-locked ones
 //                                                              // don't count)
-//     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved }],
+//     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved, foreignLock }],
 //                                                              // checks comes from one
 //                                                              // `gh pr checks <pr>` call per
 //                                                              // in-review PR, not from the
-//                                                              // list-call's rollup
+//                                                              // list-call's rollup.
+//                                                              // foreignLock: the other
+//                                                              // route's lock and its pull
+//                                                              // request — reported, never
+//                                                              // reviewed or landed here
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     humanPending: [{ number, title, label }],               // carries human:pending or the
 //                                                              // legacy bare human (any case);
@@ -95,6 +99,15 @@
 // implementer to push to another coordinator's lock branch without
 // `claim.mts` ever being consulted. The lock is reported, never resumed:
 // only the route that owns the branch namespace works it.
+//
+// `inReview` carries the same flag for the same reason. The Codex loop
+// labels its own tasks `state:in-review`
+// (.agents/skills/autonomous-loop/scripts/github.mts), so once both lock
+// shapes resolve, such an issue reports that route's pull request where it
+// used to report `pr: null` — and steps 4-5 of skills/orchestrate/SKILL.md
+// act on `inReview[].pr` (watch its checks, launch a reviewer, `land` it).
+// `foreignLock: true` is what keeps this route from reviewing and merging
+// the other's pull request.
 //
 // Claude Code locks an agent worktree only while that agent runs, with a
 // reason of the form `claude agent agent-<id> (pid <N> start <date>)`; it
@@ -662,6 +675,9 @@ const inReview = issues
       pr: pr ? pr.number : null,
       checks: pr ? checksForPr(pr.number) : 'pending' as const,
       reviewApproved: pr ? hasLabel(pr.labels, 'review:approved') || pr.reviewDecision === 'APPROVED' : false,
+      // The other route's lock and pull request: reported so the state is
+      // visible, never reviewed or landed from here.
+      foreignLock: branch === codexLockBranch(i.number),
     };
   });
 

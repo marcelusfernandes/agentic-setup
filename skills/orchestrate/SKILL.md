@@ -87,7 +87,10 @@ left by the last one, for an offline check against the last fetch. Fields:
   right now" — it is round N+1 of that issue, resumed from `origin/<branch>` (skill
   `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer never
   pushed past the lock branch's starting point.
-- `inReview` — `{ number, pr, checks, reviewApproved }`: `state:in-review` issues.
+- `inReview` — `{ number, pr, checks, reviewApproved, foreignLock }`: `state:in-review`
+  issues. `foreignLock: true` means the pull request belongs to the Codex route, which
+  labels its own tasks `state:in-review` too: report it, do not review it, do not `land`
+  it, and do not wait on it.
   `checks` is `'green'`, `'red'` or `'pending'`, from one `gh pr checks <pr> --json
   name,bucket` call per PR (green when every surviving check's bucket is pass/skipping,
   red on any fail/cancel, else pending) — no rollup dedupe of its own.
@@ -255,6 +258,11 @@ dropping the line. Exit 0 →
 "Escalate to a person" (`human:pending`).
 
 ## 4. PR opened → review
+
+Only pull requests this route opened. An `inReview` entry with `foreignLock: true` is the
+other route's lock branch and its pull request (`codex/task-<n>`): do not label it, do not
+launch a reviewer on it and never `land.mts` it — reviewing and merging it is the Codex
+coordinator's job, and one coordinator owns an objective at a time (`AGENTS.md`).
 
 When an implementer returns with a PR: first copy the issue's `type:` and `scope:` labels
 onto it — `gh pr edit <pr> --add-label "type:<t>" --add-label "scope:<s>"`, the same

@@ -27,8 +27,11 @@ written in English; the language you talk to the agents in is your business.
   no pull request yet (the Codex loop's state between its claim push and its PR):
   `resumable` is dispatched as round N+1 *without* a claim
   (`skills/orchestrate/SKILL.md`), so a foreign lock left in that list would reach an
-  implementer with `claim.mts`'s refusal never consulted. Nobody on this route claims,
-  resumes or pushes to a `codex/task-<n>` branch.
+  implementer with `claim.mts`'s refusal never consulted. `inReview` carries the same flag
+  for the same reason — the Codex loop labels its own tasks `state:in-review`, so such an
+  entry now names that route's pull request, which this route reports but never reviews
+  and never lands. Nobody on this route claims, resumes, reviews, lands or pushes to a
+  `codex/task-<n>` branch.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
   committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
