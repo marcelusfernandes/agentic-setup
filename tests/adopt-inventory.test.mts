@@ -67,6 +67,7 @@ case "\${1:-} \${2:-}" in
     esac
     ;;
   "issue list")
+    if [ "\${FAKE_GH_FAIL:-}" = "issue-list" ]; then echo "fake-gh: issue search failed" >&2; exit 1; fi
     if [ -f "$state/created-title" ]; then
       title="$(cat "$state/created-title")"
       printf '[{"number":7,"title":"%s"}]\\n' "$title"
@@ -75,6 +76,7 @@ case "\${1:-} \${2:-}" in
     fi
     ;;
   "issue create")
+    if [ "\${FAKE_GH_FAIL:-}" = "issue-create" ]; then echo "fake-gh: could not create the issue" >&2; exit 1; fi
     : > "$state/issue-create.args"
     for a in "$@"; do printf '%s\\0' "$a" >> "$state/issue-create.args"; done
     prev=""
@@ -82,9 +84,13 @@ case "\${1:-} \${2:-}" in
       if [ "$prev" = "--title" ]; then printf '%s' "$a" > "$state/created-title"; fi
       prev="$a"
     done
+    # Exit 0 with output the caller cannot read a number out of: the branch
+    # where gh "succeeded" but said nothing usable.
+    if [ "\${FAKE_GH_FAIL:-}" = "issue-url" ]; then echo "Creating issue in org/repo"; exit 0; fi
     echo "https://github.com/org/repo/issues/7"
     ;;
   "label create")
+    if [ "\${FAKE_GH_FAIL:-}" = "label-create" ]; then echo "fake-gh: could not create the label" >&2; exit 1; fi
     echo "fake-gh: label created"
     ;;
   *)
@@ -100,6 +106,23 @@ writeFileSync(join(fakeGhDir, 'gh'), FAKE_GH);
 chmodSync(join(fakeGhDir, 'gh'), 0o755);
 const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 
+// --- a fake `git` that answers everything but one question ------------------
+// Real git for every call except `rev-parse --git-path hooks`, which exits
+// non-zero: the only way to exercise "git could not tell us where the hooks
+// live" without breaking `rev-parse --show-toplevel` in the same run.
+const REAL_GIT = (spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout ?? '').trim();
+const FAKE_GIT = `#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "--git-path" ]; then echo "fake-git: cannot resolve a git path" >&2; exit 1; fi
+done
+exec ${REAL_GIT} "$@"
+`;
+const fakeGitDir = mkdtempSync(join(tmpdir(), 'agentic-fakegit-adopt-'));
+cleanup(() => rmSync(fakeGitDir, { recursive: true, force: true }));
+writeFileSync(join(fakeGitDir, 'git'), FAKE_GIT);
+chmodSync(join(fakeGitDir, 'git'), 0o755);
+const PATH_WITH_FAKE_GIT = `${fakeGitDir}:${PATH_WITH_FAKE_GH}`;
+
 // --- fixtures ----------------------------------------------------------------
 /** A committed throwaway repository; `files` land in the initial commit. */
 function fixture(files: Record<string, string>): string {
@@ -108,11 +131,14 @@ function fixture(files: Record<string, string>): string {
   return dir;
 }
 
+/** The text of the hook `scripts/init.mts` installs, marker and all. */
+const OUR_PRE_PUSH = '#!/bin/sh\n# agentic-setup pre-push\nexit 0\n';
+
 /** Installs a pre-push hook that looks like the one scripts/init.mts writes. */
-function installPrePush(dir: string): void {
-  mkdirSync(join(dir, '.git', 'hooks'), { recursive: true });
-  const path = join(dir, '.git', 'hooks', 'pre-push');
-  writeFileSync(path, '#!/bin/sh\n# agentic-setup pre-push\nexit 0\n');
+function installPrePush(dir: string, at = join('.git', 'hooks')): void {
+  mkdirSync(join(dir, at), { recursive: true });
+  const path = join(dir, at, 'pre-push');
+  writeFileSync(path, OUR_PRE_PUSH);
   chmodSync(path, 0o755);
 }
 
@@ -159,8 +185,14 @@ function parse(stdout: string): any {
   }
 }
 
-/** Every `gh` verb that would change something on GitHub. */
-const MUTATING = /\b(issue create|issue edit|issue close|label create|label edit|label delete|repo edit|pr create|pr merge|pr edit|api -X|--method (POST|PUT|PATCH|DELETE)|ruleset)\b/;
+/**
+ * Every `gh` invocation that would change something on GitHub. `gh api`
+ * with a field flag (`-f`, `-F`, `--field`, `--raw-field`, `--input`) is
+ * included: gh switches that request to POST on its own, so a "read" that
+ * carries one is a write with no `-X` to give it away.
+ */
+const MUTATING =
+  /\b(issue (create|edit|close|delete|comment|reopen|lock)|label (create|edit|delete|clone)|repo edit|pr (create|merge|edit|close|comment|review|ready)|api .*(-X|--method) (POST|PUT|PATCH|DELETE)|api .*( -f | -F | --field | --raw-field | --input )|ruleset)\b/;
 
 const INVENTORY_KEYS = [
   'stack',
@@ -299,7 +331,24 @@ check(
   bodyGaps.every((g) => new RegExp(`- \\[ \\] .*${g.replace(':', ':')}`).test(planBody)) && !/test-command:none/.test(planBody),
   planBody,
 );
-check('each checkbox says what adoption would do about that gap', (planBody.match(/^- \[ \] /gm) ?? []).length === bodyGaps.length, planBody);
+// Not just "there are N checkbox lines": every one must carry real remedy
+// prose after the em-dash, so a REMEDIES entry that returned '' fails here.
+const checkboxes = planBody.split(/\r?\n/).filter((line) => line.startsWith('- [ ] '));
+const remedies = checkboxes.map((line) => line.split('—').slice(1).join('—').trim());
+check(
+  'each checkbox says what adoption would do about that gap, in non-empty prose',
+  checkboxes.length === bodyGaps.length && remedies.length === bodyGaps.length && remedies.every((text) => /[a-z]{4}/.test(text) && text.length >= 20),
+  checkboxes.join('\n'),
+);
+check(
+  'each remedy names the concrete thing adoption would do',
+  /ruleset/.test(remedies[0] ?? '') &&
+    remedies.some((text) => /label/.test(text)) &&
+    remedies.some((text) => /pre-push/.test(text)) &&
+    remedies.some((text) => /workflow/.test(text)),
+  checkboxes.join('\n'),
+);
+check('the plan issue was the only mutation: one issue create, one label create, nothing else', eCreates.length === 1 && (e.log.match(/^label create /gm) ?? []).length === 1, e.log);
 
 // --- F: a second run never opens a second issue ------------------------------
 const f = adopt(['--plan-issue'], planned, {}, planState);
@@ -322,6 +371,113 @@ check(
   'no flag exits 1 with { error } and makes no gh call at all',
   g.status === 1 && typeof parse(g.stdout)?.error === 'string' && g.log.trim() === '',
   `${g.stdout}\n${g.stderr}\n${g.log}`,
+);
+
+// --- H: core.hooksPath -------------------------------------------------------
+// A repository that points git elsewhere for its hooks (husky, lefthook, a
+// shared hooks directory) still runs our pre-push -- so it is installed, and
+// reporting hooks:not-installed would send adoption to overwrite a hook it
+// never looked at. scripts/init.mts:175 asks git where the hooks are
+// (`git rev-parse --git-path hooks`); this must ask the same question.
+const husky = fixture({ '.husky/.keep': '' });
+git(['config', 'core.hooksPath', '.husky'], husky);
+installPrePush(husky, '.husky');
+// The hook itself is untracked here (it is installed, not committed), so
+// "writes nothing" is measured against the tree as the run found it.
+const huskyBefore = git(['status', '--porcelain'], husky);
+const h = adopt(['--inventory'], husky, {});
+const hOut = parse(h.stdout);
+check('core.hooksPath: inventory still exits 0', h.status === 0 && hOut !== null, `${h.stdout}\n${h.stderr}`);
+check('core.hooksPath: the hook git would actually run is reported as installed', Array.isArray(hOut?.hooks) && hOut.hooks.includes('pre-push'), h.stdout);
+check(
+  'core.hooksPath: no false hooks:not-installed gap',
+  Array.isArray(hOut?.gaps) && !hOut.gaps.includes('hooks:not-installed'),
+  JSON.stringify(hOut?.gaps),
+);
+check(
+  'core.hooksPath: still writes nothing',
+  hOut !== null && git(['status', '--porcelain'], husky) === huskyBefore,
+  `${huskyBefore} -> ${git(['status', '--porcelain'], husky)}`,
+);
+
+// A hook at the default path is *not* ours when git was told to look
+// elsewhere -- the inverse mistake, and the one that would report a hook
+// that never runs.
+const misleading = fixture({ '.husky/.keep': '' });
+git(['config', 'core.hooksPath', '.husky'], misleading);
+installPrePush(misleading);
+const hm = adopt(['--inventory'], misleading, {});
+const hmOut = parse(hm.stdout);
+check(
+  'core.hooksPath: a hook at .git/hooks that git no longer runs is not reported as installed',
+  hmOut !== null && Array.isArray(hmOut?.hooks) && !hmOut.hooks.includes('pre-push') && hmOut.gaps.includes('hooks:not-installed'),
+  hm.stdout,
+);
+
+// And when git cannot answer where the hooks live, that is not "no hooks".
+const hf = adopt(['--inventory'], adopted, { FAKE_GH_RULES: 'full', FAKE_GH_LABELS: 'all', PATH: PATH_WITH_FAKE_GIT });
+const hfOut = parse(hf.stdout);
+check('an unresolvable hooks path exits 1 with { error }', hf.status === 1 && typeof hfOut?.error === 'string' && /hooks/.test(hfOut.error), `${hf.stdout}\n${hf.stderr}`);
+check('an unresolvable hooks path never claims the gap hooks:not-installed', hfOut !== null && !/hooks:not-installed/.test(hf.stdout), hf.stdout);
+
+// --- I: every fail-closed branch of --plan-issue ----------------------------
+// Each of these is a read or a write that could not answer. None may end in
+// a plan issue, and none may end in a report that quietly omits a field.
+const plannable = fixture({ 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node t.mjs' } }) });
+const created = (log: string): number => (log.match(/^issue create /gm) ?? []).length;
+
+const iRepo = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'repo' });
+const iRepoOut = parse(iRepo.stdout);
+check(
+  'plan-issue: an unreadable repository exits 1 with { error: repository:… } and creates nothing',
+  iRepo.status === 1 && iRepoOut?.error === 'repository:unreadable' && created(iRepo.log) === 0,
+  `${iRepo.stdout}\n${iRepo.log}`,
+);
+
+const iInv = adopt(['--inventory'], plannable, { FAKE_GH_FAIL: 'repo' });
+const iInvOut = parse(iInv.stdout);
+check(
+  'inventory: an unreadable repository exits 1 with { error } and reports no field of it',
+  iInv.status === 1 && iInvOut?.error === 'repository:unreadable' && !Object.prototype.hasOwnProperty.call(iInvOut, 'defaultBranch'),
+  iInv.stdout,
+);
+
+const iSearch = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'issue-list' });
+const iSearchOut = parse(iSearch.stdout);
+check(
+  'plan-issue: an unreadable open-issue search exits 1 with { error } and creates nothing',
+  iSearch.status === 1 && typeof iSearchOut?.error === 'string' && created(iSearch.log) === 0,
+  `${iSearch.stdout}\n${iSearch.log}`,
+);
+check(
+  'plan-issue: an unreadable search never reports { refused } instead (a failed read is not "none open")',
+  iSearchOut !== null && iSearchOut?.refused === undefined,
+  iSearch.stdout,
+);
+
+const iLabel = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'label-create' });
+const iLabelOut = parse(iLabel.stdout);
+check(
+  'plan-issue: a label that cannot be created exits 1 with { error } and creates no issue',
+  iLabel.status === 1 && typeof iLabelOut?.error === 'string' && /human:pending/.test(iLabelOut.error) && created(iLabel.log) === 0,
+  `${iLabel.stdout}\n${iLabel.log}`,
+);
+
+const iCreate = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'issue-create' });
+const iCreateOut = parse(iCreate.stdout);
+check(
+  "plan-issue: a failed issue create exits 1 with { error } carrying gh's own message",
+  iCreate.status === 1 && typeof iCreateOut?.error === 'string' && /could not create the issue/.test(iCreateOut.error),
+  `${iCreate.stdout}\n${iCreate.stderr}`,
+);
+check('plan-issue: a failed issue create tried exactly once, never twice', created(iCreate.log) === 1, iCreate.log);
+
+const iUrl = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'issue-url' });
+const iUrlOut = parse(iUrl.stdout);
+check(
+  'plan-issue: an issue number that cannot be read back exits 1 with { error }, never { issue: NaN }',
+  iUrl.status === 1 && typeof iUrlOut?.error === 'string' && iUrlOut?.issue === undefined,
+  `${iUrl.stdout}\n${iUrl.stderr}`,
 );
 
 finish();
