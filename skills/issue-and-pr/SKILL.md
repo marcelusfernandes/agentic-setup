@@ -152,6 +152,23 @@ lint invocation. What CI, and `issue-lint`, will hold the issue to:
   the `scope` job fails on it unless the referencing file sits inside the linked issue's
   globs or is granted with `authorised:` (#51). Widen `## Files` to cover the referencing
   file up front rather than relying on that check or the grant.
+- An acceptance criterion that names a **symbol** — a function, class or constant the change
+  must **reuse by import** rather than copy — **names the file holding it in `## Files`**,
+  the same way an entry point does. A criterion that asks for the import while the file
+  holding the symbol sits outside the globs leaves the implementer choosing between a
+  workaround and a grant after the fact, neither of which is the work the criterion asked
+  for (`docs/dogfood/2026-09-06.md`, finding F10). The file is named even when the change
+  does not edit it: reading a symbol from inside the globs is what makes the import
+  reviewable.
+- An issue that **renames or re-owns a label, flag or command lists in `## Files` every
+  document that names it** — `docs/`, the skill cards, `templates/`, the workflows,
+  `labels.json` — so the rename lands in one round. Find them while the issue is written,
+  with `git grep -n '<old name>'`, not when a reviewer finds the stale ones: that is a
+  measured round-2 cost, where the implementer correctly refused to touch documents outside
+  its globs and the orchestrator had to grant `authorised:` lines for them
+  (`docs/dogfood/2026-09-10.md`, finding L19). `scope`'s rename check does not save this
+  one — it fires on a path the diff deletes or renames, not on prose that has gone stale
+  around a name that still exists.
 
 ## Labels
 
