@@ -83,17 +83,27 @@ it back, the implementer fixes in the same worktree.
 ## Write sub-issues (planner)
 
 ```bash
-n=$(gh issue create --milestone "<milestone>" \
-  --label state:ready --label scope:<s> --label type:<t> \
-  --title "<type>(<scope>): <goal>" --body-file issue.md | grep -oE '[0-9]+$')
-id=$(gh api repos/{owner}/{repo}/issues/$n -q .id)
-gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$id
+node scripts/create-subissue.mts <parent> \
+  --title "<type>(<scope>): <goal>" --body-file issue.md \
+  --label scope:<s> --label type:<t>
 ```
 
+One script, not the three-line snippet that used to stand here (create, resolve the
+issue **id**, POST it to the parent's `sub_issues`) — that snippet is no longer the
+contract. It refuses with `{ refused, parent, missing }` and exit 1 **before creating
+anything** when the parent does not exist or is closed (`parent:state`), the parent
+carries no milestone (`parent:milestone`), the title is not `<type>(<scope>): <goal>`
+(`title:format`), or `--body-file` is missing or unreadable (`body:missing`). On success
+it prints `{ issue, parent, milestone, linked: true, lint }`: the child inherits the
+parent's milestone and is linked by its id.
+
 `issue.md` follows `.github/ISSUE_TEMPLATE/task.md`. An issue is not dispatchable until
-`ci/issue-lint.mts <n>` reports `ok: true` (run it, or wait for the `issue-lint` workflow's
-comment, before it reaches `state:ready`) — see `skills/orchestrate` step 1 for the exact
-invocation. What CI, and `issue-lint`, will hold the issue to:
+`ci/issue-lint.mts <n>` reports `ok: true` — `create-subissue.mts` runs that lint itself
+and is the only thing that applies `state:ready` (never pass `--label state:ready`; it is
+dropped from the creation). A body that fails the lint leaves the issue created and
+linked, without `state:ready`, and the script exits 1 with the lint result, so it never
+reaches `reconcile`'s `ready` list. See `skills/orchestrate` step 1 for the standalone
+lint invocation. What CI, and `issue-lint`, will hold the issue to:
 - **Files** are globs; the `scope` check compares `git diff --name-only` against them. Two
   issues in flight cannot have intersecting globs — `issue-lint` fails a sub-issue over
   this itself, against every other `state:ready`/`state:in-progress`/`state:in-review`
