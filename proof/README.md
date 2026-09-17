@@ -32,7 +32,7 @@ Lowercase letters, digits and dashes only.
 |---|---|---|
 | `tests` | yes | the files `negative-control` copies onto the base checkout, in addition to the declaration itself. Any path: a file no test glob matches is overlaid all the same, which is the point of declaring it. The runner does not overlay anything, but it refuses a declaration naming a file the repository does not have (`proof:missing-test-file`) — #136 is the consumer of `tests[]`, and a declaration that points at nothing is broken wherever it is read. |
 | `command` | no | replaces the detected test command, for **both** the baseline run on the pristine base and the overlaid run, and it is the command `scripts/proof.mts` runs. Omitting it is not an error: the runner then falls back to the record and to detection, and says so in `source`. |
-| `describes` | no | one sentence naming what the declaration proves. Both readers validate it — a `describes` that is present and empty is a broken declaration — and neither executes it: it is a sentence for a person. |
+| `describes` | no | one sentence naming what the declaration proves, for a person. Nothing executes it, and `ci/negative-control.mts` does not read it at all — a `describes` that is present and empty passes the negative control. It is validated by the proof runner (`scripts/lib/proof.mts`, which refuses it as `proof:wrong-type`) and, for the declarations this repository ships, by the pin test `tests/proof-declarations.test.mts`. |
 
 Any other key is a typo: `tests/proof-declarations.test.mts` fails on it, and on a
 declaration that does not parse, names a file that does not exist, or names a file no

@@ -43,13 +43,20 @@
 //
 // Node built-ins only.
 import { spawnSync } from 'node:child_process';
-import { ProofError, resolveProof } from './lib/proof.mts';
-import { RecordError } from './lib/adopt/record.mts';
+import { ProofError, resolveProof, type ProofReason } from './lib/proof.mts';
+import { RecordError, type RecordReason } from './lib/adopt/record.mts';
 
 const USAGE = 'usage: node scripts/proof.mts <slug>';
 
 /** How many lines of the run's output the report carries, as `negative-control` does. */
 const TAIL = 40;
+
+/**
+ * The reason a command that resolved could not be executed at all. Annotated
+ * rather than inlined so `ProofReason` is the one list of reason names: a
+ * name that drifts from `scripts/lib/proof.mts` fails `tsc`.
+ */
+const NOT_RUNNABLE: ProofReason = 'proof:command-not-runnable';
 
 type Outcome = 'pass' | 'fail' | 'cannot-run';
 
@@ -66,7 +73,7 @@ function report(fields: {
   outcome: Outcome;
   command: string | null;
   tail: string;
-  reason?: string;
+  reason?: ProofReason | RecordReason;
   field?: string | null;
 }): never {
   const { reason, field, ...rest } = fields;
@@ -121,5 +128,5 @@ report({
   outcome,
   command: resolved.command,
   tail,
-  ...(unrunnable ? { reason: 'proof:command-not-runnable' } : {}),
+  ...(unrunnable ? { reason: NOT_RUNNABLE } : {}),
 });

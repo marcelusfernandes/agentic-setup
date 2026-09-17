@@ -54,7 +54,11 @@ export type ProofReason =
   | 'proof:empty-command'
   | 'proof:missing-tests'
   | 'proof:missing-test-file'
-  | 'proof:no-command';
+  | 'proof:no-command'
+  /** Raised by `scripts/proof.mts`, not here: the command resolved and then
+   *  could not be executed at all (exit 127, or a spawn that never started).
+   *  It lives in this union so the two files name the reason once. */
+  | 'proof:command-not-runnable';
 
 /**
  * The one way out on a proof this module refuses: a named `reason` a caller
