@@ -242,8 +242,13 @@ branches of `--plan-issue` show why:
   from what `gh` printed: there, the issue exists and the script cannot name it. Run
   `--plan-issue` again — the already-open refusal will point at it.
 
-Every other named error below is reached before any `gh` write is attempted, and leaves
-both the repository and GitHub exactly as the run found them.
+Every other named error below is either reached before any write is attempted, or is that
+write itself failing — and no second write follows it. `label:human:pending:not-created`
+is the label create that failed, so no issue was opened and no label exists;
+`record:not-written` is `agentic.config.json` failing to be written, and the write is a
+single `writeFileSync`, not a rename, so a file left half-written by the filesystem is
+possible. `--inventory` reports it as `record:unparsable` on the next run rather than
+reading it as "no record"; delete the file and run `--record` again.
 
 | `error` | Cause |
 | --- | --- |
