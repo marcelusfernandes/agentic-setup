@@ -7,9 +7,9 @@ what it costs.
 becomes a numbered decision rather than a note, what the three `Status:` values mean
 and who may move an item between them (silence never accepts one), and where a new
 decision lands — items 1 to 13 keep their numbers here, and a decision after them is one
-dated file under `decisions/`. Three pieces of later material are still in this file and
-are not what the rule prescribes: items 16 and 18, and the dated note under item 13. The
-index in [`decisions/README.md`](decisions/README.md) says which item lives where.
+dated file under `decisions/`. Five pieces of later material are still in this file and
+are not what the rule prescribes: items 16, 18, 19 and 20, and the dated note under item
+13. The index in [`decisions/README.md`](decisions/README.md) says which item lives where.
 
 ## 1. Unit of work: a GitHub sub-issue
 
@@ -473,3 +473,158 @@ note under item 13 do: #148's `## Files` lists `docs/decisions.md` and no path u
 [`decisions/README.md`](decisions/README.md) all the same, under the orchestrator's
 `authorised:` grant on that file; relocating this item and item 16 to dated files is its
 own issue, as it was for items 14 and 15 (#211).
+
+## 19. 2026-09-17: the M9 discipline agent catalogue is retired
+
+Status: accepted — written OK: issue #150 (the owner's decision comment of 2026-09-17,
+recorded by the orchestrator), under the standing M11–M16 delegation recorded on #161.
+
+M9 ("Discipline agent presets and milestone moulds") shipped one issue, #124, and left
+five open. What #124 merged is a catalogue of fourteen preset agent cards under
+`templates/agents/`, one directory per card in both routes' formats, plus
+[`agents.md`](agents.md) describing it. It is **retired**: the catalogue is source
+material nothing reads, and the four questions #150 put to the owner are answered as
+follows.
+
+**1. The catalogue (#123 spec, #125 the `--agents` install, #126 first-run profiling) —
+retire.** `templates/agents/`, [`agents.md`](agents.md) and the catalogue's two README
+sections go, and with them `tests/agents-catalogue.test.mts`, which is the only consumer
+the catalogue ever had (it reads the fourteen directories off disk; it installs nothing).
+#123, #125 and #126 are closed `not_planned` with this decision linked. The removal is
+#152's diff, not this item's.
+
+**2. #128 (scope-based card dispatch, a security reviewer, labels applied by the
+orchestrator) — closed, superseded by #135.** GitHub has no "superseded" reason, so the
+issue reads `not_planned` and the supersession is stated in its closing comment: the one
+half worth keeping — every label write moves from the reviewer to the orchestrator — is
+what #135 (PR #187) delivered. The dispatch half dies with the catalogue it dispatched.
+
+**3. #127 (delivery / investigation / hardening milestone moulds) — closed
+`not_planned`,** in favour of a single milestone description format (objective, problem,
+out of this phase, completion criteria as checkboxes, depends on), which is #171 in M14.
+No reference project types its milestones; `## Kind: delivery` is written in prose today
+(#131, and #142's own body) and read by nothing.
+
+**4. M9 — closed,** 0 open and 6 closed issues, with this decision linked in its
+description: "Closed 2026-09-17 without delivery: the catalogue was retired by the
+decision recorded on #150". No closeout file, because the milestone predates the closeout
+rule (M14, `docs/closeout/README.md`).
+
+**The consequence #152 needs, stated so it needs no further question:**
+`templates/agents/index.json` is **removed with the rest of the catalogue, not
+rewritten.**
+
+*Why:* three pieces of evidence, none of them a preference.
+
+First, nothing installs it, by its own documentation. `docs/agents.md:4-8` says "Nothing
+in the repository installs this catalogue yet … this is source material for a person (or
+a future installer) to read and adapt by hand", and `README.md:269-275` repeats it —
+"Nothing installs it yet; it is source material". (#150 cites `README.md:144-145` for that
+sentence; the line moved, the sentence is at 269-275 and the map row at `README.md:305`.)
+The installer agrees with the prose: `scripts/init.mts:318-342` copies
+`templates/.github`, `templates/.worktreeinclude` and `templates/claude-settings.json` by
+name and never the directory, so `templates/agents/` reaches no adopting repository.
+
+Second, its vocabulary is not this repository's. The eleven `scopes` keys in
+`templates/agents/index.json:4-14` are `scope:qa`, `architecture`, `backend`, `frontend`,
+`design`, `product`, `research`, `security`, `data`, `infra` and `release`. Against the
+`scope:` labels that exist on this repository — `scope:ci`, `scope:hooks`,
+`scope:scripts`, `scope:tests`, `scope:docs`, `scope:infra` — exactly one of the eleven,
+`scope:infra`, resolves. Against [`../labels.json`](../labels.json), the one dictionary
+item 16 made load-bearing, **none** of them resolves: the dictionary's 17 entries carry
+no `scope:` value at all, because `scope:` is chosen by whoever writes the issue and is
+never seeded by `init`. That is the B8 defect #142 names, and it is why rewriting the
+index has no target to rewrite it to.
+
+Third, the shape the reference practices actually ask for is already here: one file per
+role with minimal `tools` (`lohra-ts`, `apollo`), which is what `agents/implementer.md`,
+`agents/reviewer.md` and `agents/docs-writer.md` are. Fourteen discipline cards are a
+second, unreferenced answer to a question three files already answer, and the choice the
+2026-09-06 audit produced (item 13) was to "delete the duplicates" and keep the core.
+(#150 attributes that rule to "the M4 audit"; the register carries it as item 13, the
+2026-09-06 audit, and M4 is named nowhere in it.) "Reduce" — keeping
+`security-reviewer` as a fourth read-only role — needs a real case for that role, and
+none exists yet; it can be opened as its own issue the day one does.
+
+*Cost accepted:* the fourteen cards are lost from the working tree, and anyone who
+expected per-discipline prompts writes their own. They are not lost from the repository:
+`git checkout a67b1aa -- templates/agents docs/agents.md` restores them from the commit
+that merged #124 (PR #130). A second cost is smaller and real: `tests/agents-catalogue.test.mts`
+goes with them, so the test count drops by that file's cases — a fall in the total that
+#152's PR states rather than hides.
+
+Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
+under `decisions/`. This item lives here for the same reason items 16 and 18 and the
+2026-09-17 note under item 13 do: #150's `## Files` lists `docs/decisions.md` and no path
+under `decisions/`, and an implementer never widens its own globs. Its index row *is*
+written, in this same diff, under the `authorised: docs/decisions/README.md` grant the
+orchestrator added to that list; the register's next free number is therefore
+`0020-<slug>.md`, with `0019-<slug>.md` reserved for this item. Only the move itself is
+still owed, as it is for items 16 and 18 (#211).
+
+## 20. 2026-09-17: `land` declares its review mode — `agent` by default, `approved` opt-in
+
+Status: accepted — written OK: #156 under the standing M11–M16 delegation recorded on #161,
+specifying the merge half of the M12 spec (#153). Numbered 20 and not 19: item 19 above
+(#150, merged as PR #254) holds that number, and two items may not share one.
+
+`scripts/land.mts` **declares the review mode it is in before it judges any condition**, and
+each mode carries its own complete set of conditions:
+
+- `agent`, the default: the `review:approved` label, the `<!-- agentic-reviewed-sha: <oid> -->`
+  marker equal to `headRefOid`, and every required check in bucket `pass`.
+- `approved`, opt-in: everything `agent` requires *plus* `reviewDecision === 'APPROVED'` from
+  the server. It is selected by `--require-review` or by a base branch whose effective rules
+  already carry `required_approving_review_count > 0`.
+- `docs`, the `type:docs` exemption: no review, and so no marker — an exemption from the
+  review, never from the checks.
+
+**The silent fallback is gone.** Until this item the mode was chosen by the absence of a
+variable: `land` treated the `review:approved` label as approval whenever
+`AGENTIC_REVIEWER_TOKEN` was unset — the state of this repository — and said nothing about
+which of the two paths had run, so a reader of a `land` result could not tell a
+server-verified review from a label the merging identity wrote itself. `AGENTIC_REVIEWER_TOKEN`
+now selects no mode at all; it only gives the reviewer the second identity to cast with. A
+read that cannot answer selects nothing either: unreadable base-branch rules refuse with
+`missing: ['gh-rules']` and `mode: null` rather than settling for the mode left over when a
+read fails (invariant 3).
+
+*Why:* the defect item 18 left open was the silence, not the label. The gate this workflow
+runs is an agent review (item 18), and requiring a review this workflow does not use would
+only freeze the repository. What can be made honest is the *declaration* — and what holds
+the line either way is the set of required checks, which no label can satisfy. So `land`
+also stopped assuming them: it reads `gh pr checks <pr> --required --json name,bucket` in
+**both** gates and refuses unless the list is non-empty and every bucket is `pass`. Under the
+`ruleset` gate it previously asked only whether a `required_status_checks` rule existed and
+left the rest to `--auto`, so "the checks held the line" was an assumption; an empty required
+list, and a merely-not-red `pending` bucket, both passed it.
+
+*Cost accepted:* `approved` mode needs a second identity, and a repository whose only login
+is the one running `land` cannot cast the review it asks for — with
+`required_approving_review_count: 1` and nobody to review, it freezes at its first merge and
+every pull request refuses with no way to satisfy it. That is why `agent` is the default and
+`approved` is opt-in, and why the refusal in that mode names the cost instead of quietly
+downgrading to `agent`. Item 18's setup order (ruleset first, then the token) still applies.
+
+*Two things beyond the acceptance criteria, closed here because this run produced the
+evidence for them* (the owner's comment on #156): `--match-head-commit` is checked by GitHub
+when auto-merge is *enabled*, not when it later fires, so a queued `--auto` merges whatever
+the branch carries by then. #191 landed that way — approved at one commit, a merge commit
+behind it — and #241 armed `--auto` on a `CONFLICTING` pull request, where the very commit
+resolving the conflict would have merged itself unreviewed. So `land` refuses any head
+GitHub does not report as `MERGEABLE` (`missing: ['merge:not-mergeable']`; `UNKNOWN` refuses
+too, because a mergeability GitHub has not computed is not one this script may assume), and
+in mode `agent` a merge that did not happen is disarmed at once with `gh pr merge
+<pr> --disable-auto` and refused with `missing: ['merge:not-clean']`. Mode `agent` binds the
+review to one commit on the client, so it merges that commit or nothing; modes `approved`
+and `docs` still report `{ queued }`, where the server's own review requirement — or the
+absence of any review to outrun — is what the queue answers to. `--auto` itself is kept:
+it is still what removes the stale-read race of item 13 for the merge that does happen.
+
+Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
+under `decisions/`. This item lives here for the same reason items 16, 18 and 19 do:
+#156's `## Files` lists `docs/decisions.md` and no path under `decisions/`, and an
+implementer never widens its own globs — nor its own `authorised:` grants, so unlike item
+19 this one writes no index row in [`decisions/README.md`](decisions/README.md). It takes
+the `0020-<slug>.md` item 19 named as the register's next free number, leaving
+`0021-<slug>.md`. Relocating it, with them, is the job of #211's successor.

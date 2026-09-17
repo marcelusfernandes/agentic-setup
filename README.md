@@ -266,18 +266,14 @@ To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
 review and required-check protections still apply. A milestone can group the pilot's issues.
 
-## Optional: discipline agent catalogue
+## What each phase shipped
 
-[`docs/agents.md`](docs/agents.md) describes an opt-in catalogue of preset discipline
-agent cards (QA, architecture, backend, frontend, design, product, research, planner,
-investigator, security-reviewer, data-migrations, devops, release-manager, profiler)
-under `templates/agents/`, in both routes' formats. What that phase shipped, what it
-did not, and the decision that retired the catalogue are in
-[`docs/closeout/M9.md`](docs/closeout/M9.md), dated and carrying the `main` SHA it was
-true at. What every other finished phase shipped is in
-[`docs/closeout/`](docs/closeout/); what is still in flight is the
+[`docs/closeout/`](docs/closeout/) holds one file per milestone: the UTC date the
+phase closed, the `main` SHA it was true at, and every issue with its pull request
+and its merge commit. What is still in flight is the
 [open milestones](https://github.com/marcelusfernandes/agentic-setup/milestones?state=open).
-Neither is a paragraph in this file, because a paragraph here carries no date.
+This file makes no dated claim about the repository's own state — the closeouts and
+the milestone list carry the date, and a paragraph here would not.
 
 ## Development and migration
 
@@ -308,7 +304,6 @@ deliberately; installing Codex does not perform that migration.
 | [docs/adopt.md](docs/adopt.md) | adopting an existing repository: the read-only inventory and the plan issue it can open |
 | [docs/codex.md](docs/codex.md) | the Codex route's runtime boundaries, migration boundary and validation limits |
 | [docs/codex-plugin.md](docs/codex-plugin.md) | native Codex plugin distribution: install, updates, helper paths, packaging |
-| [docs/agents.md](docs/agents.md) | the opt-in discipline agent catalogue |
 | [contract.md](.agents/skills/autonomous-loop/references/contract.md) | the Codex loop's operating contract: issue formats, checkpoint answers, ownership |
 
 ## License

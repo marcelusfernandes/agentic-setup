@@ -328,10 +328,12 @@ check(
 );
 
 // AC1-AC3: the register carries the dated item, its opt-in half and the evidence.
-// Item 18 is the last item in the register, so its span runs to the end of the file; a
-// later item 19 would make this a `span(..., '## 19.')` instead.
-const item18At = decisions.indexOf('## 18. 2026-09-17:');
-const item18 = item18At === -1 ? '' : decisions.slice(item18At);
+// Item 18 is no longer the last item in the register — item 19 (#150) follows it — so the
+// span is bounded at that heading instead of running to the end of the file, as this
+// comment prescribed while it was. An unbounded span would let any later item satisfy
+// these three checks on item 18's behalf. `span` returns '' when either end is missing, so
+// removing or renumbering either item fails AC1 here rather than passing quietly.
+const item18 = span(decisions, '## 18. 2026-09-17:', '## 19.');
 check('#148 AC1 docs/decisions.md carries a dated 2026-09-17 item 18', item18.length > 0);
 check(
   '#148 AC1 item 18 states the merge condition: required checks on the reviewed head plus the label and its marker',

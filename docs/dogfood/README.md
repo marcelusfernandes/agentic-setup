@@ -83,6 +83,7 @@ changes.
 - Minutes: <n>
 - Cost (USD): <n.nn>
 - Transcripts: <where they are kept, outside this repository>
+- Retroactive: <#N this report reproduces — only on a pass that predates this format>
 
 ## Scoreboard
 
@@ -106,11 +107,23 @@ The rules the parser applies, in order:
   `# Dogfood 2026-01-31`.
 - Exactly six bullets sit between the heading and `## Scoreboard`, in this order:
   `Repository`, `Commit`, `Turns`, `Minutes`, `Cost (USD)`, `Transcripts`, each
-  one non-empty. `Commit` is 40 lowercase hex characters — the tip this
+  one non-empty, optionally followed by a seventh, `Retroactive`. `Commit` is 40 lowercase hex characters — the tip this
   repository was at when the pass ran, so a later reader can check out exactly
   what was exercised. `Turns` and `Minutes` are whole numbers and `Cost (USD)` a
   number; a pass whose runtime reports none of them is not comparable to the next
   one, which is the only reason the report exists.
+- `Retroactive: #N` is the one exception, and it exists for a single case: a pass
+  that ran before this format did, whose record is a prose issue that never
+  carried the numbers. A report carrying it names the issue it reproduces and may
+  write the literal `not recorded` in `Commit`, `Turns`, `Minutes`, `Cost (USD)`
+  and a case row's `exit` and `tool calls` — the alternative being a
+  reconstructed number, which is worse than an absent one in a file whose whole
+  purpose is putting two passes side by side. A report without the bullet may
+  write it nowhere, so a pass run from now on is still held to its numbers.
+  Nothing else is relaxed: an `error class`, a `keep`-or-`fix` `decision` and a
+  `reason` are owed either way, and so is a resolved `outcome` on every finding.
+  `docs/dogfood/2026-09-06.md` and `docs/dogfood/2026-09-10.md` are the two
+  reports it was written for — #96 and #129, reproduced by #184.
 - `## Scoreboard` and `## Findings` each appear exactly once, in that order.
 - The `## Scoreboard` header is `| case | exit | error class | tool calls |
   decision | reason |`, followed by a delimiter row, then one row per case. `exit`

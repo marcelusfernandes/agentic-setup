@@ -26,11 +26,21 @@ feature parity between the two runtimes.
   checked before dispatch), `lib/detect.mts` (the test-command detection `negative-control.mts`
   uses). Copied into adopting repositories by `init`; **this** repository's workflows point
   at `ci/` directly.
-- `scripts/` — `init.mts` (the installer: `agents/`, `skills/`, `templates/`, `docs/`),
-  `reconcile.mts` (the loop's state as JSON), `claim.mts` (locks an issue or refuses),
-  `land.mts` (the only way the orchestrator merges a PR: queues `gh pr merge --squash
-  --auto`, gated by the base branch's ruleset when it has one, else by `gh pr checks
-  --required`).
+- `scripts/` — `init.mts` (the installer: copies `templates/.github` into `.github`,
+  `templates/.worktreeinclude` into `.worktreeinclude`, and `ci/` into
+  `.github/scripts/agentic`), `adopt.mts` (reports what a repository has, and asks
+  before writing anything), `reconcile.mts` (the loop's state as JSON), `claim.mts`
+  (locks an issue or refuses), `land.mts` (the only way the orchestrator merges a PR:
+  queues `gh pr merge --squash --auto`, gated by the base branch's ruleset when it has
+  one, else by `gh pr checks --required`), `create-subissue.mts` (a sub-issue linked to
+  its parent, labelled `state:ready` only once `ci/issue-lint.mts` reports `ok: true`),
+  `close-milestone.mts` (the only way a milestone closes), `log-decision.mts` (one
+  dated line per pointed orchestrator decision), `proof.mts` (runs the proof a branch
+  slug declares and reports a named outcome), `setup-codex.mts` (installs the Codex
+  route locally), `sync-codex-plugin.mts` (regenerates the isolated Codex package).
+  `tests/map-pin.test.mts` reads `scripts/*.mts` from disk and fails when one of them
+  is missing from this bullet, or when the installer line above names a repository
+  directory no `copyTree`/`copyOne` call in `init.mts` touches.
 
 ## Invariants (the reviewer holds every PR to these)
 

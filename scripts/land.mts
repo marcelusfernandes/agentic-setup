@@ -14,58 +14,80 @@
 // is checked out in a worktree — printing { error } here even though the
 // merge already succeeded on the server.
 //
-//   node scripts/land.mts <pr>
+//   node scripts/land.mts <pr> [--require-review]
 //
 // Refuses (exit 1, { refused, pr, missing, mode }) unless OPEN and approved
-// (or type:docs). Every output — each refusal, the merge and the queue —
-// names the review mode it applied, so no path is silent about which binding
-// it ran under (#144):
+// under the mode it declares. Every output — each refusal, the merge and the
+// queue — names that mode, so no path is silent about which binding it ran
+// under (#144, #156), and each mode carries its *complete* set of
+// conditions: there is no downgrade from one to the other, and no mode is
+// ever selected by the absence of something.
 //
-//   'agent'    the label-plus-marker path this repository runs. The reviewer
-//              is an isolated agent that returns { verdict, reasons } to the
-//              orchestrator and casts nothing on the server (#148), so there
-//              is no PullRequestReview to read a commit off: the binding is
-//              the `review:approved` label *plus* the marker comment
+//   'agent'    the default, and the binding this repository runs. The
+//              reviewer is an isolated agent that returns { verdict, reasons }
+//              to the orchestrator and casts nothing on the server (#148), so
+//              there is no PullRequestReview to read a commit off. Requires,
+//              all three: the `review:approved` label; the marker comment
 //              `<!-- agentic-reviewed-sha: <oid> -->` that the orchestrator
-//              writes with the head it reviewed, at the moment it applies
-//              that label (`skills/orchestrate/SKILL.md` step 5).
-//   'approved' `reviewDecision === 'APPROVED'`: a review the server itself
-//              verified and carries, so the server's decision is the binding
-//              and no marker is read.
+//              writes with the head it reviewed, at the moment it applies that
+//              label (`skills/orchestrate/SKILL.md` step 5), equal to the
+//              `headRefOid` read here; and every required check in bucket
+//              `pass`.
+//   'approved' opt-in: everything 'agent' requires *plus*
+//              `reviewDecision === 'APPROVED'`, a review the server itself
+//              verified and carries. Selected by `--require-review`, or by a
+//              base branch whose effective rules already require an approving
+//              review (`pull_request` with
+//              `required_approving_review_count > 0`) — never by whether
+//              AGENTIC_REVIEWER_TOKEN happens to be set, which selects
+//              nothing at all. It stays opt-in because it needs a second
+//              login: with `required_approving_review_count: 1` and nobody to
+//              cast the review, a solo repository freezes at its first merge,
+//              and every pull request refuses here with no way to satisfy it.
+//              Setting the variable without also setting the base branch
+//              ruleset's required_approving_review_count (`scripts/init.mts`'s
+//              "by hand" list) leaves `reviewDecision` null forever on a
+//              repository with no review policy.
 //   'docs'     the `type:docs` exemption, which merges with no review at all
-//              and so has no reviewed head to compare.
+//              and so has no reviewed head to compare and reads no marker. It
+//              is an exemption from the *review*, never from the checks.
 //
-// Choosing between 'agent' and 'approved' is #156's; this file only reports
-// which one ran. Today the mode is 'approved' whenever the PR carries an
-// APPROVED review or the orchestrator's environment has
-// AGENTIC_REVIEWER_TOKEN set — the reviewer agent then authenticates as a
-// separate identity (`agents/reviewer.md`) and its GitHub review is the only
-// thing that satisfies approval: the same token that runs this script can no
-// longer write itself an approval by mistake or via a prompt injection in
-// the issue (#66, audit finding 6). Without that variable and without such a
-// review, the label is what approval means, and that is mode 'agent' (#66
-// AC4). Setting the variable without also setting the base branch ruleset's
-// required_approving_review_count (`scripts/init.mts`'s "by hand" list)
-// leaves `reviewDecision` null forever on a repository with no review
-// policy — every PR would then refuse here with no way to satisfy it.
+// The mode is read before anything else is decided, because a refusal that
+// cannot name its mode says nothing: the base branch's effective rules are
+// fetched first (`gh api repos/{owner}/{repo}/rules/branches/<baseRefName>`,
+// flattened and enforcement-aware -- unlike the ruleset *list*, summaries
+// only, which cannot tell a required_status_checks ruleset from a
+// deletion-only one). A rules read that cannot answer refuses with missing
+// ['gh-rules'] and mode null rather than falling back to the mode left over
+// when a read fails: this file fails closed (invariant 3).
 //
-// In mode 'agent' the commit the review was cast against is the newest
-// `<!-- agentic-reviewed-sha: <oid> -->` marker on the pull request, and it
-// must equal the `headRefOid` read in the same `gh pr view` call. A push
-// after the review, or no marker at all — a label records no commit, so it
-// binds nothing — refuses with missing ['head:changed'] instead of merging a
-// head nobody read (#191 was approved at 2b9dc20 and the merge commit
-// f624902 landed behind it on the queued `--auto`). A comments read that
-// cannot answer refuses with missing ['gh-pr-comments'] and attempts no
-// merge: this file fails closed (invariant 3).
+// In modes 'agent' and 'approved' the commit the review was cast against is
+// the newest `<!-- agentic-reviewed-sha: <oid> -->` marker on the pull
+// request, and it must equal the `headRefOid` read in the same `gh pr view`
+// call. A push after the review, or no marker at all — a label records no
+// commit, so it binds nothing — refuses with missing ['head:changed']
+// instead of merging a head nobody read (#191 was approved at 2b9dc20 and
+// the merge commit f624902 landed behind it on the queued `--auto`). A
+// comments read that cannot answer refuses with missing ['gh-pr-comments']
+// and attempts no merge.
 //
-// Then gate='ruleset' iff the PR base branch's *effective* rules (`gh api
-// repos/{owner}/{repo}/rules/branches/<baseRefName>`, flattened and
-// enforcement-aware -- unlike the ruleset *list*, summaries only, which
-// cannot tell a required_status_checks ruleset from a deletion-only one)
-// include a required_status_checks rule. Otherwise runs `gh pr checks <pr>
-// --required`, refusing if it is red/pending: the fallback for a branch
-// with no such rule, where `--auto` alone would queue an ungated merge.
+// A head GitHub does not report as MERGEABLE refuses with missing
+// ['merge:not-mergeable'] — CONFLICTING, and UNKNOWN too, because a
+// mergeability GitHub has not computed is not a mergeability this script may
+// assume. #241 armed `--auto` on a conflicting pull request, where the very
+// commit that resolves the conflict would then have merged itself unreviewed.
+//
+// Then the checks, in *both* gates: `gh pr checks <pr> --required --json
+// name,bucket` must return a non-empty list in which every bucket is `pass`,
+// or the run refuses with missing ['checks:required']. An empty list is not
+// "nothing is red", it is "nothing held the line"; a bucket that is merely
+// not red (`pending`, `skipping`) is not `pass`; and gh prints that JSON
+// while exiting non-zero (1 red, 8 pending), so the read is parsed from
+// stdout rather than judged by its exit code. gate='ruleset' iff those
+// effective rules include a required_status_checks rule and 'client-checks'
+// otherwise — the gate names who *else* holds the line, never whether the
+// buckets were read (#156: "the checks held the line" was assumed under the
+// ruleset gate until this read made it true).
 //
 // On success: `gh pr merge <pr> --squash --auto --match-head-commit
 // <headRefOid>` (never --delete-branch, never --admin). The oid is the one
@@ -83,21 +105,41 @@
 // other failure is reported as before, with no retry. Whichever call
 // actually succeeded, the outcome is read back with a fresh
 // `gh pr view <pr> --json state` rather than inferred from which call ran:
-// state MERGED prints { merged: pr, gate }; anything else -- still OPEN and
-// queued for auto-merge, or the state read itself failing -- prints
-// { queued: pr, gate }. A merge call that still fails
-// (the initial one, or the clean-status retry) prints { error } with gh's
-// message, exit 1. No polling, no relabel, no worktree removal either way.
+// state MERGED prints { merged: pr, gate, mode }.
+//
+// Anything else means GitHub queued the merge instead of performing it. In
+// mode 'agent' that queue is disarmed at once — `gh pr merge <pr>
+// --disable-auto` — and the run refuses with missing ['merge:not-clean'].
+// `--match-head-commit` is passed to GitHub when auto-merge is *enabled*,
+// not when it later fires, so a queue left armed merges whatever the branch
+// carries by then; that is how #191 landed a commit nobody reviewed. Agent
+// mode binds the review to one commit client-side, so it merges now or not
+// at all: clear the blockage and run land again. Modes 'approved' and 'docs'
+// print { queued: pr, gate, mode } — there, the review requirement the
+// server itself enforces (or the absence of any review to outrun) is what
+// the queue answers to. A merge call that still fails (the initial one, the
+// clean-status retry, or the disarm) prints { error } with gh's message,
+// exit 1. No polling, no relabel, no worktree removal either way.
 import { spawnSync } from 'node:child_process';
 
 type Label = { name: string };
-type PRView = { state: string; labels: Label[]; reviewDecision: string | null; baseRefName: string; headRefOid: string };
+type PRView = {
+  state: string;
+  labels: Label[];
+  reviewDecision: string | null;
+  baseRefName: string;
+  headRefOid: string;
+  mergeable?: string;
+};
 type PRComments = { comments?: Array<{ body?: unknown }> };
+type Rule = { type?: string; parameters?: { required_approving_review_count?: number } };
+type Check = { bucket?: unknown };
 type Mode = 'agent' | 'approved' | 'docs';
 
 // The marker the orchestrator writes with the head it reviewed. Only a full
 // 40-hex oid counts: anything else records no head this script can compare.
 const REVIEWED_SHA = /<!--\s*agentic-reviewed-sha:\s*([0-9a-f]{40})\s*-->/gi;
+const USAGE = 'usage: node scripts/land.mts <pr> [--require-review]';
 
 function fail(shape: Record<string, unknown>): never {
   console.log(JSON.stringify(shape));
@@ -128,33 +170,98 @@ function ghJson<T>(args: string[], fallback: T): T {
   }
 }
 
-const prArg = process.argv[2];
-const pr = Number(prArg);
-if (!prArg || !Number.isInteger(pr) || pr <= 0) fail({ error: 'usage: node scripts/land.mts <pr>' });
+/** The base branch's effective rules, or null when the read could not answer. */
+function effectiveRules(base: string): Rule[] | null {
+  const out = gh(['api', `repos/{owner}/{repo}/rules/branches/${base}`]);
+  if (out.status !== 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(out.stdout);
+    return Array.isArray(parsed) ? (parsed as Rule[]) : null;
+  } catch {
+    return null;
+  }
+}
 
-const view = ghJson<PRView | null>(['pr', 'view', String(pr), '--json', 'state,labels,reviewDecision,baseRefName,headRefOid'], null);
+/**
+ * True only when `gh pr checks --required` answers with a non-empty list in
+ * which every check sits in bucket `pass`. gh prints the JSON and exits
+ * non-zero whenever something is not green, so the status is ignored and an
+ * unparseable answer is a refusal, never a pass.
+ */
+function everyRequiredCheckPasses(pr: number): boolean {
+  const out = gh(['pr', 'checks', String(pr), '--required', '--json', 'name,bucket']);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(out.stdout);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return false;
+  return parsed.every((c) => (c as Check | null)?.bucket === 'pass');
+}
+
+const args = process.argv.slice(2);
+const flags = args.filter((a) => a.startsWith('-'));
+if (flags.some((f) => f !== '--require-review')) fail({ error: USAGE });
+const requireReview = flags.includes('--require-review');
+const prArg = args.find((a) => !a.startsWith('-'));
+const pr = Number(prArg);
+if (!prArg || !Number.isInteger(pr) || pr <= 0) fail({ error: USAGE });
+
+const view = ghJson<PRView | null>(
+  ['pr', 'view', String(pr), '--json', 'state,labels,reviewDecision,baseRefName,headRefOid,mergeable'],
+  null,
+);
 // No head oid is the same as no readable PR: nothing to pin the merge to.
 if (!view || typeof view.headRefOid !== 'string' || !view.headRefOid) {
   fail({ refused: `could not read PR #${pr} from gh.`, pr, missing: ['gh-pr-view'], mode: null });
 }
 
+// The mode, decided before any condition is judged, so every refusal below
+// can name it. The rules are read here because one of the two selectors
+// lives in them — and because the gate does too, further down.
+const rules = effectiveRules(view.baseRefName);
+const isDocs = hasLabel(view.labels, 'type:docs');
+const rulesRequireReview = (rules ?? []).some(
+  (r) => r.type === 'pull_request' && Number(r.parameters?.required_approving_review_count ?? 0) > 0,
+);
+const mode: Mode | null = isDocs
+  ? 'docs'
+  : requireReview || rulesRequireReview
+    ? 'approved'
+    : rules === null
+      ? null
+      : 'agent';
+if (rules === null) {
+  fail({
+    refused: `PR #${pr}: could not read the effective rules of base branch ${view.baseRefName}, so neither the review mode nor the gate is known.`,
+    pr,
+    missing: ['gh-rules'],
+    mode,
+  });
+}
+
 const missing: string[] = [];
 if (view.state !== 'OPEN') missing.push(`state=${view.state}`);
-const isDocs = hasLabel(view.labels, 'type:docs');
-// A reviewer identity configured means the label alone is a convenience,
-// never the gate: only a real review from that identity counts (#66 AC2).
-const reviewerIdentityConfigured = Boolean(process.env.AGENTIC_REVIEWER_TOKEN);
-const approved = view.reviewDecision === 'APPROVED' || (!reviewerIdentityConfigured && hasLabel(view.labels, 'review:approved'));
-// The mode this run applies, named on every output below (#144). The docs
-// exemption comes first: it merges with no review at all, so it has no
-// reviewed head and reads no marker.
-const mode: Mode = isDocs ? 'docs' : view.reviewDecision === 'APPROVED' || reviewerIdentityConfigured ? 'approved' : 'agent';
-if (!isDocs && !approved) missing.push('review:not-approved');
-if (missing.length) fail({ refused: `PR #${pr} is not ready to merge: ${missing.join(', ')}.`, pr, missing, mode });
+// The label is what an agent review leaves behind, in both reviewing modes;
+// mode 'approved' adds the server's own decision on top of it, and never
+// falls back to the label alone when that decision is missing.
+if (!isDocs && !hasLabel(view.labels, 'review:approved')) missing.push('review:not-approved');
+if (mode === 'approved' && view.reviewDecision !== 'APPROVED' && !missing.includes('review:not-approved')) {
+  missing.push('review:not-approved');
+}
+if (missing.length) {
+  const cost =
+    mode === 'approved' && missing.includes('review:not-approved')
+      ? ` Mode 'approved' costs a second identity: a repository whose only login is the one running this script cannot cast the review it asks for.`
+      : '';
+  fail({ refused: `PR #${pr} is not ready to merge: ${missing.join(', ')}.${cost}`, pr, missing, mode });
+}
 
-// Mode 'agent': the label says a review happened, the marker says at which
-// commit. Both, or neither counts — and a read that cannot answer refuses.
-if (mode === 'agent') {
+// Modes 'agent' and 'approved': the label says a review happened, the marker
+// says at which commit. Both, or neither counts — and a read that cannot
+// answer refuses.
+if (mode === 'agent' || mode === 'approved') {
   const commentsView = ghJson<PRComments | null>(['pr', 'view', String(pr), '--json', 'comments'], null);
   const comments = commentsView && Array.isArray(commentsView.comments) ? commentsView.comments : null;
   if (comments === null) {
@@ -167,11 +274,22 @@ if (mode === 'agent') {
   }
 }
 
-const rules = ghJson<Array<{ type?: string }>>(['api', `repos/{owner}/{repo}/rules/branches/${view.baseRefName}`], []);
 const gate: 'ruleset' | 'client-checks' = rules.some((r) => r.type === 'required_status_checks') ? 'ruleset' : 'client-checks';
 
-if (gate === 'client-checks' && gh(['pr', 'checks', String(pr), '--required']).status !== 0) {
-  fail({ refused: `PR #${pr}: required checks are not green.`, pr, missing: ['checks:required'], gate, mode });
+// A head that cannot merge must not have a merge armed on it: the commit
+// that later makes it mergeable is one nobody reviewed (#241).
+if (view.mergeable !== 'MERGEABLE') {
+  fail({
+    refused: `PR #${pr}: GitHub reports its head as ${view.mergeable ?? 'unknown'}, not MERGEABLE — nothing is queued on a head that cannot merge.`,
+    pr,
+    missing: ['merge:not-mergeable'],
+    gate,
+    mode,
+  });
+}
+
+if (!everyRequiredCheckPasses(pr)) {
+  fail({ refused: `PR #${pr}: not every required check is in bucket pass.`, pr, missing: ['checks:required'], gate, mode });
 }
 
 const autoMergeResult = gh(['pr', 'merge', String(pr), '--squash', '--auto', '--match-head-commit', view.headRefOid]);
@@ -188,5 +306,21 @@ if (autoMergeResult.status !== 0) {
 }
 
 const after = ghJson<{ state?: string } | null>(['pr', 'view', String(pr), '--json', 'state'], null);
+if (after?.state !== 'MERGED' && mode === 'agent') {
+  // The merge did not happen, so an auto-merge is armed on a head this run
+  // bound to one reviewed commit — and GitHub checks the pinned oid when the
+  // queue is enabled, not when it fires (#191). Disarm it and refuse.
+  const disarm = gh(['pr', 'merge', String(pr), '--disable-auto']);
+  if (disarm.status !== 0) {
+    fail({ error: (disarm.stderr || disarm.stdout || 'gh pr merge --disable-auto failed').trim() });
+  }
+  fail({
+    refused: `PR #${pr}: GitHub queued the merge instead of performing it, so the auto-merge was disabled again — mode agent merges the reviewed commit or nothing. Clear what blocks it and run land again.`,
+    pr,
+    missing: ['merge:not-clean'],
+    gate,
+    mode,
+  });
+}
 const outcome = after?.state === 'MERGED' ? 'merged' : 'queued';
 console.log(JSON.stringify({ [outcome]: pr, gate, mode }));

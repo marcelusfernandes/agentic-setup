@@ -14,10 +14,22 @@
 // with `JSON.parse` independently, so a bug in the loader cannot make the
 // comparison agree with itself.
 //
+// It also holds the other direction (#152): no file in this repository may
+// map a `scope:` label the dictionary does not seed. The dictionary carries
+// no `scope:` entry at all — `scope:` is chosen by whoever writes the issue
+// and `init` seeds none — so the only way to satisfy that rule is to map
+// none, which is what retiring the M9 discipline agent catalogue did
+// (decision item 19 in `docs/decisions.md`). Reading a data file off disk
+// spawns no script, so invariant 6 does not apply to that case any more than
+// to the dictionary's own.
+//
 // Negative control: on the base `labels.json` does not exist, so the
 // dictionary reads as empty, "labels.json is readable" fails and every
-// comparison below fails with it — no case can pass vacuously.
-import { readFileSync } from 'node:fs';
+// comparison below fails with it — no case can pass vacuously. The
+// catalogue case has its own red: on the base `templates/agents/index.json`
+// is present and all eleven of its `scopes` keys name `scope:` labels the
+// dictionary does not carry.
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';
 
@@ -25,6 +37,7 @@ type Entry = { name: string; color: string; description: string; routes: string[
 
 const DICTIONARY = join(ROOT, 'labels.json');
 const CODEX_HELPER = join(ROOT, '.agents', 'skills', 'autonomous-loop', 'scripts', 'github.mts');
+const CATALOGUE_INDEX = join(ROOT, 'templates', 'agents', 'index.json');
 
 let raw = '';
 let readError = '';
@@ -82,6 +95,33 @@ check('the type: and review: labels are the Claude route only', [...entries.filt
 
 const claudeSeeded = entries.filter((entry) => entry.routes.includes('claude') && !entry.legacy);
 check('the Claude route seeds no legacy label and never state:done', !claudeSeeded.some((entry) => entry.legacy || entry.name === 'state:done'));
+
+// --- the dispatch vocabulary (#152): the retired discipline agent
+// catalogue's index either is gone, or every `scope:` key it maps names an
+// entry this dictionary seeds. Two states satisfy it and nothing else does,
+// so the case survives the catalogue it outlived.
+const seededScopes = new Set(entries.filter((entry) => typeof entry.name === 'string' && entry.name.startsWith('scope:')).map((entry) => entry.name));
+
+let mappedScopes: string[] | null = null; // null: no index on disk, which is the passing state
+let indexError = '';
+if (existsSync(CATALOGUE_INDEX)) {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(CATALOGUE_INDEX, 'utf8'));
+    const scopes = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).scopes
+      : null;
+    mappedScopes = typeof scopes === 'object' && scopes !== null && !Array.isArray(scopes) ? Object.keys(scopes) : [];
+  } catch (err) {
+    mappedScopes = [];
+    indexError = `templates/agents/index.json does not parse: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+const unseededScopes = (mappedScopes ?? []).filter((key) => !seededScopes.has(key));
+check(
+  'no file maps a scope: label labels.json does not seed (the catalogue index is absent, or every key it maps is seeded)',
+  indexError === '' && (mappedScopes === null || unseededScopes.length === 0),
+  indexError || `templates/agents/index.json maps ${unseededScopes.length} of ${(mappedScopes ?? []).length} key(s) no dictionary entry carries: ${unseededScopes.join(', ')}`,
+);
 
 // --- the drift check: the Codex helper's inline LABELS, read out of its
 // source, must be exactly the codex-routed entries of the dictionary.

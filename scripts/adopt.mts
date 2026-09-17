@@ -9,6 +9,7 @@
 //   node scripts/adopt.mts --record [--force]
 //   node scripts/adopt.mts --workflows
 //   node scripts/adopt.mts --hooks
+//   node scripts/adopt.mts --pr
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
 // JSON on stdout and performs **no write of any kind**: no file is created
@@ -76,6 +77,27 @@
 // reports them as `preserved`. Running it twice is a no-op that reports `skip`
 // for every file.
 //
+// `--pr` is the last step, and it is the one that lands everything the
+// earlier ones generate: it assembles the branch `chore/adopt-agentic-setup`
+// out of the record, the generated workflows, the deny list and one
+// deliberate red test under the record's `proof.dir`, pushes it and opens a
+// pull request (#167). It **refuses unless the plan issue `--plan-issue`
+// opened carries `human:decided`** — `{ refused, missing: ['plan:not-decided'] }`
+// — because adoption is not something a script decides for a repository. Two
+// issues can share that title (`--plan-issue` deduplicates against open ones
+// only), so the **open** one is what authorises: a closed issue is history
+// rather than a standing authorisation, and several open ones are
+// `{ refused, missing: ['plan:ambiguous'] }` rather than a choice made by
+// search order.
+// The branch is assembled through git's plumbing against a temporary index,
+// so nothing is ever written into the working tree; the push is the
+// create-only push `scripts/claim.mts` uses
+// (`--force-with-lease=<ref>:`, the `--porcelain` line read as the signal),
+// and a branch that already exists is `{ held }` and exit 2, never a force.
+// `--force` is not a modifier of it: there is no way past that refusal,
+// because the remedy is to read the branch, not to lose it. `adopt` never
+// merges anything — `scripts/land.mts` does, under M12's gate.
+//
 // **Crash policy: fail closed.** Any `git` or `gh` read that cannot answer
 // prints `{ error: <named reason> }` and exits 1. No field is ever reported
 // as absent because the read for it failed — "there is no ruleset" and "the
@@ -121,11 +143,28 @@ import {
   renderWorkflows,
 } from './lib/adopt/workflows.mts';
 import { HookError, planHooks } from './lib/adopt/hooks.mts';
+import {
+  ADOPTION_BRANCH,
+  ADOPTION_GLOBS,
+  PR_TITLE,
+  PrError,
+  buildBranch,
+  planPullRequest,
+  renderBody,
+  resolvePlanIssue,
+  type PlanCandidate,
+} from './lib/adopt/pr.mts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
-const USAGE = 'usage: node scripts/adopt.mts --inventory | --plan-issue | --record [--force] | --workflows | --hooks';
+const USAGE =
+  'usage: node scripts/adopt.mts --inventory | --plan-issue | --record [--force] | --workflows | --hooks | --pr';
 
 /** The title the plan issue is deduplicated by; one per repository. */
 const PLAN_ISSUE_TITLE = 'Adoption plan: what this repository is missing';
+
+/** The label a plan issue carries once the decision it asked for was made. */
+const DECIDED_LABEL = 'human:decided';
 
 /** The label the plan issue carries, with the colour scripts/init.mts seeds. */
 const PENDING_LABEL = 'human:pending';
@@ -169,11 +208,12 @@ const wantPlanIssue = flags['plan-issue'] === true;
 const wantRecord = flags.record === true;
 const wantWorkflows = flags.workflows === true;
 const wantHooks = flags.hooks === true;
+const wantPr = flags.pr === true;
 const force = flags.force === true;
 // Exactly one mode. `--force` is a modifier of `--record` and never a mode
 // of its own: on its own it names nothing to do, and it must not be read as
 // "write the record" by accident.
-if ([wantInventory, wantPlanIssue, wantRecord, wantWorkflows, wantHooks].filter(Boolean).length !== 1) fail(USAGE);
+if ([wantInventory, wantPlanIssue, wantRecord, wantWorkflows, wantHooks, wantPr].filter(Boolean).length !== 1) fail(USAGE);
 if (force && !wantRecord) fail(USAGE);
 
 // --- 2. the repository root -------------------------------------------------
@@ -381,6 +421,196 @@ if (wantHooks) {
   process.exit(0);
 }
 
+// --- 4d. --pr: the branch that proves itself ---------------------------------
+// The last step, and the only one that touches the remote. It is a reader of
+// the record like `--workflows` and `--hooks`, except that it will generate
+// one when there is none: the sequence a person runs is `--inventory`,
+// `--plan-issue`, the decision, `--pr`, and asking them for `--record` in
+// between would be a step nothing verified. Nothing is written into the
+// working tree at any point — the branch is assembled in the object database
+// against a temporary index.
+if (wantPr) {
+  /** The same exit as `failRecord`, for a pull request this tool refuses. */
+  const failPr = (err: PrError): never => {
+    const field = err.field === null ? {} : { field: err.field };
+    console.log(JSON.stringify({ error: err.reason, ...field, detail: err.message }));
+    process.exit(1);
+  };
+
+  /**
+   * A refusal a person answers, rather than a failure: named, and never a
+   * write. `issue` names the one it read when there is exactly one; `issues`
+   * names them all when the refusal is that there is more than one.
+   */
+  function refuse(refused: string, reason: string, missing: string[], issue: number | null = null, issues: number[] | null = null): never {
+    console.log(
+      JSON.stringify({
+        refused,
+        reason,
+        missing,
+        ...(issue === null ? {} : { issue }),
+        ...(issues === null ? {} : { issues }),
+      }),
+    );
+    process.exit(1);
+  }
+
+  // 1. the decision. A script does not decide adoption for a repository: the
+  // plan issue is the question, and the label is the answer.
+  //
+  // **Two issues can share the title, so the gate cannot read "the" match.**
+  // `--plan-issue` deduplicates against *open* issues only (step 8 below), so
+  // closing a plan issue and running the documented sequence again leaves a
+  // closed one beside an open one. Taking whichever the search returned first
+  // would let a closed `human:decided` issue authorise a push and put
+  // `Closes #<a closed issue>` in the body — a keyword GitHub will not act on
+  // — or let a closed undecided one produce a refusal the live question does
+  // not deserve. Resolving the only mode that writes to a remote repository by
+  // search order is not a gate.
+  //
+  // So the state is *requested* and the **open** issue is preferred: it is the
+  // live question, and it is the one `--plan-issue` maintains as unique. A
+  // closed issue is history — a decision that was made, acted on and filed —
+  // and history is not a standing authorisation. Preference resolves the
+  // ordinary case; where it cannot (several open matches, which only a person
+  // opening one by hand produces) the run refuses by name rather than picking.
+  const search = gh([
+    'issue', 'list', '--search', `"${PLAN_ISSUE_TITLE}" in:title`,
+    '--state', 'all', '--limit', '100', '--json', 'number,title,state,labels',
+  ]);
+  if (search.status !== 0 || !search.stdout.trim()) fail('pr:plan-unreadable');
+  let plans: PlanCandidate[];
+  try {
+    plans = JSON.parse(search.stdout);
+  } catch {
+    fail('pr:plan-unreadable');
+  }
+  if (!Array.isArray(plans)) fail('pr:plan-unreadable');
+
+  // Which of the matches authorises is `resolvePlanIssue`'s answer, not this
+  // file's: it is a decision over what GitHub returned, so it is a pure
+  // function tested directly rather than only through a spawn.
+  const decision = resolvePlanIssue(plans, PLAN_ISSUE_TITLE, DECIDED_LABEL);
+  if (!decision.ok) refuse(decision.message, decision.reason, decision.missing, decision.issue, decision.issues);
+  const planNumber = decision.issue;
+
+  // 2. the record. An existing one is used as it stands, so the pull request
+  // carries what the repository already decided; one that a person wrote is
+  // refused here exactly as `--record` refuses it, and there is no `--force`
+  // past it on this flag.
+  if (existing !== null && existing.generatedBy !== GENERATED_BY) {
+    console.log(
+      JSON.stringify({
+        refused:
+          `${RECORD_FILE} says it was generated by \`${existing.generatedBy}\`, not by this tool; no person edits this file, ` +
+          'and a pull request built on one is a pull request nobody can regenerate. Run `--record --force` first.',
+        reason: 'record:not-ours',
+        generatedBy: existing.generatedBy,
+      }),
+    );
+    process.exit(1);
+  }
+  const record = existing ?? buildRecord(inventory);
+
+  // 3. the base: the default branch as origin has it, never the checkout.
+  const gitHere = gitIn(root);
+  if (gitHere(['fetch', 'origin']).status !== 0) fail('pr:origin-unreadable');
+  const rev = gitHere(['rev-parse', `origin/${inventory.defaultBranch}`]);
+  if (rev.status !== 0 || rev.stdout.trim().length !== 40) fail('pr:base-unreadable');
+  const base = rev.stdout.trim();
+  // What the base tree holds is asked once, of `ls-tree`, and never inferred
+  // from a failed read. `git show <sha>:<path>` exits non-zero both for "the
+  // tree does not carry this path" and for every other reason it could not
+  // answer, so branching on its status alone would plan a file as `created` —
+  // and write over the base's version of it — because the read for it failed.
+  // That is the one thing this module's header promises it does not do.
+  // `-z` keeps a path with a special character unquoted and whole.
+  const listing = gitHere(['ls-tree', '-r', '--name-only', '-z', base]);
+  if (listing.status !== 0) fail('pr:base-unreadable', (listing.stderr || '').trim().split('\n')[0] || undefined);
+  const inBase = new Set(listing.stdout.split('\0').filter((path) => path.length > 0));
+  const baseFile = (path: string): string | null => {
+    if (!inBase.has(path)) return null;
+    const show = spawnSync('git', ['show', `${base}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    // The tree says this path is there, so a read that fails is a failure and
+    // never an absence: fail closed rather than plan a write over it.
+    if (show.status !== 0) fail('pr:base-unreadable', (show.stderr || '').trim().split('\n')[0] || undefined);
+    return show.stdout ?? '';
+  };
+
+  // 4. the plan, and the commits it implies.
+  const git = (args: string[], options: { input?: string; env?: Record<string, string> } = {}): CommandResult => {
+    const r = spawnSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      ...(options.input === undefined ? {} : { input: options.input }),
+      env: { ...process.env, ...(options.env ?? {}) },
+    });
+    return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  };
+
+  const indexDir = mkdtempSync(join(tmpdir(), 'agentic-adopt-index-'));
+  let plan;
+  let branch;
+  try {
+    plan = planPullRequest(record, { root, baseFile });
+    branch = buildBranch(plan, { git, base, indexFile: join(indexDir, 'index') });
+  } catch (err) {
+    rmSync(indexDir, { recursive: true, force: true });
+    if (err instanceof PrError) failPr(err);
+    throw err;
+  }
+  rmSync(indexDir, { recursive: true, force: true });
+
+  // 5. the create-only push. The same form `scripts/claim.mts` uses: an empty
+  // expected value means the ref must not already exist, the `--porcelain`
+  // data line is the signal, and a branch someone else already holds is
+  // `{ held }` rather than a force.
+  const held = (): never => {
+    console.log(JSON.stringify({ held: ADOPTION_BRANCH, branch: ADOPTION_BRANCH, base, issue: planNumber }));
+    process.exit(2);
+  };
+  const push = spawnSync(
+    'git',
+    ['push', '--porcelain', `--force-with-lease=refs/heads/${ADOPTION_BRANCH}:`, 'origin', `${branch.head}:refs/heads/${ADOPTION_BRANCH}`],
+    { cwd: root, encoding: 'utf8' },
+  );
+  const dataLine = (push.stdout || '').split(/\r?\n/).find((line) => /^[*=!+\- ]\t/.test(line)) ?? '';
+  if (push.status === 0) {
+    if (!dataLine.startsWith('*')) held();
+  } else {
+    const output = `${push.stdout || ''}${push.stderr || ''}`;
+    if (/\[rejected\]/.test(output) || /already exists/i.test(output) || /cannot lock ref/i.test(output)) held();
+    fail('pr:not-pushed', dataLine ? dataLine.replace(/\t/g, ' ').trim() : (push.stderr || push.stdout || 'push failed').trim().split('\n')[0]);
+  }
+
+  // 6. the pull request. The body is the one `ci/scope-check.mts` reads:
+  // the closing keyword in plain text, and `## Files` naming exactly what the
+  // branch carries. No `type:` label is applied — an agent that labels its own
+  // work buys its own exemptions (`agents/implementer.md`).
+  const body = renderBody(plan, { issue: planNumber, defaultBranch: inventory.defaultBranch, record });
+  const created = gh(['pr', 'create', '--base', inventory.defaultBranch, '--head', ADOPTION_BRANCH, '--title', PR_TITLE, '--body', body]);
+  if (created.status !== 0) {
+    fail('pr:not-created', (created.stderr || created.stdout || '').trim().split('\n')[0] || undefined);
+  }
+  const prUrl = created.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
+
+  console.log(
+    JSON.stringify({
+      branch: ADOPTION_BRANCH,
+      base,
+      head: branch.head,
+      issue: planNumber,
+      pr: prUrl,
+      commits: branch.commits.map(({ subject, sha, paths }) => ({ subject, sha, paths })),
+      files: plan.files.map(({ content: _content, ...rest }) => rest),
+      globs: plan.globs,
+      checks: plan.checks,
+      proof: plan.proof,
+    }),
+  );
+  process.exit(0);
+}
+
 // --- 5. --record: the one file adoption generates ---------------------------
 if (wantRecord) {
   if (existing !== null && existing.generatedBy !== GENERATED_BY && !force) {
@@ -504,6 +734,15 @@ function renderPlan(report: Report): string {
     plan,
     '',
     'Tick what should happen, then move this issue to `human:decided`.',
+    '',
+    // The globs adoption may write, declared here because this is the issue
+    // the adoption pull request closes and `ci/scope-check.mts` reads a pull
+    // request's scope off the issue, never off the body the opener wrote
+    // (#155). Fixed rather than derived from the report above: the record
+    // that decides the exact paths does not exist yet when this is rendered.
+    '## Files',
+    '',
+    ADOPTION_GLOBS.map((glob) => `- \`${glob}\``).join('\n'),
     '',
     '## Inventory',
     '',

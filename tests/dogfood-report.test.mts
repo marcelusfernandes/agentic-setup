@@ -32,6 +32,19 @@ import { check, finish, ROOT } from './lib/harness.mts';
 const HEADING = /^# Dogfood (<YYYY-MM-DD>|\d{4}-\d{2}-\d{2}) — (\S.*)$/;
 /** The six header bullets, in this order, between the heading and `## Scoreboard`. */
 const BULLETS = ['Repository', 'Commit', 'Turns', 'Minutes', 'Cost (USD)', 'Transcripts'];
+/**
+ * The optional seventh bullet (#184), naming the issue a report reproduces.
+ * It exists for one case: a pass that ran before this format did, whose record
+ * is prose that never carried the numbers. Such a report may write the literal
+ * `not recorded` in `Commit` and the five numeric cells rather than have them
+ * reconstructed, and the bullet is what makes that visible — a report without
+ * it is still held to numbers, so a live pass stays comparable to the next one.
+ */
+const RETROACTIVE = 'Retroactive';
+/** What a retroactive report writes where its source recorded no number. */
+const NOT_RECORDED = 'not recorded';
+/** The `Retroactive:` value: the one issue the report reproduces. */
+const RETROACTIVE_VALUE = /^#\d+$/;
 const SECTIONS = ['## Scoreboard', '## Findings'];
 const SCOREBOARD_COLUMNS = ['case', 'exit', 'error class', 'tool calls', 'decision', 'reason'];
 const FINDINGS_COLUMNS = ['finding', 'origin', 'outcome'];
@@ -85,12 +98,19 @@ function validate(name: string, raw: string): string[] {
   }
   if (errors.length) return errors;
 
-  // --- header bullets, six of them, in order ---
+  // --- header bullets, six of them, in order, plus an optional `Retroactive` ---
   const header = lines.slice(firstIndex + 1, sectionAt[0]).filter((l) => l.trim().startsWith('- '));
-  if (header.length !== BULLETS.length) {
-    errors.push(`${name}: expected ${BULLETS.length} header bullets (${BULLETS.join(', ')}), got ${header.length}`);
+  // The seventh bullet is recognised by its own label, so a report that simply
+  // has one bullet too many is still the "wrong count" error it was before.
+  const retroactive = header.length === BULLETS.length + 1
+    && header[BULLETS.length].trim().startsWith(`- ${RETROACTIVE}: `);
+  const expected = retroactive ? [...BULLETS, RETROACTIVE] : BULLETS;
+  if (header.length !== expected.length) {
+    errors.push(
+      `${name}: expected ${BULLETS.length} header bullets (${BULLETS.join(', ')}), optionally followed by "${RETROACTIVE}", got ${header.length}`,
+    );
   } else {
-    BULLETS.forEach((label, i) => {
+    expected.forEach((label, i) => {
       const prefix = `- ${label}: `;
       const line = header[i].trim();
       if (!line.startsWith(prefix)) {
@@ -99,8 +119,15 @@ function validate(name: string, raw: string): string[] {
       }
       const value = line.slice(prefix.length).trim();
       if (value === '') errors.push(`${name}: "${label}" is empty`);
+      else if (label === RETROACTIVE && !RETROACTIVE_VALUE.test(value)) {
+        errors.push(`${name}: "${RETROACTIVE}" must name the issue this report reproduces as \`#N\`, got "${value}"`);
+      }
     });
   }
+  /** `not recorded` is a value only a retroactive report may write. */
+  const absent = (cell: string) => retroactive && cell === NOT_RECORDED;
+  /** The escape named in a message, so a failing report is told the one way out. */
+  const orAbsent = retroactive ? ` or \`${NOT_RECORDED}\`` : '';
 
   // --- the two tables ---
   const rowsIn = (from: number, to: number, columns: string[]): string[][] => {
@@ -137,9 +164,9 @@ function validate(name: string, raw: string): string[] {
   for (const [name_, exit, errorClass, toolCalls, decision, reason] of caseRows) {
     const where = `${name}: case "${name_}"`;
     if (name_ === '') errors.push(`${name}: a case row has no case name`);
-    if (!INTEGER.test(exit)) errors.push(`${where}: "exit" must be an integer, got "${exit}"`);
+    if (!INTEGER.test(exit) && !absent(exit)) errors.push(`${where}: "exit" must be an integer${orAbsent}, got "${exit}"`);
     if (errorClass === '') errors.push(`${where}: "error class" is empty (write \`none\` for a clean case)`);
-    if (!INTEGER.test(toolCalls)) errors.push(`${where}: "tool calls" must be an integer, got "${toolCalls}"`);
+    if (!INTEGER.test(toolCalls) && !absent(toolCalls)) errors.push(`${where}: "tool calls" must be an integer${orAbsent}, got "${toolCalls}"`);
     if (!DECISIONS.includes(decision)) errors.push(`${where}: "decision" must be ${DECISIONS.join(' or ')}, got "${decision}"`);
     if (reason === '') errors.push(`${where}: the ${decision || 'keep/fix'} decision carries no reason`);
   }
@@ -156,13 +183,19 @@ function validate(name: string, raw: string): string[] {
   }
 
   // --- the header fields that have a shape ---
-  if (header.length === BULLETS.length) {
+  if (header.length === expected.length) {
     const value = (label: string) => header[BULLETS.indexOf(label)].trim().slice(`- ${label}: `.length).trim();
-    if (!SHA.test(value('Commit'))) errors.push(`${name}: "Commit" must be a 40-character sha, got "${value('Commit')}"`);
-    for (const label of ['Turns', 'Minutes']) {
-      if (!INTEGER.test(value(label))) errors.push(`${name}: "${label}" must be a whole number, got "${value(label)}"`);
+    if (!SHA.test(value('Commit')) && !absent(value('Commit'))) {
+      errors.push(`${name}: "Commit" must be a 40-character sha${orAbsent}, got "${value('Commit')}"`);
     }
-    if (!MONEY.test(value('Cost (USD)'))) errors.push(`${name}: "Cost (USD)" must be a number, got "${value('Cost (USD)')}"`);
+    for (const label of ['Turns', 'Minutes']) {
+      if (!INTEGER.test(value(label)) && !absent(value(label))) {
+        errors.push(`${name}: "${label}" must be a whole number${orAbsent}, got "${value(label)}"`);
+      }
+    }
+    if (!MONEY.test(value('Cost (USD)')) && !absent(value('Cost (USD)'))) {
+      errors.push(`${name}: "Cost (USD)" must be a number${orAbsent}, got "${value('Cost (USD)')}"`);
+    }
   }
   return errors;
 }
@@ -282,6 +315,49 @@ fixture(
   swap('| case "land a queued PR" | #901 |', '| case "land a queued PR" | already covered by PR #905 |'),
   true,
 );
+// --- the retroactive escape (#184): the one document that may say `not recorded` ---
+
+/** `VALID` with the seventh bullet, and every number its source never recorded. */
+const RETRO = VALID
+  .replace(
+    '- Transcripts: run 42 of the scheduler, kept with the run, not in this repository',
+    '- Transcripts: not kept — the pass predates this format\n- Retroactive: #96',
+  )
+  .replace('- Commit: 0123456789abcdef0123456789abcdef01234567', `- Commit: ${NOT_RECORDED}`)
+  .replace('- Turns: 41', `- Turns: ${NOT_RECORDED}`)
+  .replace('- Minutes: 96', `- Minutes: ${NOT_RECORDED}`)
+  .replace('- Cost (USD): 12.40', `- Cost (USD): ${NOT_RECORDED}`)
+  .replace('| claim a ready issue | 0 | none | 7 |', `| claim a ready issue | ${NOT_RECORDED} | none | ${NOT_RECORDED} |`);
+
+fixture('a retroactive report may write `not recorded` where its source recorded none', RETRO, true);
+fixture(
+  'a report with no Retroactive bullet may not write `not recorded`',
+  swap('- Turns: 41', `- Turns: ${NOT_RECORDED}`),
+  false,
+  /"Turns" must be a whole number/,
+);
+fixture(
+  'a retroactive report still needs its error class, decision and reason',
+  RETRO.replace('| none | not recorded | keep |', '| none | not recorded | maybe |'),
+  false,
+  /"decision" must be keep or fix/,
+);
+fixture(
+  'a Retroactive bullet that does not name an issue fails',
+  RETRO.replace('- Retroactive: #96', '- Retroactive: the first third-party run'),
+  false,
+  /must name the issue this report reproduces/,
+);
+fixture(
+  'a seventh bullet that is not Retroactive fails',
+  VALID.replace(
+    '- Transcripts: run 42 of the scheduler, kept with the run, not in this repository',
+    '- Transcripts: run 42 of the scheduler\n- Notes: something else',
+  ),
+  false,
+  /expected 6 header bullets/,
+);
+
 fixture(
   'a half-filled report fails',
   swap('- Repository: example/disposable', '- Repository: <owner/name the pass ran against>'),
@@ -321,7 +397,13 @@ check('docs/dogfood/TEMPLATE.md ships the empty case', entries.includes('TEMPLAT
 // header bullet labels. Existence alone would let the prose drift away from the
 // rules above while the pin stayed green.
 const readme = entries.includes('README.md') ? readFileSync(join(dir, 'README.md'), 'utf8') : '';
-const stated = [SCOREBOARD_HEADER, FINDINGS_HEADER, ...BULLETS.map((b) => `\`${b}\``)];
+const stated = [
+  SCOREBOARD_HEADER,
+  FINDINGS_HEADER,
+  ...[...BULLETS, RETROACTIVE].map((b) => `\`${b}\``),
+  // The escape is a rule of the format, so the README owes it a sentence too.
+  `\`${NOT_RECORDED}\``,
+];
 const unstated = stated.filter((part) => !readme.includes(part));
 check(
   'docs/dogfood/README.md states the format this test enforces',
