@@ -325,6 +325,18 @@ say('ci scripts');
 copyTree(join(PLUGIN, 'ci'), join(root, '.github', 'scripts', 'agentic'), true);
 
 // 3. permission deny list
+//
+// Every deny rule this installer has ever seeded, keyed by the wording it was
+// written as and answering with the wording it is written as today. A rule in
+// the target's list that this map knows is replaced, not kept beside its
+// successor (#204: a repository that ran an older `init` carried the narrower
+// `Bash(gh pr merge *--admin*)` forever, next to the `Bash(gh pr merge *)` that
+// superseded it). The set is named here on purpose: "whatever the wanted file
+// no longer contains" would also delete rules the adopter wrote themselves.
+const SUPERSEDED_DENY_RULES: Record<string, string> = {
+  'Bash(gh pr merge *--admin*)': 'Bash(gh pr merge *)',
+};
+
 say('.claude/settings.json');
 const settingsPath = join(root, '.claude', 'settings.json');
 const wanted = JSON.parse(readFileSync(join(PLUGIN, 'templates', 'claude-settings.json'), 'utf8'));
@@ -338,13 +350,18 @@ if (existsSync(settingsPath)) {
   }
 }
 if (settings) {
-  const current = new Set(settings.permissions?.deny ?? []);
-  const added = wanted.permissions.deny.filter((rule: string) => !current.has(rule));
-  const merged = { ...settings, permissions: { ...(settings.permissions ?? {}), deny: [...current, ...added] } };
+  const existing: string[] = [...new Set<string>(settings.permissions?.deny ?? [])];
+  const stale = existing.filter((rule) => rule in SUPERSEDED_DENY_RULES);
+  const kept = existing.filter((rule) => !(rule in SUPERSEDED_DENY_RULES));
+  const current = new Set(kept);
+  const wantedDeny: string[] = [...wanted.permissions.deny, ...stale.map((rule) => SUPERSEDED_DENY_RULES[rule])];
+  const added = [...new Set(wantedDeny)].filter((rule) => !current.has(rule));
+  const merged = { ...settings, permissions: { ...(settings.permissions ?? {}), deny: [...kept, ...added] } };
   write(() => {
     mkdirSync(dirname(settingsPath), { recursive: true });
     writeFileSync(settingsPath, `${JSON.stringify(merged, null, 2)}\n`);
   });
+  if (stale.length) say(`  ~ ${stale.length} superseded deny rule(s) replaced`);
   say(added.length ? `  + ${added.length} deny rule(s) added` : '  = deny list already complete');
 }
 
