@@ -56,8 +56,20 @@ const PLAN_ISSUE_TITLE = 'Adoption plan: what this repository is missing';
 const PENDING_LABEL = 'human:pending';
 const DECIDED_LABEL = 'human:decided';
 
-/** The plan issue number the fake `gh` answers with. */
+/** The plan issue number the fake `gh` answers with, open unless a knob says otherwise. */
 const PLAN_ISSUE = 41;
+
+/**
+ * A second issue of the same title. Two can exist because `--plan-issue`
+ * deduplicates against **open** issues only: close one, run the documented
+ * sequence again, and the repository holds a closed plan issue and an open
+ * one. The gate on the only mode that writes to a remote must not resolve
+ * that by whichever the search happens to return first.
+ */
+const OPEN_PLAN_ISSUE = 42;
+
+/** A third, so "two open matches" — which no preference resolves — has a case. */
+const SECOND_OPEN_ISSUE = 43;
 
 /** The pull request the fake `gh` answers `pr create` with. */
 const PR_URL = 'https://github.com/org/repo/pull/99';
@@ -103,8 +115,51 @@ check('it names the one adoption branch and its slug', mod?.ADOPTION_BRANCH === 
 
 // --- a fake `gh` -------------------------------------------------------------
 // Every GitHub call of this file goes through it: the three inventory reads,
-// the plan-issue lookup (with its labels) and `pr create`, which records its
-// own argv rather than reaching any repository.
+// the plan-issue lookup (with its labels *and its state*) and `pr create`,
+// which records its own argv rather than reaching any repository.
+//
+// The `issue list` arm **honours `--state`**, and several knobs answer with
+// more than one issue of the plan title. Both matter: a fake that ignored
+// `--state` and never returned two issues could not tell a correct gate from
+// one that resolves by whichever match the search returned first, which is
+// exactly the defect these cases exist to catch.
+
+/** One issue of the plan title, as `gh issue list --json …` renders it. */
+const issueJson = (n: number, label: string, state: 'OPEN' | 'CLOSED'): string =>
+  `{"number":${n},"title":"${PLAN_ISSUE_TITLE}","state":"${state}","labels":[{"name":"${label}"}]}`;
+
+const OPEN_PENDING = issueJson(PLAN_ISSUE, PENDING_LABEL, 'OPEN');
+const OPEN_DECIDED = issueJson(PLAN_ISSUE, DECIDED_LABEL, 'OPEN');
+const CLOSED_DECIDED = issueJson(PLAN_ISSUE, DECIDED_LABEL, 'CLOSED');
+const CLOSED_PENDING = issueJson(PLAN_ISSUE, PENDING_LABEL, 'CLOSED');
+const OTHER_OPEN_PENDING = issueJson(OPEN_PLAN_ISSUE, PENDING_LABEL, 'OPEN');
+const OTHER_OPEN_DECIDED = issueJson(OPEN_PLAN_ISSUE, DECIDED_LABEL, 'OPEN');
+const THIRD_OPEN_DECIDED = issueJson(SECOND_OPEN_ISSUE, DECIDED_LABEL, 'OPEN');
+
+/**
+ * What each knob answers, per requested state. The closed issue is listed
+ * **first** in every `all` answer on purpose: a gate that takes the first
+ * title match picks it, which is the coin flip these cases pin down.
+ */
+const PLAN_ANSWERS: Record<string, { all: string; open: string }> = {
+  none: { all: '[]', open: '[]' },
+  pending: { all: `[${OPEN_PENDING}]`, open: `[${OPEN_PENDING}]` },
+  decided: { all: `[${OPEN_DECIDED}]`, open: `[${OPEN_DECIDED}]` },
+  // A decision that was made and then closed, beside the live question.
+  'closed-decided-open-pending': { all: `[${CLOSED_DECIDED},${OTHER_OPEN_PENDING}]`, open: `[${OTHER_OPEN_PENDING}]` },
+  // The mirror: the stale one is undecided and the live one is decided.
+  'closed-pending-open-decided': { all: `[${CLOSED_PENDING},${OTHER_OPEN_DECIDED}]`, open: `[${OTHER_OPEN_DECIDED}]` },
+  // Two open matches: no preference resolves this one.
+  'two-open': { all: `[${OTHER_OPEN_DECIDED},${THIRD_OPEN_DECIDED}]`, open: `[${OTHER_OPEN_DECIDED},${THIRD_OPEN_DECIDED}]` },
+  // History and nothing else: a closed decision is not a live authorisation.
+  'closed-decided-only': { all: `[${CLOSED_DECIDED}]`, open: '[]' },
+};
+
+/** `knob:state) echo '<json>' ;;` arms, so an unknown pair stops the fake. */
+const PLAN_ARMS = Object.entries(PLAN_ANSWERS)
+  .map(([knob, answer]) => `      ${knob}:all) echo '${answer.all}' ;;\n      ${knob}:open) echo '${answer.open}' ;;`)
+  .join('\n');
+
 const FAKE_GH = `#!/usr/bin/env bash
 set -u
 state="\$FAKE_GH_STATE_DIR"
@@ -121,10 +176,22 @@ case "\${1:-} \${2:-}" in
     echo '[]'
     ;;
   "issue list")
-    case "\${FAKE_GH_PLAN:-none}" in
-      pending) echo '[{"number":${PLAN_ISSUE},"title":"${PLAN_ISSUE_TITLE}","state":"OPEN","labels":[{"name":"${PENDING_LABEL}"}]}]' ;;
-      decided) echo '[{"number":${PLAN_ISSUE},"title":"${PLAN_ISSUE_TITLE}","state":"OPEN","labels":[{"name":"${DECIDED_LABEL}"}]}]' ;;
-      *) echo '[]' ;;
+    # --state is honoured, not ignored: the caller says which states it wants
+    # and gets those. An unknown knob/state pair stops the fake with a named
+    # error rather than falling through to an empty list, which would read as
+    # "this repository has no plan issue" and quietly pass a case.
+    want_state=all
+    prev=""
+    for a in "\$@"; do
+      if [ "\$prev" = "--state" ]; then want_state="\$a"; fi
+      prev="\$a"
+    done
+    case "\${FAKE_GH_PLAN:-none}:\$want_state" in
+${PLAN_ARMS}
+      *)
+        echo "fake-gh: no answer for FAKE_GH_PLAN=\${FAKE_GH_PLAN:-none} --state \$want_state" >&2
+        exit 64
+        ;;
     esac
     ;;
   "issue create")
@@ -272,6 +339,88 @@ check(
   git(['status', '--porcelain'], pending.repo) === '',
   git(['status', '--porcelain'], pending.repo),
 );
+
+// --- B2: two issues share the title, and the gate must not flip a coin ------
+// `--plan-issue` deduplicates against **open** issues only, so closing a plan
+// issue and running the documented sequence again leaves a closed one beside
+// an open one. Whichever the search returns first must not be what authorises
+// a push to a remote repository. The open issue is the live question; a closed
+// one is history.
+//
+// The fake lists the closed issue first in every `all` answer, so a gate that
+// takes the first title match reads the closed `human:decided` one, pushes the
+// branch and writes `Closes #<a closed issue>` into the body.
+const stale = fixture();
+const staleRun = adopt(['--pr'], stale.repo, { FAKE_GH_PLAN: 'closed-decided-open-pending' });
+const staleOut = parse(staleRun.stdout);
+check('a closed decided issue beside an open pending one exits 1', staleRun.status === 1 && staleOut !== null, `${staleRun.stdout}\n${staleRun.stderr}`);
+check(
+  'the open, undecided plan issue is what the gate reads — not the closed decided one',
+  staleOut?.reason === 'pr:plan-not-decided' && Array.isArray(staleOut?.missing) && staleOut.missing.includes('plan:not-decided'),
+  staleRun.stdout,
+);
+check('the refusal names the open issue, never the closed one', staleOut?.issue === OPEN_PLAN_ISSUE, `${staleOut?.issue} (closed one is #${PLAN_ISSUE})`);
+check('a closed decision authorises no push', remoteSha(stale.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
+check('a closed decision opens no pull request', !existsSync(join(staleRun.stateDir, 'pr-create.args')), staleRun.stateDir);
+
+// The search has to ask for the state to be able to prefer by it. A gate that
+// requests only `number,title,labels` cannot tell the two apart at all.
+const staleLog = (() => {
+  try {
+    return readFileSync(join(staleRun.stateDir, 'gh-argv.log'), 'utf8');
+  } catch {
+    return '';
+  }
+})();
+check('the plan search asks GitHub for each issue’s state', /^issue list .*--json [^ ]*\bstate\b/m.test(staleLog), staleLog);
+
+// --- B3: the mirror — the live question is the decided one ------------------
+// Pins which one wins: the stale, closed issue is undecided and would refuse;
+// the open one carries the decision and is what the run proceeds on.
+const live = fixture();
+const liveRun = adopt(['--pr'], live.repo, { FAKE_GH_PLAN: 'closed-pending-open-decided' });
+const liveOut = parse(liveRun.stdout);
+check('a closed pending issue beside an open decided one exits 0', liveRun.status === 0 && liveOut !== null, `${liveRun.stdout}\n${liveRun.stderr}`);
+check('the open, decided plan issue is the one adoption proceeds on', liveOut?.issue === OPEN_PLAN_ISSUE, liveRun.stdout);
+check('the branch is pushed on the live decision', String(liveOut?.head ?? '').length === 40 && remoteSha(live.origin, `refs/heads/${BRANCH}`) === liveOut.head, String(liveOut?.head));
+check(
+  'the body closes the open issue, never the closed one',
+  new RegExp(`^Closes #${OPEN_PLAN_ISSUE}$`, 'm').test(bodyOf(liveRun.stateDir, 'pr-create.args')),
+  bodyOf(liveRun.stateDir, 'pr-create.args').split('\n').slice(0, 3).join('\n'),
+);
+
+// --- B4: two open matches are ambiguous, and ambiguity is a named refusal ---
+// Preferring the open one resolves the ordinary case; it cannot resolve this
+// one. A repository holding two open plan issues is a question nobody can
+// answer mechanically, so the run stops by name rather than picking.
+const twins = fixture();
+const twinsRun = adopt(['--pr'], twins.repo, { FAKE_GH_PLAN: 'two-open' });
+const twinsOut = parse(twinsRun.stdout);
+check('two open plan issues exit 1', twinsRun.status === 1 && twinsOut !== null, `${twinsRun.stdout}\n${twinsRun.stderr}`);
+check(
+  'two open plan issues are refused by name, never resolved by order',
+  twinsOut?.reason === 'pr:plan-ambiguous' && Array.isArray(twinsOut?.missing) && twinsOut.missing.includes('plan:ambiguous'),
+  twinsRun.stdout,
+);
+check(
+  'the ambiguity refusal names every issue it could not choose between',
+  Array.isArray(twinsOut?.issues) && [OPEN_PLAN_ISSUE, SECOND_OPEN_ISSUE].every((n) => twinsOut.issues.includes(n)),
+  JSON.stringify(twinsOut?.issues),
+);
+check('an ambiguous plan pushes nothing', remoteSha(twins.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
+check('an ambiguous plan opens no pull request', !existsSync(join(twinsRun.stateDir, 'pr-create.args')), twinsRun.stateDir);
+
+// --- B5: a closed decision on its own is history, not an authorisation ------
+const history = fixture();
+const historyRun = adopt(['--pr'], history.repo, { FAKE_GH_PLAN: 'closed-decided-only' });
+const historyOut = parse(historyRun.stdout);
+check('a closed decided issue and nothing else exits 1', historyRun.status === 1 && historyOut !== null, `${historyRun.stdout}\n${historyRun.stderr}`);
+check(
+  'a closed decision alone is reported as no live plan issue',
+  Array.isArray(historyOut?.missing) && historyOut.missing.includes('plan:not-found'),
+  historyRun.stdout,
+);
+check('a closed decision alone pushes nothing', remoteSha(history.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
 
 // --- C: a `human:decided` plan issue is the success path --------------------
 const decided = fixture();
@@ -506,5 +655,10 @@ check('docs/adopt.md documents the full sequence', ['--inventory', '--plan-issue
 check('docs/adopt.md says what the deliberate red test is for', /deliberate red/i.test(docs) && docs.includes('negative-control'), 'deliberate red');
 check('docs/adopt.md says adopt never merges, and names scripts/land.mts', /never merges/i.test(docs) && docs.includes('scripts/land.mts'), 'never merges');
 check('docs/adopt.md names the adoption branch and the refusal the plan issue can cause', docs.includes(BRANCH) && docs.includes('plan:not-decided'), 'branch and refusal');
+check(
+  'docs/adopt.md says which plan issue authorises when two share the title, and names the ambiguous refusal',
+  docs.includes('pr:plan-ambiguous') && /open/.test(docs.split('## `--pr`')[1] ?? ''),
+  'ambiguity',
+);
 
 finish();
