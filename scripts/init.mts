@@ -2,7 +2,8 @@
 // init — sets a repository up for the agent loop. Run from the repository
 // root; idempotent; never overwrites a file you edited unless --force.
 //
-//   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force] [--dry-run] [--rules]
+//   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force] [--dry-run]
+//                         [--rules] [--ruleset-name <name>]
 //
 // --dry-run prints the same report a real run would, changes nothing on disk
 // or on GitHub. Every filesystem write is routed through the write() gate
@@ -10,16 +11,27 @@
 // writes (label create, milestone POST, ruleset POST/PUT) are instead
 // skipped by an explicit `if (dryRun)` and their report line names the
 // outcome a fully successful write would reach (e.g. "N/N labels present")
-// — reading gh state (auth status, milestone listing, the rulesets list)
-// still happens so the report can say "=" (exists) vs "+" (would be
-// created).
+// — reading gh state (auth status, milestone listing, the rulesets list and
+// each ruleset's detail) still happens so the report can say "=" (exists) vs
+// "+" (would be created). The one line a dry run does not share with a real
+// run is the --rules payload preview, printed only under --dry-run.
 //
-// --rules creates or updates a branch ruleset named "agentic-setup" on the
-// repository's default branch, requiring a pull request and the checks the
-// merge model depends on (docs/decisions.md item 9(a)); a 403 (rulesets are
-// not available on a private repository on the free plan) is reported
-// plainly instead of gh's raw error. Without --rules, no rulesets call is
-// made at all.
+// --rules updates the branch ruleset that already governs the repository's
+// default branch — the one whose conditions name it, whatever it is called
+// (#143: this repository's own is named "main") — or creates one named
+// "agentic-setup" when nothing governs it. It requires a pull request with
+// one approving review, stale approvals dismissed, and the checks the merge
+// model depends on (docs/decisions.md item 9(a)), and carries every rule,
+// parameter and bypass actor it does not manage over from the ruleset it
+// found. `--ruleset-name <name>` picks the ruleset by name instead. A 403
+// (rulesets are not available on a private repository on the free plan) is
+// reported plainly instead of gh's raw error. Without --rules, no rulesets
+// call is made at all.
+//
+// Running --rules turns on a review requirement that the merging identity
+// cannot satisfy by itself: on a repository with a single identity every
+// merge is frozen until the second one exists (scripts/land.mts's header
+// and docs/decisions.md item 13 name the trap).
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -50,9 +62,24 @@ const LABELS: [string, string, string][] = [
   ['human:decided', 'c2e0c6', 'A human decision was recorded; kept as the audit trail'],
 ];
 
+const MANAGED_RULE_TYPES = ['pull_request', 'required_status_checks', 'non_fast_forward', 'deletion'];
+const DEFAULT_RULESET_NAME = 'agentic-setup';
+
+type Rule = { type: string; parameters?: Record<string, unknown> };
+type Ruleset = {
+  id: number;
+  name?: string;
+  target?: string;
+  conditions?: { ref_name?: { include?: string[]; exclude?: string[] } };
+  rules?: Rule[];
+  bypass_actors?: unknown[];
+};
+
 const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith('--') && !a.includes('=')));
 const milestoneIdx = process.argv.indexOf('--milestone');
 const milestone = milestoneIdx !== -1 ? process.argv[milestoneIdx + 1] : null;
+const rulesetNameIdx = process.argv.indexOf('--ruleset-name');
+const rulesetNameOverride = rulesetNameIdx !== -1 ? (process.argv[rulesetNameIdx + 1] ?? null) : null;
 const force = flags.has('--force');
 const useGh = !flags.has('--no-gh');
 const dryRun = flags.has('--dry-run');
@@ -94,6 +121,106 @@ function detectTestCheckName(repoRoot: string): string {
     return [...jobsBlock[1].matchAll(/^ {2}([A-Za-z0-9_-]+):/gm)].map((m) => m[1]);
   });
   return jobIds.length === 1 ? jobIds[0] : 'test';
+}
+
+/** Parses gh's JSON output, answering `fallback` when it is empty or not JSON. */
+function parseJson<T>(text: string, fallback: T): T {
+  try {
+    const value = JSON.parse(text || '');
+    return (value ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Every branch ruleset of the repository, each merged with its own detail
+ * fetch. `GET .../rulesets` answers with summaries only — no `conditions`,
+ * no `rules`, no `bypass_actors` — so everything the lookup and the update
+ * body need comes from `GET .../rulesets/<id>`. A detail fetch that fails or
+ * answers with nothing usable leaves that summary as it was. Tag and push
+ * rulesets share the endpoint and are dropped here: they can never govern a
+ * branch.
+ */
+function fetchBranchRulesets(repoRoot: string, listOutput: string): Ruleset[] {
+  const summaries = parseJson<Ruleset[]>(listOutput, []);
+  if (!Array.isArray(summaries)) return [];
+  return summaries
+    .filter((r) => typeof r?.id === 'number' && (r.target ?? 'branch') === 'branch')
+    .map((r) => {
+      const detail = detailOf(repoRoot, r.id);
+      return { ...r, ...detail };
+    });
+}
+
+/** One ruleset's detail as a plain object, or `{}` when it cannot be read. */
+function detailOf(repoRoot: string, id: number): Partial<Ruleset> {
+  const r = run('gh', ['api', `repos/{owner}/{repo}/rulesets/${id}`], repoRoot);
+  if (!r.ok) return {};
+  const parsed = parseJson<Partial<Ruleset>>(r.out, {});
+  return typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+}
+
+/**
+ * Whether a ruleset is the one `--rules` owns. The test is what it governs,
+ * never what it is called (#143: this repository's own ruleset over the
+ * default branch is named "main"): its `conditions.ref_name.include` has to
+ * name the default branch, either through GitHub's `~DEFAULT_BRANCH`
+ * placeholder or as the literal `refs/heads/<default branch>`.
+ */
+function governsDefaultBranch(ruleset: Ruleset, defaultBranch: string): boolean {
+  const include = ruleset.conditions?.ref_name?.include ?? [];
+  return include.includes('~DEFAULT_BRANCH') || include.includes(`refs/heads/${defaultBranch}`);
+}
+
+/**
+ * The body of the create (POST) or update (PUT) call. A PUT replaces the
+ * whole ruleset, so everything the installer does not manage is carried over
+ * from `existing` unchanged: its name and its conditions, its
+ * `bypass_actors`, every rule whose type is outside MANAGED_RULE_TYPES and,
+ * inside the managed rules, every parameter the installer does not set
+ * itself — the installer's own fields win, the rest survive (that is how
+ * this repository's `require_extra_approval_for_unattributed_changes`
+ * survives an update). Only the fields listed here are sent: a detail fetch
+ * also carries `node_id`, `source`, `_links` and timestamps, which the API
+ * refuses in a request body.
+ */
+function buildRulesetPayload(existing: Ruleset | null, defaultBranch: string, testCheck: string, newName: string): Record<string, unknown> {
+  const fetched = existing?.rules ?? [];
+  const parametersOf = (type: string): Record<string, unknown> => fetched.find((r) => r.type === type)?.parameters ?? {};
+  const managed: Rule[] = [
+    {
+      type: 'pull_request',
+      parameters: {
+        ...parametersOf('pull_request'),
+        // land.mts and the Codex route both refuse to queue an automatic
+        // merge unless the server itself requires a review and dismisses
+        // stale approvals (.agents/skills/autonomous-loop/scripts/github.mts).
+        required_approving_review_count: 1,
+        dismiss_stale_reviews_on_push: true,
+        require_last_push_approval: true,
+        allowed_merge_methods: ['squash'],
+      },
+    },
+    {
+      type: 'required_status_checks',
+      parameters: {
+        ...parametersOf('required_status_checks'),
+        required_status_checks: [{ context: 'scope' }, { context: 'negative-control' }, { context: testCheck }],
+        strict_required_status_checks_policy: false,
+      },
+    },
+    { type: 'non_fast_forward' },
+    { type: 'deletion' },
+  ];
+  return {
+    name: existing?.name ?? newName,
+    target: 'branch',
+    enforcement: 'active',
+    conditions: existing?.conditions ?? { ref_name: { include: [`refs/heads/${defaultBranch}`], exclude: [] } },
+    bypass_actors: existing?.bypass_actors ?? [],
+    rules: [...managed, ...fetched.filter((r) => !MANAGED_RULE_TYPES.includes(r.type))],
+  };
 }
 
 const top = run('git', ['rev-parse', '--show-toplevel']);
@@ -245,17 +372,22 @@ if (useGh) {
       }
     }
 
-    // 6. branch ruleset (--rules only): creates or updates a ruleset named
-    // "agentic-setup" requiring a pull request and the three checks the
-    // merge model depends on (docs/decisions.md item 9(a)): scope,
-    // negative-control, and this repository's own test workflow's job
-    // (detectTestCheckName above). The list read always happens, even
-    // under --dry-run, so the report can tell "+ created" from "= updated"
-    // without writing anything; the write itself (POST/PUT) is skipped
-    // under --dry-run, same gate as auto-merge/labels/milestone above. A
-    // 403 (rulesets are not available on a private repository on the free
-    // plan, docs/decisions.md item 9(a)) is reported plainly instead of gh's
-    // raw error either way.
+    // 6. branch ruleset (--rules only): updates the ruleset that already
+    // governs the default branch — found by its conditions, never by its
+    // name (#143) — or creates one named "agentic-setup" when none does.
+    // It requires a pull request with one approving review and stale
+    // approvals dismissed, plus the three checks the merge model depends on
+    // (docs/decisions.md item 9(a)): scope, negative-control, and this
+    // repository's own test workflow's job (detectTestCheckName above); an
+    // update keeps every rule, parameter and bypass actor the installer
+    // does not manage (buildRulesetPayload above). The reads always happen,
+    // even under --dry-run, so the report can tell "+ created" from
+    // "= updated" without writing anything; the write itself (POST/PUT) is
+    // skipped under --dry-run, same gate as auto-merge/labels/milestone
+    // above, and the payload is printed instead. A 403 (rulesets are not
+    // available on a private repository on the free plan,
+    // docs/decisions.md item 9(a)) is reported plainly instead of gh's raw
+    // error either way.
     if (flags.has('--rules')) {
       const reportRulesetError = (err: string): void => {
         say(/403/.test(err) ? '  ! ruleset: not available on this plan for a private repository' : `  ! ruleset: ${err.split('\n')[0]}`);
@@ -264,55 +396,35 @@ if (useGh) {
       if (!list.ok) {
         reportRulesetError(list.err);
       } else {
-        let rulesets: Array<{ id: number; name: string }> = [];
-        try {
-          rulesets = JSON.parse(list.out || '[]');
-        } catch {
-          rulesets = [];
-        }
-        const existing = rulesets.find((r) => r.name === 'agentic-setup');
+        const rulesets = fetchBranchRulesets(root, list.out);
 
         const repoView = run('gh', ['repo', 'view', '--json', 'defaultBranchRef'], root);
-        let defaultBranch = 'main';
-        try {
-          defaultBranch = JSON.parse(repoView.out || '{}')?.defaultBranchRef?.name || 'main';
-        } catch {
-          // fall back to main
+        const defaultBranch = parseJson<{ defaultBranchRef?: { name?: string } }>(repoView.out, {})?.defaultBranchRef?.name || 'main';
+
+        // --ruleset-name overrides the choice; otherwise the match is by
+        // what the ruleset governs. Several matches are a real state of the
+        // world (this repository once had two): the first is updated and
+        // the rest are named in the report, never created over.
+        const matches = rulesetNameOverride ? rulesets.filter((r) => r.name === rulesetNameOverride) : rulesets.filter((r) => governsDefaultBranch(r, defaultBranch));
+        const existing = matches[0] ?? null;
+        if (matches.length > 1) {
+          const others = matches.slice(1).map((r) => `"${r.name}" (#${r.id})`).join(', ');
+          say(`  ! ruleset: ${matches.length} rulesets govern ${defaultBranch}; updating "${existing?.name}" (#${existing?.id}), leaving ${others} alone`);
         }
 
-        const payload = JSON.stringify({
-          name: 'agentic-setup',
-          target: 'branch',
-          enforcement: 'active',
-          conditions: { ref_name: { include: [`refs/heads/${defaultBranch}`], exclude: [] } },
-          rules: [
-            { type: 'pull_request' },
-            {
-              type: 'required_status_checks',
-              parameters: {
-                required_status_checks: [{ context: 'scope' }, { context: 'negative-control' }, { context: detectTestCheckName(root) }],
-                strict_required_status_checks_policy: false,
-              },
-            },
-            { type: 'non_fast_forward' },
-            { type: 'deletion' },
-          ],
-        });
+        const endpoint = existing ? `repos/{owner}/{repo}/rulesets/${existing.id}` : 'repos/{owner}/{repo}/rulesets';
+        const method = existing ? 'PUT' : 'POST';
+        const outcome = existing ? '  = ruleset updated' : '  + ruleset created';
+        const payload = JSON.stringify(buildRulesetPayload(existing, defaultBranch, detectTestCheckName(root), rulesetNameOverride ?? DEFAULT_RULESET_NAME), null, 2);
 
-        if (existing) {
-          if (dryRun) say('  = ruleset updated');
-          else {
-            const r = run('gh', ['api', `repos/{owner}/{repo}/rulesets/${existing.id}`, '-X', 'PUT', '--input', '-'], root, payload);
-            if (r.ok) say('  = ruleset updated');
-            else reportRulesetError(r.err);
-          }
+        if (dryRun) {
+          say(outcome);
+          say(`  payload for ${method} ${endpoint}:`);
+          for (const line of payload.split('\n')) say(`    ${line}`);
         } else {
-          if (dryRun) say('  + ruleset created');
-          else {
-            const r = run('gh', ['api', 'repos/{owner}/{repo}/rulesets', '-X', 'POST', '--input', '-'], root, payload);
-            if (r.ok) say('  + ruleset created');
-            else reportRulesetError(r.err);
-          }
+          const r = run('gh', ['api', endpoint, '-X', method, '--input', '-'], root, payload);
+          if (r.ok) say(outcome);
+          else reportRulesetError(r.err);
         }
       }
     }
@@ -323,15 +435,24 @@ console.log(report.join('\n'));
 console.log(`
 next, by hand:
   - review \`git status\` and open the bootstrap PR
-  - run \`node scripts/init.mts --rules\` to create or update a branch ruleset requiring a
-    pull request, scope, negative-control and your test workflow's checks, and blocking
-    force-push and deletion on main; it reports "not available on this plan for a private
-    repository" when your plan does not allow rulesets — make those three checks required
-    by hand there instead, and keep the pre-push hook as the fallback
+  - run \`node scripts/init.mts --rules\` to update the branch ruleset that already governs
+    your default branch, whatever it is called (\`--ruleset-name <name>\` picks another one
+    by name), or to create one when none does: a pull request with one approving review,
+    stale approvals dismissed and the last push approved, squash as the only merge method,
+    scope, negative-control and your test workflow's checks required, and force-push and
+    deletion blocked; rules, parameters and bypass actors it does not manage are kept. It
+    reports "not available on this plan for a private repository" when your plan does not
+    allow rulesets — make those three checks required by hand there instead, and keep the
+    pre-push hook as the fallback
+  - wait before running --rules: the review it requires cannot be given by the identity
+    that merges, so on a repository with a single identity every merge is frozen until the
+    second identity below exists — create that identity first
   - add scope: labels for your repository; set AGENTIC_TEST_CMD in agentic-checks.yml if needed
   - name the invariants in CLAUDE.md — the reviewer checks what it names
   - for a review gate the merging identity cannot satisfy itself: create a machine user or
-    a GitHub App installation with pull-request write, store its token as
-    AGENTIC_REVIEWER_TOKEN wherever the orchestrator runs (never in this repository), and
-    set the branch ruleset's required_approving_review_count to 1 — \`--rules\` creates or
-    updates the ruleset but never sets this field itself; edit the ruleset it created`);
+    a GitHub App installation with pull-request write, then run \`--rules\` (it sets the
+    ruleset's required_approving_review_count to 1 for you), and only then store that
+    identity's token as AGENTIC_REVIEWER_TOKEN wherever the orchestrator and reviewer run
+    (never in this repository). The order is the point: GitHub computes a PR's
+    reviewDecision only where a review is actually required, so a token set before the
+    rule exists leaves it null forever and land.mts refuses every PR`);
