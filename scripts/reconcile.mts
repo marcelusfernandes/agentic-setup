@@ -19,6 +19,17 @@
 // Output shape:
 //   {
 //     milestone: string,
+//     milestoneLint: { ok, missing },                         // whether that milestone's
+//                                                              // description holds the
+//                                                              // format of
+//                                                              // .github/MILESTONE_TEMPLATE.md;
+//                                                              // missing names the parts that
+//                                                              // are absent, in the template's
+//                                                              // order: 'objective',
+//                                                              // 'out-of-phase',
+//                                                              // 'exit-criteria',
+//                                                              // 'depends-on'. Reported, never
+//                                                              // refused (see below)
 //     ready: [{ number, title, blockedBy: number[] }],       // Blocked-by all closed
 //     inProgress: [{ number, branch, hasRemoteBranch, pr }],  // pr: number | null
 //     resumable: [{ number, branch, commitsAheadOfMain }],    // in-progress, remote
@@ -100,6 +111,29 @@
 // entries already in `deadWorktrees` — never for a live worktree, whether or
 // not it turns out to be dirty or ahead.
 //
+// `milestoneLint` answers "does this phase say when it is finished?" from the
+// milestone's own description, read from the single `gh api
+// repos/{owner}/{repo}/milestones` call this script already makes to pick the
+// default milestone (so `--milestone` now costs that one call too, not two).
+// The format it lints is the one `.github/MILESTONE_TEMPLATE.md` fixes:
+//   - `objective`     — at least one line of prose before the first labelled
+//                       section (a bullet or a `#` heading is not prose).
+//   - `out-of-phase`  — a line starting with `Out of this phase:`.
+//   - `exit-criteria` — a line starting with `Exit criteria:` *and* at least
+//                       one `- [ ]` item: the checklist is the point.
+//   - `depends-on`    — a line starting with `Depends on:`.
+// A label line may be wrapped in `#`, `*`, `_` or `>` (`**Out of this
+// phase:**`, `## Exit criteria`) and is matched case-insensitively; the colon
+// is optional. `missing` lists the absent parts in that order and `ok` is
+// `missing.length === 0`.
+//
+// It reports; it never refuses. A milestone whose description has not been
+// migrated yet still reconciles normally — the lint changes neither which
+// milestone is picked nor the exit code — because a loop that stopped on an
+// unmigrated description would be worse than the gap it reports. A milestone
+// title that the API call does not return (or a milestone with no description
+// at all) reads as an empty description: all four parts missing.
+//
 // GitHub data comes only from `gh` (issue list, pr list, api, pr checks);
 // worktree and branch data from `git worktree list --porcelain` and (after
 // `git fetch --prune origin`, unless --no-fetch) `git for-each-ref
@@ -131,7 +165,7 @@ import { parseBlockedBy } from './lib/issues.mts';
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
 type PR = { number: number; headRefName: string; labels: Label[]; reviewDecision: string | null };
-type Milestone = { number: number; title: string; state: string };
+type Milestone = { number: number; title: string; state: string; description?: string | null };
 type PrCheckEntry = { name?: string; bucket?: string };
 
 // `gh pr checks --json name,bucket` categorizes each check's raw CI state
@@ -169,6 +203,69 @@ function git(args: string[]): string {
 
 function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
+}
+
+/** `gh api .../milestones` output, or `[]` for anything that is not an array of milestones. */
+function parseMilestones(stdout: string): Milestone[] {
+  const out = stdout.trim();
+  if (!out) return [];
+  try {
+    const parsed = JSON.parse(out);
+    return Array.isArray(parsed) ? (parsed as Milestone[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// The labelled sections of `.github/MILESTONE_TEMPLATE.md`, in the order the
+// template lays them out — `missing` reports them in this order.
+const MILESTONE_SECTIONS = [
+  { key: 'out-of-phase', label: 'out of this phase' },
+  { key: 'exit-criteria', label: 'exit criteria' },
+  { key: 'depends-on', label: 'depends on' },
+];
+
+// A checklist item: `- [ ]`, `* [x]`, `+ [X]`.
+const CHECKBOX_ITEM = /^\s*[-*+]\s*\[[ xX]\]/;
+// A bullet or a heading: not the objective's prose.
+const NOT_PROSE = /^\s*(?:[-*+]\s|#|>|\||```)/;
+
+/** The section a line labels (`**Out of this phase:**`, `## Exit criteria`), or null. */
+function sectionOf(line: string): string | null {
+  const bare = line.replace(/^[\s>#*_]+/, '').toLowerCase();
+  return MILESTONE_SECTIONS.find((s) => bare.startsWith(s.label))?.key ?? null;
+}
+
+/**
+ * Which parts of the one milestone format (`.github/MILESTONE_TEMPLATE.md`) a
+ * milestone description does not hold: an objective in prose, `Out of this
+ * phase:`, `Exit criteria:` with at least one `- [ ]` item, and `Depends on:`.
+ * Pure reporting: nothing here refuses, and an empty or absent description
+ * simply misses all four. See the header for the exact matching rules.
+ */
+function lintMilestoneDescription(description: string | null): { ok: boolean; missing: string[] } {
+  const lines = (description ?? '').split('\n');
+  const found = new Set<string>();
+  let objective = false;
+  let labelled = false;
+
+  for (const line of lines) {
+    const section = sectionOf(line);
+    if (section !== null) {
+      found.add(section);
+      labelled = true;
+      continue;
+    }
+    if (!labelled && line.trim().length > 0 && !NOT_PROSE.test(line)) objective = true;
+  }
+
+  if (found.has('exit-criteria') && !lines.some((l) => CHECKBOX_ITEM.test(l))) found.delete('exit-criteria');
+
+  const missing = [
+    ...(objective ? [] : ['objective']),
+    ...MILESTONE_SECTIONS.filter((s) => !found.has(s.key)).map((s) => s.key),
+  ];
+  return { ok: missing.length === 0, missing };
 }
 
 // Gate labels by exact name, case-insensitive: `human:pending`, or the bare
@@ -219,16 +316,28 @@ function checksForPr(prNumber: number): 'green' | 'red' | 'pending' {
 
 const args = parseArgs(process.argv.slice(2));
 
-// 1. milestone: --milestone as given, else the open milestone with the lowest number.
+// 1. milestone: --milestone as given, else the open milestone with the lowest
+// number. Either way the milestone list is read once — the default pick needs
+// it, and `milestoneLint` (step 1b) needs the reconciled milestone's
+// description. With `--milestone` the read is soft: an unreadable list leaves
+// the description empty and the lint says so, rather than refusing a pass
+// whose milestone the caller already named.
+let milestones: Milestone[];
 let milestone: string;
 if (typeof args.milestone === 'string') {
   milestone = args.milestone;
+  const soft = spawnSync('gh', ['api', 'repos/{owner}/{repo}/milestones'], { encoding: 'utf8' });
+  milestones = soft.status === 0 ? parseMilestones(soft.stdout) : [];
 } else {
-  const milestones = ghJson<Milestone[]>(['api', 'repos/{owner}/{repo}/milestones'], []);
+  milestones = ghJson<Milestone[]>(['api', 'repos/{owner}/{repo}/milestones'], []);
   const open = milestones.filter((m) => m.state === 'open').sort((a, b) => a.number - b.number);
   if (open.length === 0) fail('no open milestone (pass --milestone).');
   milestone = open[0].title;
 }
+
+// 1b. milestoneLint: does that milestone's description say when the phase is
+// finished? Reported, never refused — see the header.
+const milestoneLint = lintMilestoneDescription(milestones.find((m) => m.title === milestone)?.description ?? '');
 
 // 2. open issues in the milestone.
 const issues = ghJson<Issue[]>(
@@ -432,4 +541,10 @@ const stale = inProgress
 
 const orphanWorktrees = linkedWorktrees.filter((w) => w.branch && !remoteHeads.has(w.branch)).map((w) => w.path);
 
-console.log(JSON.stringify({ milestone, ready, humanPending, inProgress, resumable, inReview, stale, orphanWorktrees, deadWorktrees }, null, 2));
+console.log(
+  JSON.stringify(
+    { milestone, milestoneLint, ready, humanPending, inProgress, resumable, inReview, stale, orphanWorktrees, deadWorktrees },
+    null,
+    2,
+  ),
+);
