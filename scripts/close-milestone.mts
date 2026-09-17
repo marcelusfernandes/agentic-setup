@@ -373,7 +373,8 @@ if (closeout && closeout.errors.length === 0) {
   if (unaccounted.length > 0) {
     refuse(
       'evidence:issue-missing',
-      `${evidence} does not account for ${unaccounted.map((n) => `#${n}`).join(', ')} — every closed issue of the milestone is a row in \`## Issues\` or a bullet in \`## Left out\``,
+      `${evidence} does not account for ${unaccounted.map((n) => `#${n}`).join(', ')} — ` +
+        'every closed issue of the milestone is a row in `## Issues` or a bullet in `## Left out`',
     );
   }
 }
