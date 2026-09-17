@@ -22,6 +22,11 @@
 // sees it in the diff) or is granted by an `authorised:` line in one of
 // those issue bodies.
 //
+// It also names, as a `warning:` that never changes the exit code, every
+// mechanism file the diff changes when the same diff records no decision
+// (`decisionNudge` in lib/scope.mts) — the shape negative-control.mts uses
+// for its structural-red warning.
+//
 // In CI it reads the pull_request event (body, base, head), diffs with git
 // and fetches each linked issue's body with `gh` (GH_TOKEN from the
 // workflow). For a dry run, every input can come from flags instead:
@@ -40,7 +45,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, decisionNudge, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import type { FileLinesEntry } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
@@ -217,6 +222,13 @@ const ok = result.ok && dangling.length === 0 && growth.length === 0;
 // covered — dangling references and file growth are unrelated to
 // authorised: grants.
 const misplacedAuthorised = result.ok ? [] : findMisplacedAuthorisedLines(prBody);
+// A nudge, not a verdict: computed whatever the checks above decided, and
+// never folded into `ok`. See lib/scope.mts's decisionNudge for why this
+// stays a warning.
+const nudged = decisionNudge(files);
+const decisionWarning = nudged.length
+  ? `${nudged.length} mechanism file(s) changed and no decision recorded in the same diff — add an entry under docs/decisions/ if this changes the contract (docs/decisions/README.md says what earns one): ${nudged.join(', ')}`
+  : null;
 
 let firstLine: string;
 if (!result.ok) {
@@ -243,6 +255,7 @@ console.log(JSON.stringify({
   growth,
   ...(ignoredPrGrants.length ? { ignoredPrGrants } : {}),
   ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}),
+  ...(decisionWarning ? { decisionNudge: nudged, warning: decisionWarning } : {}),
 }, null, 2));
 appendSummary(
   [
@@ -287,6 +300,7 @@ appendSummary(
           ...growth.map((g) => `- \`${g.path}\` ${g.baseLines === null ? 'is new at' : `grew from ${g.baseLines} to`} ${g.headLines} line(s)`),
         ]
       : []),
+    ...(decisionWarning ? ['', `> warning: ${decisionWarning}`] : []),
   ].join('\n'),
 );
 if (!ok) process.exit(1);

@@ -103,10 +103,13 @@ Status: accepted
 - **(a) Server-side, preferred:** a GitHub ruleset on `main` — PR required, required
   checks (`scope`, `negative-control`, and the adopting repository's own test workflow),
   no force-push, no deletion. `node scripts/init.mts --rules` is the way in: it reads
-  `repos/{owner}/{repo}/rulesets` and creates (POST) or updates (PUT) a ruleset named
-  `agentic-setup` with exactly those rules, reporting `+ ruleset created` or
-  `= ruleset updated`; it never touches `required_approving_review_count` (item 13 covers
-  that separately). Free on public repositories and on paid organisations; **not available
+  `repos/{owner}/{repo}/rulesets`, updates (PUT) the ruleset that already governs the
+  default branch — found by its conditions, whatever it is named — or creates (POST) one
+  named `agentic-setup` when none does, reporting `= ruleset updated` or
+  `+ ruleset created`. It resets `required_approving_review_count` to 0 and carries the
+  ruleset's own stale-approval fields through; `--require-review` is the explicit opt-in
+  that raises that gate to one approving review, and item 13 is why it waits for a second
+  identity. Free on public repositories and on paid organisations; **not available
   on private repositories under the free plan** (rulesets and branch protection return
   403 there) — `--rules` reports that as `! ruleset: not available on this plan for a
   private repository` rather than surfacing `gh`'s raw error, and refuses to fall back to
