@@ -61,6 +61,19 @@ item under it), `depends-on`. It reports and never refuses: a milestone whose de
 has not been migrated yet still reconciles, still dispatches, and the orchestrator migrates the
 description as part of the phase.
 
+**An issue may carry no milestone**, and that is allowed: a small fix does not always belong
+to a phase, and nothing refuses one. `scripts/claim.mts` reads the issue's own state, labels
+and `## Files` — never its phase — and `scripts/land.mts` gates on the pull request's checks,
+so a milestone-less issue is **claimed and landed with the scripts** exactly like any other,
+**by hand**: the orchestrator passes the issue number to `claim.mts` itself instead of taking
+it from a list. What it loses is visibility. `scripts/reconcile.mts` reconciles one milestone
+— it picks the lowest-numbered open one or takes `--milestone <title>`, and lists that
+milestone's issues (`gh issue list --milestone <title>`) — so `reconcile` does not see it, it
+never appears in `ready`, and step 0 of the loop never offers it. Four issues of this shape
+were claimed and landed by hand in one pass for exactly this reason
+(`docs/dogfood/2026-09-10.md`, finding L9). #259 is the issue that adds the milestone-less
+view to `reconcile`; until it lands, a milestone-less issue is tracked by whoever opened it.
+
 ## Labels
 
 | group | values | who changes it |

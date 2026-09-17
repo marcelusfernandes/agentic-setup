@@ -34,6 +34,16 @@ function section(doc: string, start: string, end: string): string {
   return doc.slice(from, to);
 }
 
+/**
+ * A phrase as a regular expression, with every run of spaces matching any whitespace.
+ * The documents are hard-wrapped prose: a sentence the author rewraps is the same
+ * sentence, and a pin that reds on a line break would be noise rather than a rule.
+ */
+function phrase(text: string): RegExp {
+  const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(escaped.replace(/ +/g, '\\s+'), 'i');
+}
+
 /** The two standing guards every slice carries: bounded at both ends, and short of the far marker. */
 function guardSlice(label: string, doc: string, slice: string, beyond: string): void {
   check(`${label}: the slice is bounded at both ends`, slice.length > 0 && slice.length < doc.length, `slice length ${slice.length} of ${doc.length}`);
@@ -54,7 +64,7 @@ check(
 );
 check(
   'issue-and-pr: the rule says what a symbol is (a function, class or constant)',
-  /function, class or constant/i.test(planner),
+  phrase('function, class or constant').test(planner),
 );
 check(
   'issue-and-pr: a criterion naming a symbol names the file holding it in `## Files`',
@@ -62,7 +72,7 @@ check(
 );
 check(
   'issue-and-pr: the symbol rule is stated as the entry-point rule, not a new one',
-  /the same way an entry point does/i.test(planner),
+  phrase('the same way an entry point does').test(planner),
 );
 check(
   'issue-and-pr: the symbol rule says reuse by import rather than copy is what makes the file needed',
@@ -72,11 +82,11 @@ check(
 // AC2: an issue renaming or re-owning a label, flag or command lists every document naming it.
 check(
   'issue-and-pr: the rule names a rename or a re-ownership of a label, flag or command',
-  /renames or re-owns a label, flag or command/i.test(planner),
+  phrase('renames or re-owns a label, flag or command').test(planner),
 );
 check(
   'issue-and-pr: such an issue lists in `## Files` every document that names it',
-  /lists in `## Files` every document that names it/i.test(planner),
+  phrase('lists in `## Files` every document that names it').test(planner),
 );
 check(
   'issue-and-pr: the rule says the point is not needing the grant after the fact',
@@ -95,7 +105,7 @@ guardSlice('workflow Milestones section', workflow, milestones, 'who changes it'
 // AC3: the milestone-less case, and what then happens.
 check(
   'workflow: an issue may carry no milestone at all',
-  /an issue may carry no milestone/i.test(milestones),
+  phrase('an issue may carry no milestone').test(milestones),
 );
 check(
   'workflow: a milestone-less issue is claimed and landed with the scripts, by hand',
@@ -107,7 +117,7 @@ check(
 );
 check(
   'workflow: `reconcile` does not see a milestone-less issue',
-  /`?reconcile`?[^.]{0,120}does not see it/i.test(milestones),
+  /`?reconcile`?[^.]{0,160}does not see it/i.test(milestones),
 );
 check(
   'workflow: the reason reconcile does not see it is that it lists one milestone\'s issues',
@@ -115,7 +125,7 @@ check(
 );
 check(
   'workflow: the issue that adds the milestone-less view is named',
-  /no milestone[\s\S]{0,900}?#259/i.test(milestones),
+  /no milestone[\s\S]{0,1600}?#259/i.test(milestones),
 );
 
 // --- docs/dogfood/README.md: the disposable repository is private, prefixed and handed back
@@ -130,15 +140,15 @@ check(
 );
 check(
   'dogfood README: the fixed name prefix is `agentic-setup-dogfood-`',
-  /agentic-setup-dogfood-/.test(whoWrites) && /name prefix/i.test(whoWrites),
+  /agentic-setup-dogfood-/.test(whoWrites) && phrase('name prefix').test(whoWrites),
 );
 check(
   'dogfood README: the pull-request body names it under a line asking a person to delete it',
-  /pull[- ]request body[\s\S]{0,200}?asking a person to delete it/i.test(whoWrites),
+  /pull[- ]request\s+body[\s\S]{0,200}?asking\s+a\s+person\s+to\s+delete\s+it/i.test(whoWrites),
 );
 check(
   'dogfood README: the line a person reads is spelled out',
-  /Delete after review:/.test(whoWrites),
+  phrase('Delete after review:').test(whoWrites),
 );
 check(
   'dogfood README: the reason an agent cannot delete it is `gh repo delete` being denied by design',

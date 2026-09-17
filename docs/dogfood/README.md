@@ -32,7 +32,24 @@ to where they are kept; the numbers are the part that lands here.
    files in a `warning:` and still exits 0, because whether a run was owed is a
    judgement no file name settles (#182).
 2. The phase runs a pass against a disposable repository and writes it up here,
-   dated the day the pass ran.
+   dated the day the pass ran. That repository is created **private**, never public,
+   under the fixed `agentic-setup-dogfood-` name prefix — one name prefix so every
+   leftover is findable by a single search, and `--private` because a pass installs
+   this repository's mechanism into it and then pushes whatever the run produced:
+   `gh repo create agentic-setup-dogfood-<issue or date> --private`. The **pull-request
+   body that carries the report names it under a line asking a person to delete it**,
+   in that exact form so it is greppable:
+
+   ```text
+   Delete after review: <owner>/agentic-setup-dogfood-<issue or date>
+   ```
+
+   The line is owed because the agent cannot do the deletion itself: `gh repo delete` is
+   denied to agents by design (`.claude/settings.json`, shipped as
+   `templates/claude-settings.json`), and that denial is not something a pass argues its
+   way around. A pass that skips the line leaves the repository behind with nobody told —
+   which is how a **public** one was left behind once
+   (`docs/dogfood/2026-09-10.md`, finding L18).
 3. The milestone's closeout names that file in its `## Dogfood` section.
    `scripts/close-milestone.mts` refuses the close with `missing: ['dogfood']`
    while a merged pull request touched one of those paths and no bullet there
