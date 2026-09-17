@@ -20,14 +20,17 @@
 // (`700000 + number`), which is what makes "carries the id, not the number"
 // assertable at all.
 //
-// Negative control: on the base (before this PR) scripts/create-subissue.mts
-// does not exist, so every run below prints nothing on stdout and each case
-// fails on its own JSON assertion ("no refusal JSON", "no success JSON") —
-// a runtime red, not a structural one. That is why the failure detail
-// passed to check() is the child's *stdout* only: the child's
-// ERR_MODULE_NOT_FOUND on stderr stays in a captured variable and never
-// reaches the suite's output, where `ci/negative-control.mts:52-56` would
-// read it as a structural red (skill `safe-worktree` §B7).
+// Negative control: scripts/create-subissue.mts is tracked on main, so the
+// red on the base is an assertion red throughout. On the base a parent of
+// `1e2` is accepted as issue 100 and an issue is created (case J asserts a
+// usage error and no gh call at all), a `gh` that cannot be spawned is
+// reported as the bare string `gh failed` (case K asserts the spawn error's
+// own message), and a 404 on a repository the token may not read is reported
+// as a deleted parent (case L asserts `{ error }`). The failure detail passed
+// to check() stays the child's *stdout* only, so nothing a child writes on
+// stderr can reach the suite's output, where `ci/negative-control.mts:97`
+// would read `Cannot find module`/`SyntaxError` as a structural red (skill
+// `safe-worktree` §B7).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +58,12 @@ function body(overrides: { goal?: boolean } = {}): string {
 // is open with no milestone, 404 does not exist (gh's own 404 wording on
 // stderr), 500 fails for a reason that is not a 404 at all (the { error }
 // case). Created sub-issues get numbers from 200 up.
+//
+// Two env switches let a case fail one call and only that one:
+// FAKE_GH_REPO_UNREADABLE=1 answers 404 for the repository probe as well (a
+// token that may not read the repository at all), and FAKE_GH_FAIL names one
+// of the three calls past the point of no return — `idread`, `link`,
+// `ready` — so the issue is created and then the next step fails.
 const FAKE_GH_IMPL = String.raw`
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -62,6 +71,8 @@ import { join } from 'node:path';
 const MILESTONE = ${JSON.stringify(MILESTONE)};
 const args = process.argv.slice(2);
 const state = process.env.FAKE_GH_STATE_DIR;
+/** Which single call this run is asked to fail: '', 'idread', 'link' or 'ready'. */
+const FAIL = process.env.FAKE_GH_FAIL ?? '';
 appendFileSync(join(state, 'gh-argv.log'), args.join(' ') + '\n');
 
 const path = (name) => join(state, name);
@@ -108,9 +119,17 @@ function api() {
   }
   if (route === null) die('fake-gh: no path in: ' + args.join(' '));
 
+  // The repository probe: what tells a parent that does not exist from a
+  // repository this token may not read at all (both answer 404 on the issue).
+  if (method === 'GET' && route === 'repos/{owner}/{repo}') {
+    if (process.env.FAKE_GH_REPO_UNREADABLE === '1') die('gh: Not Found (HTTP 404)');
+    out(JSON.stringify({ full_name: 'owner/repo' }));
+  }
+
   const one = route.match(/^repos\/\{owner\}\/\{repo\}\/issues\/(\d+)$/);
   if (method === 'GET' && one) {
     const n = Number(one[1]);
+    if (jq === '.id' && FAIL === 'idread') die('gh: HTTP 500: could not read the issue id');
     if (n === 404) die('gh: Not Found (HTTP 404)');
     if (n === 500) die('gh: HTTP 403: API rate limit exceeded for installation');
     const issue = issueOf(n);
@@ -120,6 +139,7 @@ function api() {
 
   const sub = route.match(/^repos\/\{owner\}\/\{repo\}\/issues\/(\d+)\/sub_issues$/);
   if (method === 'POST' && sub) {
+    if (FAIL === 'link') die('gh: HTTP 422: sub-issue could not be linked');
     const parent = Number(sub[1]);
     const subIssueId = Number(fields.sub_issue_id);
     if (!Number.isInteger(subIssueId)) die('gh: HTTP 422: Invalid sub_issue_id');
@@ -170,6 +190,7 @@ function issue() {
   if (sub === 'list') out('[]');
 
   if (sub === 'edit') {
+    if (FAIL === 'ready' && args.includes('state:ready')) die('gh: HTTP 403: state:ready could not be added');
     const n = Number(args[2]);
     const list = created();
     const hit = list[String(n)];
@@ -223,7 +244,8 @@ function bodyFile(text: string): string {
 type Issue = { number: number; title: string; body: string; milestone: string | null; labels: string[] };
 type Link = { parent: number; sub_issue_id: number };
 
-function create(args: string[], dir: string = stateDir()) {
+/** `env` overrides the defaults below, so a case can drop `gh` from PATH or arm one failure. */
+function create(args: string[], dir: string = stateDir(), env: Record<string, string> = {}) {
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'create-subissue.mts'), ...args], {
     encoding: 'utf8',
     cwd: repo,
@@ -233,6 +255,7 @@ function create(args: string[], dir: string = stateDir()) {
       FAKE_GH_STATE_DIR: dir,
       FAKE_GH_NODE: RUNTIME,
       FAKE_GH_JS,
+      ...env,
     },
   });
   const read = <T,>(name: string, fallback: T): T =>
@@ -404,5 +427,102 @@ check('a gh failure created nothing', noCreate(h.log) && h.issues.length === 0, 
 const i = create([]);
 check('no arguments exits 1', i.status === 1, i.stdout);
 check('no arguments reports { error } with the usage line', /create-subissue\.mts/.test(parse(i.stdout)?.error ?? ''), i.stdout);
+
+// --- J: the parent is decimal digits, as everywhere else in the loop --------
+// `scripts/claim.mts:145` and `ci/issue-lint.mts:109` both read an issue
+// number as /^\d+$/; `Number()` would make `1e2` issue 100 here alone.
+for (const raw of ['1e2', '0x10', '12.5', ' 12 ', '0', '+12']) {
+  const label = JSON.stringify(raw);
+  const j = create([raw, '--title', TITLE, '--body-file', GOOD]);
+  check(`a parent of ${label} exits 1`, j.status === 1, j.stdout);
+  const jOut = parse(j.stdout);
+  check(
+    `a parent of ${label} reports { error }, never a refusal`,
+    typeof jOut?.error === 'string' && jOut?.refused === undefined,
+    j.stdout,
+  );
+  check(`a parent of ${label} never called gh and created nothing`, j.log.trim() === '' && j.issues.length === 0, j.log);
+}
+
+const jPlain = create(['100', '--title', TITLE, '--body-file', GOOD]);
+check('a parent of plain digits is still accepted', jPlain.status === 0 && jPlain.issues.length === 1, jPlain.stdout);
+
+// --- K: `gh` is not on PATH at all ------------------------------------------
+const noGhDir = mkdtempSync(join(tmpdir(), 'agentic-subissue-nogh-'));
+cleanup(() => rmSync(noGhDir, { recursive: true, force: true }));
+const k = create(['100', '--title', TITLE, '--body-file', GOOD], stateDir(), { PATH: noGhDir });
+check('gh missing from PATH exits 1', k.status === 1, k.stdout);
+const kOut = parse(k.stdout);
+check(
+  'gh missing from PATH names the cause instead of the bare "gh failed"',
+  typeof kOut?.error === 'string' && kOut.error !== 'gh failed' && /ENOENT/.test(kOut.error) && /gh/.test(kOut.error),
+  k.stdout,
+);
+check('gh missing from PATH reports { error }, never a refusal', kOut?.refused === undefined && kOut?.missing === undefined, k.stdout);
+check('gh missing from PATH created nothing', k.issues.length === 0 && k.links.length === 0, k.log);
+
+// --- L: a 404 on the parent is only a refusal when the repository is read ---
+const lProbe = create(['404', '--title', TITLE, '--body-file', GOOD]);
+check(
+  'a 404 on the parent probes the repository itself before refusing',
+  lProbe.log.split(/\r?\n/).includes('api repos/{owner}/{repo}'),
+  lProbe.log,
+);
+check('a readable repository still refuses a parent that does not exist', (parse(lProbe.stdout)?.missing ?? []).includes('parent:state'), lProbe.stdout);
+
+const lBlind = create(['404', '--title', TITLE, '--body-file', GOOD], stateDir(), { FAKE_GH_REPO_UNREADABLE: '1' });
+check('a 404 on an unreadable repository exits 1', lBlind.status === 1, lBlind.stdout);
+const lOut = parse(lBlind.stdout);
+check(
+  'a 404 that cannot be told from a permission problem reports { error }, never { refused }',
+  typeof lOut?.error === 'string' && lOut?.refused === undefined && lOut?.missing === undefined,
+  lBlind.stdout,
+);
+check('a 404 on an unreadable repository created nothing', noCreate(lBlind.log) && lBlind.issues.length === 0, lBlind.log);
+
+// --- M: past the point of no return, the id lookup fails --------------------
+const m = create(['100', '--title', TITLE, '--body-file', GOOD], stateDir(), { FAKE_GH_FAIL: 'idread' });
+check('a failing id lookup exits 1', m.status === 1, m.stdout);
+const mOut = parse(m.stdout);
+check(
+  'a failing id lookup reports { error, issue } with the number that was created',
+  typeof mOut?.error === 'string' && m.issues.length === 1 && mOut?.issue === m.issues[0]?.number,
+  `${m.stdout} created=${JSON.stringify(m.issues.map((x) => x.number))}`,
+);
+check(
+  'a failing id lookup leaves the issue created, unlinked and not ready',
+  m.links.length === 0 && !(m.issues[0]?.labels ?? []).includes('state:ready'),
+  `${JSON.stringify(m.links)} ${JSON.stringify(m.issues[0]?.labels)}`,
+);
+
+// --- N: the sub_issues POST fails -------------------------------------------
+const n = create(['100', '--title', TITLE, '--body-file', GOOD], stateDir(), { FAKE_GH_FAIL: 'link' });
+check('a failing sub_issues POST exits 1', n.status === 1, n.stdout);
+const nOut = parse(n.stdout);
+check(
+  'a failing sub_issues POST reports { error, issue } with the number that was created',
+  typeof nOut?.error === 'string' && n.issues.length === 1 && nOut?.issue === n.issues[0]?.number,
+  `${n.stdout} created=${JSON.stringify(n.issues.map((x) => x.number))}`,
+);
+check(
+  'a failing sub_issues POST leaves the issue created, unlinked and not ready',
+  n.links.length === 0 && !(n.issues[0]?.labels ?? []).includes('state:ready'),
+  `${JSON.stringify(n.links)} ${JSON.stringify(n.issues[0]?.labels)}`,
+);
+
+// --- O: the state:ready edit fails, after a passing lint --------------------
+const o = create(['100', '--title', TITLE, '--body-file', GOOD], stateDir(), { FAKE_GH_FAIL: 'ready' });
+check('a failing state:ready edit exits 1', o.status === 1, o.stdout);
+const oOut = parse(o.stdout);
+check(
+  'a failing state:ready edit reports { error, issue } with the number that was created',
+  typeof oOut?.error === 'string' && o.issues.length === 1 && oOut?.issue === o.issues[0]?.number,
+  `${o.stdout} created=${JSON.stringify(o.issues.map((x) => x.number))}`,
+);
+check(
+  'a failing state:ready edit leaves the issue created, linked and not ready',
+  o.links.length === 1 && !(o.issues[0]?.labels ?? []).includes('state:ready'),
+  `${JSON.stringify(o.links)} ${JSON.stringify(o.issues[0]?.labels)}`,
+);
 
 finish();
