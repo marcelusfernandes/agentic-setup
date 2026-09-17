@@ -61,8 +61,10 @@ the issue is linted. The line is optional and its absence is never a failure.
 A declaration that is present but unusable is `cannot-run`, not a fallback to the
 globs: a broken declaration must not silently narrow the control to nothing.
 
-The path-class skip (`docs/**`, `.github/**`, `templates/**`, root Markdown) is decided
-before the declaration is read, so a diff that owes no negative control still owes none.
+The path-class skip (`docs/**`, `.github/**`, `templates/**`, root Markdown — minus
+`.github/scripts/agentic/**`, the gate's own code in an adopting repository, which no
+class covers) is decided before the declaration is read, so a diff that owes no negative
+control still owes none.
 
 ## The proof runner
 

@@ -64,8 +64,13 @@ formatted example. Then the test summary, the globs touched, risks. The implemen
 `state:in-review` and nothing else: **the orchestrator** copies the issue's `type:` and
 `scope:` labels onto the PR at step 4, because an agent that labels its own work could
 buy its own exemptions. `negative-control` no longer reads `type:` to decide a skip — it
-skips by path class — but `scope` and `land` still read the PR's labels, never the
-issue's. Never `gh pr merge`.
+skips by path class, and reads the label only to print a `note:`. `land` does read the
+PR's labels, never the issue's: `type:docs` (`scripts/land.mts:230`, the exemption from
+the *review*, never from the checks) and `review:approved` (`:255`, the marker label an
+agent review leaves behind in both modes; mode `approved` requires the server's own
+`APPROVED` on top and never falls back to the label alone). `scope` reads no label at
+all — the PR's **body** for the closing keywords, and the **issues** those keywords link
+for the globs and the `authorised:` grants. Never `gh pr merge`.
 
 **The implementer stops here.** It does not wait on CI and does not poll the PR; the
 orchestrator launches the reviewer and watches the checks. If CI or the reviewer sends
