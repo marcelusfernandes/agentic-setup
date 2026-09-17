@@ -6,6 +6,32 @@ import { extractSection } from '../../ci/lib/scope.mts';
 /** Conventional-commit types a branch name (and PR title) may start with. */
 export const BRANCH_TYPES = ['feat', 'fix', 'refactor', 'chore', 'docs', 'test', 'ci', 'deps'];
 
+/**
+ * Branch type -> the `type:` label `scripts/init.mts` creates (`feature`,
+ * `bug`, `refactor`, `infra`, `spec`, `docs`, `deps`). The two sets are not
+ * the same: `feat` is labelled `feature`, `fix` is labelled `bug`, and
+ * `chore`, `test` and `ci` all collapse into the single `infra` label.
+ * `spec` is a label with no branch type of its own. The orchestrator writes
+ * the label at claim time (`scripts/claim.mts`), so no agent labels its own
+ * work.
+ */
+export const TYPE_LABELS: Record<string, string> = {
+  feat: 'feature',
+  fix: 'bug',
+  refactor: 'refactor',
+  chore: 'infra',
+  docs: 'docs',
+  test: 'infra',
+  ci: 'infra',
+  deps: 'deps',
+};
+
+/** The `type:<label>` name for a branch type, or null when there is none. */
+export function typeLabel(type: string): string | null {
+  const label = TYPE_LABELS[type];
+  return label ? `type:${label}` : null;
+}
+
 /** "Blocked by: #3, #4" (or "none") from the issue body's Dependencies section. */
 export function parseBlockedBy(body: string): number[] {
   const section = extractSection(body, 'Dependencies') ?? body;

@@ -188,7 +188,12 @@ relabelled; `--no-lint` skips the check (`"lint": "skipped"` in the success JSON
 of `"lint": { "ok": true }`).
 
 Exit 0 → `{ issue, branch, base, lint }`: the push succeeded (the lock), the issue is
-assigned and `state:in-progress`. Exit 2 → `{ held }`: the branch already exists — another
+assigned, `state:in-progress`, and labelled `type:` from the branch type — `feat` →
+`type:feature`, `fix` → `type:bug`, `chore`/`test`/`ci` → `type:infra`, and `refactor`,
+`docs`, `deps` keep their name (`TYPE_LABELS`, `scripts/lib/issues.mts`). **You write
+`type:`, not the implementer**: an agent that labels its own work could buy its own
+exemptions, so the implementer opens the PR with `state:in-review` alone and you copy
+`type:` and `scope:` across at step 4. Exit 2 → `{ held }`: the branch already exists — another
 agent (or a previous, still-live claim) holds it; skip, do not retry. Exit 1 with
 `{ refused }`: the issue is not claimable (closed, missing `state:ready`, an open
 `Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint`) — drop it from this
@@ -234,7 +239,11 @@ verdict on the decision, so read it and retry rather than dropping the line. Exi
 
 ## 4. PR opened → review
 
-When an implementer returns with a PR: launch the `reviewer` agent with the PR number and
+When an implementer returns with a PR: first copy the issue's `type:` and `scope:` labels
+onto it — `gh pr edit <pr> --add-label "type:<t>" --add-label "scope:<s>"`, the same
+`type:` you wrote on the issue at step 3. The implementer sets only `state:in-review`, so
+until you do this the PR carries no `type:`/`scope:` at all, and `scope`/`land` read the
+**PR's** labels, never the issue's. Then launch the `reviewer` agent with the PR number and
 the issue body. The reviewer returns the JSON verdict to you; it does not comment on the
 PR or touch its labels any more (`agents/reviewer.md`) — commenting and labelling are this
 step's job now, done in step 5, so both happen from one place instead of two. Check CI

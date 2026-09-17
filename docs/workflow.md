@@ -12,9 +12,11 @@ written in English; the language you talk to the agents in is your business.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
-  committed as `test(red): …` — a convention with no mechanical consumer since the Stop
-  hook was cut. `negative-control` reads the PR's diff, not any commit: it copies the
-  changed test files onto a checkout of the base and requires the suite to fail there.
+  committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
+  decide the red: it copies the changed test files onto a checkout of the base and requires
+  the suite to fail there. It reads the commits for one thing only — when that red is
+  *structural* (a missing module or export, a syntax error), a `test(red):` commit in
+  `base..head` touching one of those test files is what makes it acceptable (#135).
 
 ## Milestones
 
@@ -52,7 +54,7 @@ description as part of the phase.
 |---|---|---|
 | `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
-| `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | whoever writes the issue |
+| `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | seeded by whoever writes the issue; re-derived from the branch type (`TYPE_LABELS`) and written by `scripts/claim.mts` at claim time |
 | `review:approved` | the reviewer returned approved | orchestrator |
 | `human:pending` | a person must decide; not dispatched until they do | orchestrator (and `guard-main`) |
 | `human:decided` | the decision is recorded; kept as the audit trail, never blocks (named `decided`, not `reviewed`, so it is never mistaken for `review:approved`) | a person |
@@ -151,8 +153,13 @@ the next line, indented, which the parser skips:
   (orchestrator: needed for AC3, see the issue comment)
 ```
 
-Copy the issue's `type:` and `scope:` labels onto the PR when opening it. CI jobs read
-the PR's labels and body, never the issue's.
+The **orchestrator** copies the issue's `type:` and `scope:` labels onto the PR, at step 4
+of `skills/orchestrate` — the implementer opens the PR with `state:in-review` alone. An
+agent that labels its own work could buy its own exemptions, so `type:` is written by the
+orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
+`TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
+`chore`/`test`/`ci` → `type:infra`) and copied across from there. `scope` and `land` still
+read the PR's labels and body, never the issue's.
 
 ## Required checks
 
@@ -160,15 +167,25 @@ the PR's labels and body, never the issue's.
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants. Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134) |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`). Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) |
 
-The exemption is by label, not by hand: the job reads the PR's `type:` label. Without a
-label it runs and fails.
+The exemption is by **path class**, not by the PR's own labels (#135): the implementer
+applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
+touches any file outside those classes runs the check, whatever it is labelled — a
+refactor that changes behaviour is a `bug` or a `feature` and owes a failing test either
+way. For one release `type:docs`, `type:deps`, `type:infra`, `type:refactor` and
+`type:spec` are still read, only to print a `note:` line saying they no longer skip on
+their own and to name the label in a skip the path class already decided.
 
 A `pass` whose overlaid run fails with a structural signature (a missing module, a missing
-export, a syntax error) still exits 0 — an opaque test command cannot tell a crashing test
-file apart from several real failures — but the job summary and stdout carry a `warning:`
-line asking for a throwing stub instead, so the red is a runtime red.
+export, a syntax error) says the test file could not run on the base at all, not that an
+assertion caught the change — and an opaque test command cannot tell one crashing file
+apart from several real failures. It is accepted only when the PR shows the red was
+written first, on purpose: a commit in `base..head` whose subject starts `test(red):` and
+which touches at least one of the overlaid test files. Then the outcome stays `pass` and
+the job summary and stdout carry a `warning:` line asking for a throwing stub instead, so
+the red is a runtime red. Without such a commit the outcome is `structural` and the check
+fails.
 
 ## Merge
 

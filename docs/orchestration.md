@@ -200,13 +200,19 @@ person is not watching.
 4. Write the failing test. Commit it as `test(red): …` — the convention that keeps
    the red test visible in history. `negative-control` reads the PR's diff, not the
    commit: the changed test files are copied onto a checkout of the base and the
-   suite must fail there, so the PR's diff must add or change a test file.
+   suite must fail there, so the PR's diff must add or change a test file. One
+   exception, and the only thing it reads commits for: when that red is *structural*
+   (a missing module or export, a syntax error), it is accepted only with a
+   `test(red):` commit in `base..head` touching one of the overlaid test files — that
+   commit is the vouch. Without one the check fails as `structural`.
 5. Implement until the test command is green. Commit at every green.
 6. Run the project's check command (types, lint, fast scans). Green.
 7. Open the PR with the template (a closing keyword — `Closes`/`Fixes`/`Resolves #N`,
    several may be linked, the diff must fit the union of their globs, never quote a
    keyword inside backticks or a fence — test summary, globs touched). Label
-   `state:in-review`. Copy the issue's `type:`/`scope:` labels onto the PR.
+   `state:in-review` and nothing else: the orchestrator copies the issue's
+   `type:`/`scope:` labels onto the PR at its step 4, because an agent that labels its
+   own work could buy its own exemptions.
 8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator watches
    the checks and launches the reviewer; polling here would only burn the implementer's
    own turns. If CI or the reviewer sends it back, fix in the same worktree and update

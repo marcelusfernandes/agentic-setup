@@ -37,7 +37,10 @@ sub-issues" below); `--no-lint` skips the check entirely, and the success JSON t
 reports `"lint": "skipped"` instead of `"lint": { "ok": true }`.
 
 Exit 0 → `{ issue, branch, base, lint }`: pushed, assigned `@me`, relabelled
-`state:in-progress`. Exit 2 → `{ held }`: the branch already exists, another agent has it
+`state:in-progress` and labelled `type:` from the branch type (`feat` → `type:feature`,
+`fix` → `type:bug`; `chore`, `test` and `ci` all → `type:infra`; `refactor`, `docs` and
+`deps` keep their name — the mapping is `TYPE_LABELS` in `scripts/lib/issues.mts`).
+Exit 2 → `{ held }`: the branch already exists, another agent has it
 — skip, no retry. Exit 1 → `{ refused }` (closed, missing `state:ready`, an open
 `Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint` — nothing pushed,
 nothing relabelled) or `{ error }` (a usage problem — no type determinable and none given,
@@ -48,7 +51,7 @@ that branch and **never creates or renames one**.
 
 ```bash
 gh pr create --base main --head "$type/$n-$slug" --title "$type($scope): <imperative>" \
-  --body-file pr.md --label state:in-review --label "type:<t>" --label "scope:<s>"
+  --body-file pr.md --label state:in-review
 gh issue edit $n --add-label state:in-review --remove-label state:in-progress
 ```
 
@@ -57,9 +60,12 @@ link) as the first line — `Fixes #N` and `Resolves #N` (and their close/closed
 resolve/resolved forms) are also accepted, and a PR may link several issues this way, in
 which case `scope` checks the diff against the union of every linked issue's globs. A
 keyword inside backticks or a fenced code block is ignored, so never quote one as a
-formatted example. Then the test summary, the globs touched, risks. Copy the issue's
-`type:` and `scope:` labels — the checks read the **PR's** labels, never the issue's.
-Never `gh pr merge`.
+formatted example. Then the test summary, the globs touched, risks. The implementer sets
+`state:in-review` and nothing else: **the orchestrator** copies the issue's `type:` and
+`scope:` labels onto the PR at step 4, because an agent that labels its own work could
+buy its own exemptions. `negative-control` no longer reads `type:` to decide a skip — it
+skips by path class — but `scope` and `land` still read the PR's labels, never the
+issue's. Never `gh pr merge`.
 
 **The implementer stops here.** It does not wait on CI and does not poll the PR; the
 orchestrator launches the reviewer and watches the checks. If CI or the reviewer sends
@@ -100,8 +106,11 @@ invocation. What CI, and `issue-lint`, will hold the issue to:
   issue in the same milestone, unless a `Blocked by:` relation orders the two (then it is
   reported as `sequenced`, not a failure).
 - **Proof** names the test command and what it covers; `negative-control` reads the PR's
-  diff, not the `test(red):` commit — the changed test files are copied onto the base
-  and the suite must fail there. `issue-lint` accepts `## Validation` (the Codex route's
+  diff, not the `test(red):` commit, to decide the red — the changed test files are copied
+  onto the base and the suite must fail there. The commit subject matters in one case: a
+  red that is *structural* on the base (a missing module or export, a syntax error) is
+  accepted only when a commit in `base..head` starting `test(red):` touches one of those
+  test files; otherwise the check fails as `structural`. `issue-lint` accepts `## Validation` (the Codex route's
   name for the same section) in place of `## Proof`; one non-empty heading is enough.
 - **Dependencies** as `Blocked by: #N`; the orchestrator does not dispatch a blocked issue.
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.

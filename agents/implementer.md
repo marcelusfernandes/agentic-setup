@@ -22,14 +22,20 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
 4. Write the failing test. Commit `test(red): <what it covers>` — the convention that
    keeps the red test visible in history. `negative-control` reads the PR's diff, not
    the commit: the changed test files are copied onto a checkout of the base and the
-   suite must fail there, so the PR's diff must add or change a test file.
+   suite must fail there, so the PR's diff must add or change a test file. One
+   exception, and it is the only thing it reads commits for: when that red is
+   *structural* (a missing module or export, a syntax error), the check needs a
+   `test(red):` commit in `base..head` touching one of the overlaid test files to
+   accept it — that commit is the vouch. Without one the check fails as `structural`.
 5. Implement until the test command is green. Commit at every green
    (`<type>(<scope>): <imperative>`).
 6. Run the check command (types, lint). Green.
 7. Open the PR with the template (a closing keyword in plain text — `Closes`, `Fixes` or
    `Resolves #N`, several may be linked and their globs unioned, never inside backticks
-   or a fence — test summary, globs touched). Label `state:in-review`; copy the issue's
-   `type:` and `scope:` labels onto the PR.
+   or a fence — test summary, globs touched). Label `state:in-review` and nothing else —
+   the orchestrator copies the issue's `type:` and `scope:` labels onto the PR at its
+   step 4 (`skills/orchestrate/SKILL.md`). An agent that labels its own work could buy
+   its own exemptions.
 8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator is the one
    that watches the checks, launches the reviewer, comments its verdict, applies the
    labels and polls until the merge lands (`skills/orchestrate/SKILL.md` steps 4-5). If CI

@@ -3,6 +3,12 @@
 // relabel, only after the push succeeds. Replaces the three hand-typed
 // commands in step 3 of skills/orchestrate/SKILL.md ("Claim").
 //
+// The relabel writes `type:` as well as `state:`: the orchestrator owns the
+// `type:` label, mapped from the branch type through TYPE_LABELS in
+// scripts/lib/issues.mts (feat -> type:feature, fix -> type:bug; chore,
+// test and ci all -> type:infra). The implementer no longer labels its own
+// PR with it; the orchestrator copies `type:` and `scope:` across at step 4.
+//
 //   node scripts/claim.mts <n> --slug <slug> [--type <type>] [--no-lint]
 //
 // <type> comes from the title prefix ("feat(ci): …" -> feat) when --type is
@@ -42,7 +48,8 @@
 // Crash policy: never a stack trace. Refusal checks (closed, not
 // state:ready, an open blocker, no ## Files bullet, issue-lint) run before
 // any push, so a refusal changes nothing. The push is the lock: only a
-// successful push is followed by `gh issue edit`. Run from the repository
+// successful push is followed by `gh issue edit` (assignee, `state:` and
+// `type:`). Run from the repository
 // root — git commands use the current working directory. Node built-ins
 // only.
 //
@@ -65,7 +72,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from '../ci/lib/args.mts';
-import { BRANCH_TYPES, hasFilesBullet, parseBlockedBy, titleType } from './lib/issues.mts';
+import { BRANCH_TYPES, hasFilesBullet, parseBlockedBy, titleType, typeLabel } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[]; state: string };
@@ -244,6 +251,18 @@ if (push.status === 0) {
 }
 
 // --- 6. only now: assign and relabel ----------------------------------------
-gh(['issue', 'edit', String(number), '--add-assignee', '@me', '--add-label', 'state:in-progress', '--remove-label', 'state:ready']);
+// The `type:` label rides on the same edit as the state change: the
+// orchestrator owns it, so no agent ever labels its own work (#135). The
+// branch type maps through TYPE_LABELS — every BRANCH_TYPES value has a
+// label, so `typeLabel` cannot return null for a validated type, but the
+// nullable shape is honoured rather than asserted away.
+const label = typeLabel(type);
+gh([
+  'issue', 'edit', String(number),
+  '--add-assignee', '@me',
+  '--add-label', 'state:in-progress',
+  ...(label ? ['--add-label', label] : []),
+  '--remove-label', 'state:ready',
+]);
 
 console.log(JSON.stringify({ issue: number, branch, base, lint: lintField }));
