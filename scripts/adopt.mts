@@ -149,7 +149,7 @@ function renderPlan(report: Inventory): string {
     '## Inventory',
     '',
     '```json',
-    JSON.stringify(inventory, null, 2),
+    JSON.stringify(report, null, 2),
     '```',
   ].join('\n');
 }

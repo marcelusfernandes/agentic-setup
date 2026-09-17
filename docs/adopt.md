@@ -118,7 +118,7 @@ the second is true would remove a protection it never saw.
 | --- | --- |
 | `usage: node scripts/adopt.mts --inventory \| --plan-issue` | neither flag, or both |
 | `root:not-a-git-repository` | `git rev-parse --show-toplevel` could not answer |
-| `repository:unreadable` | the repository read failed, or returned no default branch |
+| `repository:unreadable` | the repository read failed, or answered without a default branch or without the two merge settings |
 | `ruleset:unreadable` | the branch rules read failed or was not a list |
 | `labels:unreadable` | the label list read failed or was not a list |
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read |

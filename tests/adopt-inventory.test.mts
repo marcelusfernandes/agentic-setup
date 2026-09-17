@@ -127,6 +127,11 @@ function newStateDir(): string {
 
 type Run = { status: number | null; stdout: string; stderr: string; log: string; stateDir: string };
 
+// The detection overrides are stripped from the inherited environment: this
+// repository dogfoods itself, so the shell running this suite may have them
+// set for real, and every case below asserts the *detected* commands.
+const { AGENTIC_TEST_CMD: _t, AGENTIC_CHECK_CMD: _c, ...BASE_ENV } = process.env;
+
 function adopt(args: string[], cwd: string, env: Record<string, string> = {}, stateDir = newStateDir()): Run {
   // The argv log is per-run even when the state directory is shared (the
   // two --plan-issue runs share one, so the second sees the first's issue).
@@ -134,7 +139,7 @@ function adopt(args: string[], cwd: string, env: Record<string, string> = {}, st
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'adopt.mts'), ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
+    env: { ...BASE_ENV, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
   });
   const logPath = join(stateDir, 'gh-argv.log');
   return {

@@ -204,8 +204,14 @@ type RepoView = { default_branch?: unknown; allow_auto_merge?: unknown; delete_b
 export function takeInventory(root: string, gh: GhRunner, env: NodeJS.ProcessEnv = process.env): InventoryResult {
   const repo = readJson<RepoView>(gh, ['api', 'repos/{owner}/{repo}'], 'repository:unreadable');
   if (!repo.ok) return { error: repo.error };
+  // Fail closed on every field of this read, not only the branch name: a
+  // merge setting missing from the response is "could not be read", and
+  // reporting it as `false` is exactly the silent absence the header forbids.
   const defaultBranch = repo.value?.default_branch;
+  const autoMerge = repo.value?.allow_auto_merge;
+  const deleteBranchOnMerge = repo.value?.delete_branch_on_merge;
   if (typeof defaultBranch !== 'string' || defaultBranch.length === 0) return { error: 'repository:unreadable' };
+  if (typeof autoMerge !== 'boolean' || typeof deleteBranchOnMerge !== 'boolean') return { error: 'repository:unreadable' };
 
   const rules = readJson<BranchRule[]>(gh, ['api', `repos/{owner}/{repo}/rules/branches/${defaultBranch}`], 'ruleset:unreadable');
   if (!rules.ok) return { error: rules.error };
@@ -226,8 +232,8 @@ export function takeInventory(root: string, gh: GhRunner, env: NodeJS.ProcessEnv
     labels: labels.value.map((l) => String(l?.name ?? '')).filter((name) => name.length > 0).sort(),
     hooks: installedHooks(root),
     workflows: workflowFiles(root),
-    autoMerge: repo.value?.allow_auto_merge === true,
-    deleteBranchOnMerge: repo.value?.delete_branch_on_merge === true,
+    autoMerge,
+    deleteBranchOnMerge,
   };
   return { ...report, gaps: findGaps(report) };
 }
