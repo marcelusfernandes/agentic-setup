@@ -12,9 +12,11 @@ written in English; the language you talk to the agents in is your business.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
-  committed as `test(red): …` — a convention with no mechanical consumer since the Stop
-  hook was cut. `negative-control` reads the PR's diff, not any commit: it copies the
-  changed test files onto a checkout of the base and requires the suite to fail there.
+  committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
+  decide the red: it copies the changed test files onto a checkout of the base and requires
+  the suite to fail there. It reads the commits for one thing only — when that red is
+  *structural* (a missing module or export, a syntax error), a `test(red):` commit in
+  `base..head` touching one of those test files is what makes it acceptable (#135).
 
 ## Milestones
 
@@ -52,7 +54,7 @@ description as part of the phase.
 |---|---|---|
 | `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
-| `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | whoever writes the issue |
+| `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | seeded by whoever writes the issue; re-derived from the branch type (`TYPE_LABELS`) and written by `scripts/claim.mts` at claim time |
 | `review:approved` | the reviewer returned approved | orchestrator |
 | `human:pending` | a person must decide; not dispatched until they do | orchestrator (and `guard-main`) |
 | `human:decided` | the decision is recorded; kept as the audit trail, never blocks (named `decided`, not `reviewed`, so it is never mistaken for `review:approved`) | a person |
@@ -108,15 +110,24 @@ CI: a PR fails if it adds a file over 800 lines or grows an existing one past 80
 counted against the base; a file already over 800 that shrinks or holds steady is not a
 violation, and a file whose first line reads `@generated` is exempt.
 
-Sub-issues are linked to the parent through GitHub's sub-issue API, which wants the
-issue **id**, not the number:
+Sub-issues are created and linked by one script — the three-line snippet that used to
+stand here (create, resolve the issue **id**, POST it to the parent) is no longer the
+contract:
 
 ```bash
-n=$(gh issue create --milestone "<milestone>" --label state:ready --label scope:<x> \
-  --label type:<y> --title "..." --body-file issue.md | grep -oE '[0-9]+$')
-id=$(gh api repos/{owner}/{repo}/issues/$n -q .id)
-gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$id
+node scripts/create-subissue.mts <parent> --title "<type>(<scope>): <goal>" \
+  --body-file issue.md --label scope:<x> --label type:<y>
 ```
+
+It refuses with `{ refused, parent, missing }` and exit 1 **before creating anything**
+when the parent does not exist or is closed (`parent:state`), the parent carries no
+milestone (`parent:milestone`), the title is not `<type>(<scope>): <goal>`
+(`title:format`), or `--body-file` is missing or unreadable (`body:missing`). On success
+it inherits the parent's milestone, links the child by its id, and applies `state:ready`
+only after `ci/issue-lint.mts` reports `ok: true` for the new issue — a body that fails
+the contract stays created and linked, without `state:ready`, and the script exits 1. Do
+not pass `--label state:ready`: the lint is what applies it, and the script drops it from
+the creation either way.
 
 ## PR (one template)
 
@@ -151,8 +162,13 @@ the next line, indented, which the parser skips:
   (orchestrator: needed for AC3, see the issue comment)
 ```
 
-Copy the issue's `type:` and `scope:` labels onto the PR when opening it. CI jobs read
-the PR's labels and body, never the issue's.
+The **orchestrator** copies the issue's `type:` and `scope:` labels onto the PR, at step 4
+of `skills/orchestrate` — the implementer opens the PR with `state:in-review` alone. An
+agent that labels its own work could buy its own exemptions, so `type:` is written by the
+orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
+`TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
+`chore`/`test`/`ci` → `type:infra`) and copied across from there. `scope` and `land` still
+read the PR's labels and body, never the issue's.
 
 ## Required checks
 
@@ -160,15 +176,25 @@ the PR's labels and body, never the issue's.
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants. Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`). Only `type:feature` and `type:bug` PRs are held to it; `docs`, `deps`, `infra`, `refactor` and `spec` are skipped by label — a refactor that changes behaviour is a `bug` or a `feature`, and is labelled as such |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) |
 
-The exemption is by label, not by hand: the job reads the PR's `type:` label. Without a
-label it runs and fails.
+The exemption is by **path class**, not by the PR's own labels (#135): the implementer
+applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
+touches any file outside those classes runs the check, whatever it is labelled — a
+refactor that changes behaviour is a `bug` or a `feature` and owes a failing test either
+way. For one release `type:docs`, `type:deps`, `type:infra`, `type:refactor` and
+`type:spec` are still read, only to print a `note:` line saying they no longer skip on
+their own and to name the label in a skip the path class already decided.
 
 A `pass` whose overlaid run fails with a structural signature (a missing module, a missing
-export, a syntax error) still exits 0 — an opaque test command cannot tell a crashing test
-file apart from several real failures — but the job summary and stdout carry a `warning:`
-line asking for a throwing stub instead, so the red is a runtime red.
+export, a syntax error) says the test file could not run on the base at all, not that an
+assertion caught the change — and an opaque test command cannot tell one crashing file
+apart from several real failures. It is accepted only when the PR shows the red was
+written first, on purpose: a commit in `base..head` whose subject starts `test(red):` and
+which touches at least one of the overlaid test files. Then the outcome stays `pass` and
+the job summary and stdout carry a `warning:` line asking for a throwing stub instead, so
+the red is a runtime red. Without such a commit the outcome is `structural` and the check
+fails.
 
 ## Merge
 
@@ -182,8 +208,23 @@ runs again on `main` after the merge; a conflict goes back to the implementer, w
 `git merge origin/main` on the published branch (rebase only before the first push;
 force-push is denied on every branch).
 
-`protect-main.mts` is a fallback for a machine with no server-side ruleset yet: it denies
-a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin` — never a
-merge without green checks by itself, since the ruleset or `land.mts`'s own gate already
-covers that. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts pushing to `main` for bootstrap only; it
-never lifts deleting `main`/`master`.
+"Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
+command segment starting with `gh pr merge` — with or without `--admin`, with any merge
+flag — and refuses with a message naming `node scripts/land.mts <pr>` as the way to merge;
+the permission deny list in `.claude/settings.json` (and its copy
+`templates/claude-settings.json`, which `init` merges into an adopting repository) says the
+same declaratively as `Bash(gh pr merge *)`. `node scripts/land.mts <pr>` in the same
+session is untouched: `land.mts` spawns `gh` from inside Node, while the hook and the deny
+list only ever see the session's Bash command string, which reads `node scripts/land.mts
+<pr>`.
+
+**No environment variable lifts that rule.** `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to
+`main` for bootstrap only — never deleting `main`/`master`, and never a merge. An operator
+who genuinely has to merge a pull request by hand does it outside the agent session: their
+own terminal, or the GitHub UI. The layer that must not be bypassed is still the ruleset;
+this one is a round-trip saver.
+
+Apart from the merge rule, `protect-main.mts` is a fallback for a machine with no
+server-side ruleset yet: it denies a force-push and a push or delete of `main`/`master`. It
+never gates a merge on green checks by itself — the ruleset, or `land.mts`'s own gate, already
+covers that.

@@ -200,13 +200,19 @@ person is not watching.
 4. Write the failing test. Commit it as `test(red): …` — the convention that keeps
    the red test visible in history. `negative-control` reads the PR's diff, not the
    commit: the changed test files are copied onto a checkout of the base and the
-   suite must fail there, so the PR's diff must add or change a test file.
+   suite must fail there, so the PR's diff must add or change a test file. One
+   exception, and the only thing it reads commits for: when that red is *structural*
+   (a missing module or export, a syntax error), it is accepted only with a
+   `test(red):` commit in `base..head` touching one of the overlaid test files — that
+   commit is the vouch. Without one the check fails as `structural`.
 5. Implement until the test command is green. Commit at every green.
 6. Run the project's check command (types, lint, fast scans). Green.
 7. Open the PR with the template (a closing keyword — `Closes`/`Fixes`/`Resolves #N`,
    several may be linked, the diff must fit the union of their globs, never quote a
    keyword inside backticks or a fence — test summary, globs touched). Label
-   `state:in-review`. Copy the issue's `type:`/`scope:` labels onto the PR.
+   `state:in-review` and nothing else: the orchestrator copies the issue's
+   `type:`/`scope:` labels onto the PR at its step 4, because an agent that labels its
+   own work could buy its own exemptions.
 8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator watches
    the checks and launches the reviewer; polling here would only burn the implementer's
    own turns. If CI or the reviewer sends it back, fix in the same worktree and update
@@ -241,7 +247,7 @@ Never edits, never merges, never offers to fix.
 | event | hook | what it does |
 |---|---|---|
 | WorktreeCreate | `worktree-create.mts` | creates every agent's worktree itself, outside the main checkout — `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>`, detached HEAD, `node_modules` symlinked in when the checkout has one, path printed on stdout. Ships because Claude Code's own default (`.claude/worktrees/agent-<id>`) sits under a protected path and a headless implementer's writes there were denied (#129 L10/L11); this hook replaces that default once registered. Fails **closed**: any error exits 1 with nothing on stdout, since there is no later layer to catch a bogus or missing worktree the way the ruleset catches a missed push |
-| PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin`. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion. Force-push, `reset --hard`, `clean` and `stash` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
+| PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, and **any `gh pr merge` segment, with or without `--admin`** — `node scripts/land.mts <pr>` is the only merge path from a session (it spawns `gh` from inside Node, so the hook never sees a `gh` command string), and no environment variable lifts it. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion and never a merge. Force-push, `reset --hard`, `clean`, `stash` and `gh pr merge` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
 
 There is no Stop or SubagentStop hook: nothing runs the check or test commands before an

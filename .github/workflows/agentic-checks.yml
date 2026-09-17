@@ -10,7 +10,10 @@
 # negative-control runs the project's test command on a base checkout. Add
 # the same toolchain setup your test workflow uses where marked, and set
 # AGENTIC_TEST_CMD if detection (package.json / pyproject / go.mod /
-# Cargo.toml / Makefile) does not name the right command.
+# Cargo.toml / Makefile) does not name the right command. It skips a PR whose
+# whole diff is docs/**, .github/**, templates/** or root Markdown; set the
+# repository variable AGENTIC_SKIP_GLOBS (comma-separated globs) to add a
+# path class of your own. It is empty when the variable is unset.
 
 name: agentic-checks
 
@@ -61,5 +64,6 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AGENTIC_SKIP_GLOBS: ${{ vars.AGENTIC_SKIP_GLOBS }}
           # AGENTIC_TEST_CMD: npm test
         run: node ci/negative-control.mts --base "$BASE_SHA" --head "$HEAD_SHA"

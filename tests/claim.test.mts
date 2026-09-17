@@ -118,6 +118,10 @@ JSON
 {"number":29,"title":"feat: decided human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:decided"}],"state":"OPEN"}
 JSON
         ;;
+      30) cat <<'JSON'
+{"number":30,"title":"fix: a bug title maps to type:bug","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
       26) cat <<'JSON'
 {"number":26,"title":"feat: milestone lookup fails","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`scripts/claim.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN","milestone":{"title":"M2"}}
 JSON
@@ -246,9 +250,12 @@ check(
 );
 check('type came from the title prefix (feat(ci): …)', claimed10.json?.branch === 'feat/10-script');
 check('the branch really exists on origin', remoteBranches().includes('feat/10-script'), JSON.stringify(remoteBranches()));
+// The orchestrator, not the implementer, writes the `type:` label: claim
+// derives it from the branch type through TYPE_LABELS (feat -> feature) and
+// adds it in the same `gh issue edit` that takes the lock's state change.
 check(
-  'gh issue edit assigns and relabels exactly as specified',
-  /issue edit 10 --add-assignee @me --add-label state:in-progress --remove-label state:ready/.test(claimed10.log),
+  'gh issue edit assigns and relabels exactly as specified, type: included',
+  /issue edit 10 --add-assignee @me --add-label state:in-progress --add-label type:feature --remove-label state:ready/.test(claimed10.log),
   claimed10.log,
 );
 // AC4: a passing issue's success JSON reports the lint result as exactly
@@ -271,6 +278,22 @@ const typeOverride = claim(['18', '--slug', 'x', '--type', 'chore']);
 check('successful claim with --type override exits 0', typeOverride.status === 0, `${typeOverride.stdout}\n${typeOverride.stderr}`);
 check('branch uses the explicit --type, not the title prefix', typeOverride.json?.branch === 'chore/18-x', JSON.stringify(typeOverride.json));
 check('the overridden branch really exists on origin', remoteBranches().includes('chore/18-x'), JSON.stringify(remoteBranches()));
+// Branch types and label types are not the same set: chore/test/ci all map
+// to the single `infra` label, and fix maps to `bug`.
+check(
+  'a chore branch type is labelled type:infra',
+  /issue edit 18 --add-assignee @me --add-label state:in-progress --add-label type:infra --remove-label state:ready/.test(typeOverride.log),
+  typeOverride.log,
+);
+
+const fixTitle = claim(['30', '--slug', 'x']);
+check('a fix: title claims normally, exit 0', fixTitle.status === 0, `${fixTitle.stdout}\n${fixTitle.stderr}`);
+check('a fix: title names a fix/ branch', fixTitle.json?.branch === 'fix/30-x', JSON.stringify(fixTitle.json));
+check(
+  'a fix: title is labelled type:bug, not type:fix',
+  /issue edit 30 --add-assignee @me --add-label state:in-progress --add-label type:bug --remove-label state:ready/.test(fixTitle.log),
+  fixTitle.log,
+);
 
 // --- AC3: gh naming a default branch that cannot resolve locally is an -----
 // error, not held (fails before the push is even attempted).
@@ -360,8 +383,8 @@ check('--no-lint claims an issue that would otherwise fail the lint, exit 0', no
 check('--no-lint reports lint: "skipped"', noLint.json?.lint === 'skipped', JSON.stringify(noLint));
 check('--no-lint still creates the branch on origin', remoteBranches().includes('feat/24-x'), JSON.stringify(remoteBranches()));
 check(
-  '--no-lint still assigns and relabels normally',
-  /issue edit 24 --add-assignee @me --add-label state:in-progress --remove-label state:ready/.test(noLint.log),
+  '--no-lint still assigns and relabels normally, type: included',
+  /issue edit 24 --add-assignee @me --add-label state:in-progress --add-label type:feature --remove-label state:ready/.test(noLint.log),
   noLint.log,
 );
 

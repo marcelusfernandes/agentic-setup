@@ -11,15 +11,34 @@
 //      them: a refspec starting with `:` whose remote side is main/master
 //      (`:main`, `:refs/heads/main`), or a --delete/-d flag with
 //      main/master among the refspecs
-//   3. starts with `gh pr merge` and passes `--admin`
+//   3. starts with `gh pr merge`, with or without `--admin`
 // The ruleset and `hooks/git-pre-push` (every push from this machine, in or
 // out of Claude Code) are the layers that count; this one saves a round
 // trip. No quotes, backticks or `$()` are parsed, so a commit message that
 // quotes one of the forms above may be denied too — write it differently.
 //
+// Known misses, by construction: a segment is only matched when the forbidden
+// command is the literal head of it, so every indirect form gets through —
+// `bash -c 'gh pr merge 1'`, `sh -lc …`, `xargs gh …`, `command gh pr merge 1`,
+// `time gh pr merge 1`, a subshell `(gh pr merge 1)`, an alias, a wrapper
+// script, `$(…)`/backtick substitution, or the command read from a file. Only
+// leading env assignments, `sudo` and `env` are stripped (`commandSegments`).
+// These are NOT oversights to be patched one by one: chasing them is an arms
+// race a string check cannot win, and it is why this hook is the third layer
+// and not the gate. The ruleset (and, for merges, `scripts/land.mts`'s own
+// refusal path) is what actually holds.
+//
+// Item 3 does not touch `scripts/land.mts`: that script spawns `gh` from
+// inside Node, so the session's Bash tool — the only thing this hook sees —
+// reads `node scripts/land.mts <pr>`, which is allowed.
+//
 // Valve, for bootstrapping a repo with no ruleset yet:
 //   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2's push form only, never 1, 3,
 //                               or item 2's deletion form
+// **No environment variable lifts item 3, and none is going to be added.**
+// An operator who genuinely has to merge a pull request by hand does it
+// outside the agent session (a terminal of their own, or the GitHub UI);
+// inside a session, `node scripts/land.mts <pr>` is the only way to merge.
 //
 // Crash policy: ALLOW. Node missing, an unreadable payload, or a throw here
 // all let the call through — the ruleset and git-pre-push remain.
@@ -27,6 +46,10 @@ import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, va
 
 const HOOK = 'protect-main';
 const PROTECTED = /^(?:refs\/heads\/)?(?:main|master)$/;
+const MERGE_REMEDY =
+  'Run `node scripts/land.mts <pr>` instead — it is the only way to merge from a session, ' +
+  'and `--admin` is never a remedy. No environment variable lifts this; a genuine manual ' +
+  'merge happens outside the agent session.';
 const stripQuotes = (t: string) => t.replace(/^(['"])(.*)\1$/, '$2');
 
 function checkPush(segment: string, cwd: string, command: string): void {
@@ -57,8 +80,11 @@ async function main() {
 
   for (const segment of commandSegments(command)) {
     if (/^git\s+push\b/.test(segment)) checkPush(segment, cwd, command);
-    if (/^gh\s+pr\s+merge\b/.test(segment) && /--admin\b/.test(segment)) {
-      deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
+    if (/^gh\s+pr\s+merge\b/.test(segment)) {
+      const lead = /--admin\b/.test(segment)
+        ? '`gh pr merge --admin` bypasses the checks; forbidden.'
+        : 'merging a pull request by hand is forbidden.';
+      deny(HOOK, `${lead} ${MERGE_REMEDY}`);
     }
   }
 }
