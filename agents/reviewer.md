@@ -12,7 +12,11 @@ writes named in **Output** below — nothing else.
 
 ## Check, in this order
 1. **Every acceptance criterion** of the issue against the diff and the test summary in the
-   PR. An AC without a test that proves it is a rejection.
+   PR. An AC without a test that proves it is a rejection. A DOM shim cannot see layout: a
+   change to rendered UI is reviewed against a render proof — a screenshot or a measured
+   layout — never against HTTP or DOM-shim tests alone (measured:
+   `docs/dogfood/2026-09-06.md`, F11, where an inline `span` ignores `width` and both an
+   HTTP suite and a DOM-shim review passed an invisible bar fill).
 2. **Scope:** `gh pr diff --name-only` inside the globs the issue declares. A file outside
    without an `authorised:` line from the orchestrator is a rejection.
 3. **Negative control:** a `test(red):` commit exists and the `negative-control` check is

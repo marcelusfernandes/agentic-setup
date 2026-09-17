@@ -507,4 +507,178 @@ for (const relative of [DECISIONS, ORCHESTRATION, LAND]) {
   );
 }
 
+// --- #264: what the two dogfood passes measured, stated on the cards that act on it ---
+// Five things the passes recorded in `docs/dogfood/2026-09-06.md` (F11) and
+// `docs/dogfood/2026-09-10.md` (L12, L14, L16, L21) were discovered at runtime because no
+// card said them. `agents/**` is not one of the negative control's skipped path classes
+// (`ci/negative-control.mts`: `docs/**`, `.github/**`, `templates/**`, `*.md`), so the
+// prose these cards carry gets its consumer here — `tests/doctrine.test.mts` is on #264's
+// own `## Files`. It replaces `tests/agents-catalogue.test.mts`, which #272 deleted with
+// the retired M9 catalogue; the amendment is recorded on #264 and logged on #181.
+//
+// Every assertion is scoped to the section that owes the sentence, because several of
+// these phrases (`state:in-review`, `authorised:`, `reconcile`) appear elsewhere in the
+// same card and would otherwise pass on a card that still omits them where they belong.
+// Each span is guarded by a non-empty check, so renaming a heading fails here rather than
+// passing quietly on an empty string.
+
+const TASK_TEMPLATE = join('.github', 'ISSUE_TEMPLATE', 'task.md');
+const TASK_TEMPLATE_SOURCE = join('templates', '.github', 'ISSUE_TEMPLATE', 'task.md');
+
+// --- AC1: the reviewer knows a DOM shim cannot see layout (F11) ---
+// The sentence belongs inside numbered check 1 — what counts as a test that proves an
+// acceptance criterion — and not as a seventh check, because #205 above pins the card to
+// exactly six numbered checks and reads the doc's list against that count.
+
+check(
+  '#264 AC1 reviewer.md says a DOM shim cannot see layout',
+  /DOM shim/.test(checkList) && /cannot see layout/.test(checkList),
+  checkList.slice(0, 600),
+);
+check(
+  '#264 AC1 reviewer.md asks a rendered-UI change for a render proof',
+  checkList.includes('render proof'),
+  checkList.slice(0, 600),
+);
+check(
+  '#264 AC1 reviewer.md names both accepted render proofs: a screenshot or a measured layout',
+  checkList.includes('screenshot') && checkList.includes('measured layout'),
+  checkList.slice(0, 600),
+);
+check(
+  '#264 AC1 reviewer.md says HTTP or DOM-shim tests alone are not that proof',
+  /never against HTTP or DOM-shim tests alone/.test(checkList),
+  checkList.slice(0, 600),
+);
+check(
+  '#264 AC1 reviewer.md cites the pass that measured it, by report path and finding',
+  checkList.includes('docs/dogfood/2026-09-06.md') && /\bF11\b/.test(checkList),
+  checkList.slice(0, 600),
+);
+
+// --- AC2: both task templates ask a UI change for a render proof, and stay identical ---
+// `init` copies templates/.github into an adopting repository's .github, so the two copies
+// are the same file at two paths. Nothing else holds them together mechanically.
+
+const templateProof = span(readNormalized(TASK_TEMPLATE), '## Proof', '## Files');
+check('#264 AC2 .github/ISSUE_TEMPLATE/task.md still has a ## Proof section', templateProof.length > 0);
+check(
+  '#264 AC2 the task template asks a rendered-UI change for a render proof',
+  templateProof.includes('render proof')
+    && templateProof.includes('screenshot')
+    && templateProof.includes('measured layout'),
+  templateProof,
+);
+// The section's `Declaration:` example stays unarmed — held by tests/issue-lint.test.mts,
+// which lints an issue opened from this very section and requires `ok: true`. Not repeated
+// here: one consumer per fact, and that one spawns the real linter.
+check(
+  '#264 AC2 templates/.github/ISSUE_TEMPLATE/task.md is byte-identical to the installed copy',
+  readFileSync(join(ROOT, TASK_TEMPLATE_SOURCE), 'utf8') === readFileSync(join(ROOT, TASK_TEMPLATE), 'utf8'),
+);
+
+// --- AC3: the worktree step says how the branch is reached (L12) ---
+
+const worktreeStep = span(implementer, '2. Prove the worktree', '3. Read everything');
+check('#264 AC3 implementer.md still has a worktree step to read', worktreeStep.length > 0);
+check(
+  '#264 AC3 the worktree step says the worktree may be born detached or on a fresh branch',
+  /detached/.test(worktreeStep) && /fresh branch/.test(worktreeStep),
+  worktreeStep,
+);
+check(
+  '#264 AC3 the worktree step names `git checkout -B <branch> origin/<branch>` as the expected first step',
+  worktreeStep.includes('git checkout -B <branch> origin/<branch>'),
+  worktreeStep,
+);
+check(
+  '#264 AC3 the worktree step says that branch is the lock branch the orchestrator created',
+  /lock branch the orchestrator created/.test(worktreeStep),
+  worktreeStep,
+);
+check(
+  '#264 AC3 the worktree step says reaching it is not creating one, so issue-and-pr still holds',
+  /not creating one/.test(worktreeStep) && worktreeStep.includes('never creates or renames one'),
+  worktreeStep,
+);
+
+// --- AC4 and AC5: the PR step relabels the issue (L14) and appends to the body (L21) ---
+
+const prStep = span(implementer, '7. Open the PR', '8. Stop');
+check('#264 AC4 implementer.md still has a PR step to read', prStep.length > 0);
+check(
+  '#264 AC4 the PR step carries the exact `gh issue edit` command that moves the issue',
+  prStep.includes('gh issue edit <n> --add-label state:in-review --remove-label state:in-progress'),
+  prStep,
+);
+check(
+  "#264 AC4 the PR step says that is what keeps the issue out of `reconcile`'s stale list",
+  prStep.includes('reconcile') && /stale list/.test(prStep),
+  prStep,
+);
+check(
+  '#264 AC4 the PR step still says the PR itself carries `state:in-review` and nothing else',
+  /and nothing else/.test(prStep),
+  prStep,
+);
+check(
+  '#264 AC5 the PR step says the pull-request body is appended to, never rewritten',
+  /appended to/.test(prStep) && /never rewritten/.test(prStep),
+  prStep,
+);
+check(
+  '#264 AC5 the PR step says `## Files` and any `authorised:` line belong to the orchestrator',
+  prStep.includes('`## Files`') && prStep.includes('`authorised:`') && /belong to the orchestrator/.test(prStep),
+  prStep,
+);
+check(
+  '#264 AC5 the PR step names the command that drops them — `gh pr edit --body-file`',
+  prStep.includes('gh pr edit --body-file'),
+  prStep,
+);
+
+// --- AC6: the format reference is named, so no public code search is owed (L16) ---
+
+const beforeWriting = span(implementer, '## Before writing a line', '## Cycle');
+check('#264 AC6 implementer.md still has a "Before writing a line" section', beforeWriting.length > 0);
+check(
+  "#264 AC6 it names this repository's own `agents/*.md` as the agent-or-card format reference",
+  beforeWriting.includes('`agents/*.md`'),
+  beforeWriting,
+);
+check(
+  '#264 AC6 it says no public code search is owed for that format',
+  /no public code search is owed/.test(beforeWriting),
+  beforeWriting,
+);
+
+// --- Provenance: each sentence cites the report path, never the issue that preceded it ---
+// `docs/dogfood/**` is the record; #96 and #129 are closed and the reports supersede them.
+// Invariant 7 also keeps the name of the repository a pass ran against out of the cards.
+
+for (const [label, text] of [['reviewer.md', checkList], ['implementer.md', implementer]] as const) {
+  check(
+    `#264 ${label} cites the dogfood reports by path, not by the issue number they replaced`,
+    !/dogfood (?:spec )?#(?:96|129)\b/.test(text),
+    text.slice(0, 600),
+  );
+}
+// Each citation is asserted inside the step that owes it, not card-wide: a card-wide read
+// would still pass if L14's citation drifted into the worktree step. The report path is
+// repeated per span deliberately — that is what makes the pair, not the bare finding id,
+// the thing being held.
+const CITATIONS: ReadonlyArray<{ finding: string; step: string; text: string }> = [
+  { finding: 'L12', step: 'the worktree step', text: worktreeStep },
+  { finding: 'L16', step: '"Before writing a line"', text: beforeWriting },
+  { finding: 'L14', step: 'the PR step', text: prStep },
+  { finding: 'L21', step: 'the PR step', text: prStep },
+];
+for (const { finding, step, text } of CITATIONS) {
+  check(
+    `#264 implementer.md cites docs/dogfood/2026-09-10.md, ${finding} in ${step} that owes it`,
+    text.includes(`docs/dogfood/2026-09-10.md\`, ${finding}`),
+    text,
+  );
+}
+
 finish();
