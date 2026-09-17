@@ -115,10 +115,15 @@ Status: accepted
   plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
   `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
   not cover a push from elsewhere.
-- **(c) Detection:** the `guard-main` action. On a push to `main` that belongs to no PR
-  it opens an issue labelled `human:pending` and fails the run, so the history turns red and
-  someone looks. The escape hatch is a commit message containing `[allow-push-main]`,
-  for bootstrap only.
+- **(c) Detection:** the `guard-main` action. The commit → PR lookup retries up to 4
+  times, 15 seconds apart (about 45s of tolerance): right after a squash merge the
+  association can still be unindexed, and a single call risks a false `human:pending`
+  issue for a commit that did come from a PR (#80). A `gh api` error is retried the same
+  way as an empty result. Once the retries run out without finding a PR, it opens an
+  issue labelled `human:pending` and fails the run, so the history turns red and someone
+  looks; if the lookup itself was still erroring on the last attempt, the issue says the
+  lookup failed rather than claiming a confirmed direct push. The escape hatch is a
+  commit message containing `[allow-push-main]`, for bootstrap only.
 
 The merge gate itself is (a) when it exists: `scripts/land.mts` queues `gh pr merge
 --squash --auto` once the base branch's ruleset has a `required_status_checks` rule, and
