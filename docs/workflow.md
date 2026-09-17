@@ -66,7 +66,9 @@ to a phase, and nothing refuses one. `scripts/claim.mts` reads the issue's own s
 and `## Files` — never its phase — and `scripts/land.mts` gates on the pull request's checks,
 so a milestone-less issue is **claimed and landed with the scripts** exactly like any other,
 **by hand**: the orchestrator passes the issue number to `claim.mts` itself instead of taking
-it from a list. What it loses is visibility. `scripts/reconcile.mts` reconciles one milestone
+it from a list. `ci/issue-lint.mts`, the gate `claim.mts` runs before the push, tolerates the
+absent milestone — it reads the issue's own sections as usual and compares its globs against
+an empty set of issues in flight, since the set it would compare against is a milestone's. What it loses is visibility. `scripts/reconcile.mts` reconciles one milestone
 — it picks the lowest-numbered open one or takes `--milestone <title>`, and lists that
 milestone's issues (`gh issue list --milestone <title>`) — so `reconcile` does not see it, it
 never appears in `ready`, and step 0 of the loop never offers it. Four issues of this shape

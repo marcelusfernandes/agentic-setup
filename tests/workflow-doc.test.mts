@@ -13,7 +13,8 @@
 // returns the empty string, which fails every content case, rather than widening the slice
 // to the end of the file and letting an assertion match text the section does not contain.
 // That widening is a real failure mode, not a hypothetical one: it is how a sibling pin
-// stayed green (17 passed) against a card its sentence had been deleted from. Each slice
+// stayed green (13 passed, 0 failed) against a card rewritten to drop the very name it
+// pinned — the slice had run to the end of the file and matched it elsewhere. Each slice
 // therefore also carries two standing guards — it is non-empty and shorter than its
 // document, and it stops before a phrase that lives past its terminator.
 import { readFileSync } from 'node:fs';
