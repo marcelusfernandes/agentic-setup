@@ -22,6 +22,13 @@ written in English; the language you talk to the agents in is your business.
   cannot answer exits 1 with `{ error }` naming it rather than assuming the issue is
   free. It is an early refusal, not the lock; two agents of *this* route racing for the
   same issue are still decided by the create-only push.
+- An issue locked by the other route is reported, never taken. `reconcile.mts` marks it
+  `foreignLock: true` under `inProgress` and keeps it out of `resumable` even when it has
+  no pull request yet (the Codex loop's state between its claim push and its PR):
+  `resumable` is dispatched as round N+1 *without* a claim
+  (`skills/orchestrate/SKILL.md`), so a foreign lock left in that list would reach an
+  implementer with `claim.mts`'s refusal never consulted. Nobody on this route claims,
+  resumes or pushes to a `codex/task-<n>` branch.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
   committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to

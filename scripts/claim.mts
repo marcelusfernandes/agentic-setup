@@ -91,7 +91,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from '../ci/lib/args.mts';
-import { BRANCH_TYPES, hasFilesBullet, lockBranches, parseBlockedBy, titleType, typeLabel } from './lib/issues.mts';
+import { BRANCH_TYPES, hasFilesBullet, lockBranch, lockBranches, parseBlockedBy, titleType, typeLabel } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[]; state: string };
@@ -222,7 +222,7 @@ if (skipLint) {
 
 // --- 5. lock: fetch, read the locks already on the remote, then push the ----
 // new branch from the default branch ----------------------------------------
-const branch = `${type}/${number}-${slug}`;
+const branch = lockBranch(type, number, slug);
 
 const repoView = ghJson<RepoView>(['repo', 'view', '--json', 'defaultBranchRef']);
 const defaultBranch = repoView.defaultBranchRef?.name;

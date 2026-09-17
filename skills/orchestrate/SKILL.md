@@ -193,8 +193,14 @@ assigned, `state:in-progress`, and labelled `type:` from the branch type — `fe
 `docs`, `deps` keep their name (`TYPE_LABELS`, `scripts/lib/issues.mts`). **You write
 `type:`, not the implementer**: an agent that labels its own work could buy its own
 exemptions, so the implementer opens the PR with `state:in-review` alone and you copy
-`type:` and `scope:` across at step 4. Exit 2 → `{ held }`: the branch already exists — another
-agent (or a previous, still-live claim) holds it; skip, do not retry. Exit 1 with
+`type:` and `scope:` across at step 4. Exit 2 → `{ held: "<branch>" }`: a branch that locks the issue already exists — another
+agent (or a previous, still-live claim) holds it; skip, do not retry, and do not dispatch
+an implementer to that branch. Before the push, `claim.mts` reads the remote's heads and
+reports any branch that locks the issue, in either route's namespace
+(`<type>/<n>-<slug>` here, `codex/task-<n>` on the Codex route — `scripts/lib/issues.mts`
+lists both), so the branch named may be one this route would never have pushed. That read
+fails closed: a `git ls-remote` that cannot answer exits 1 with `{ error }` naming it
+rather than claiming an issue it could not check. Exit 1 with
 `{ refused }`: the issue is not claimable (closed, missing `state:ready`, an open
 `Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint`) — drop it from this
 pass, it needs a person or a prior issue to close first. Exit 1 with `{ error }`: a usage
@@ -209,6 +215,14 @@ already held by this orchestrator's own `state:in-progress` label and remote bra
 Dispatch it straight to an implementer as round N+1: tell it to start from
 `origin/<branch>` (skill `safe-worktree` §C), that the previous agent is gone, and to
 verify what is already pushed, finish the work, and open the PR.
+
+That list only ever holds branches of this route's own shape. An in-progress issue whose
+branch is the Codex route's `codex/task-<n>` lock is reported under `inProgress` with
+`foreignLock: true` — never `resumable`, whether or not it has a pull request yet —
+because round N+1 is dispatched *without* a claim, and `claim.mts`'s refusal would never
+be reached. Leave it to the coordinator that owns it: do not claim it, do not dispatch an
+implementer to it, and do not push to that branch. One coordinator owns an objective at a
+time (`AGENTS.md`).
 
 **Grant a glob, then log it.** An implementer that stops on a file outside its issue's
 globs is asking for a grant, and only you write one: add the `authorised:` line to the

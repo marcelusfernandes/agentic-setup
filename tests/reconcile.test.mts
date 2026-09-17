@@ -95,7 +95,8 @@ JSON
   {"number":72,"title":"In progress worktree locked by a dead pid","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":7,"title":"In progress locked by the Codex route","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":7,"title":"In progress locked by the Codex route","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":9,"title":"In progress locked by the Codex route, no PR yet","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -180,9 +181,10 @@ for (const branch of [
   'feat/42-cancelled-check',
   'feat/50-prune-target',
   'feat/60-shadowed',
-  // The Codex route's lock shape for issue #7 (#157): one canonical name per
-  // issue, no slug, so `^[a-z]+/<n>-` never matches it.
+  // The Codex route's lock shape (#157): no slug, so `^[a-z]+/<n>-` never
+  // matches it. #7 has an open PR; #9 is the loop's state before one.
   'codex/task-7',
+  'codex/task-9',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
@@ -407,22 +409,26 @@ check('ready carries the title', ready10?.title === 'Ready no blockers');
 
 const inProgress20 = (out?.inProgress ?? []).find((i: any) => i.number === 20);
 const inProgress21 = (out?.inProgress ?? []).find((i: any) => i.number === 21);
-check('in-progress with a remote branch and a PR', inProgress20?.branch === 'feat/20-x' && inProgress20?.hasRemoteBranch === true && inProgress20?.pr === 100, JSON.stringify(inProgress20));
+check('in-progress with a remote branch and a PR', inProgress20?.branch === 'feat/20-x' && inProgress20?.hasRemoteBranch === true && inProgress20?.foreignLock === false && inProgress20?.pr === 100, JSON.stringify(inProgress20));
 check('in-progress with neither PR nor remote branch', inProgress21?.branch === null && inProgress21?.hasRemoteBranch === false && inProgress21?.pr === null, JSON.stringify(inProgress21));
 
 check('stale lists only the issue with no PR and no remote branch', (out?.stale ?? []).length === 1 && out.stale[0].number === 21, JSON.stringify(out?.stale));
 
 // --- AC1 (#157): an issue whose only remote branch is the Codex route's
-// `codex/task-<n>` lock is not free. Both routes' lock shapes live in
-// scripts/lib/issues.mts, so the issue resolves to that branch and its PR
-// instead of reading as "no remote branch" (which would let a Claude-route
-// agent claim work another coordinator already owns).
+// `codex/task-<n>` lock resolves to that branch and its PR instead of reading
+// as "no remote branch", and with no PR yet it is a foreign lock, never
+// `resumable` — that list is dispatched as round N+1 *without* a claim.
 const inProgress7 = (out?.inProgress ?? []).find((i: any) => i.number === 7);
 check(
   'an issue locked by the Codex route resolves its codex/task-<n> branch and PR',
-  inProgress7?.branch === 'codex/task-7' && inProgress7?.hasRemoteBranch === true && inProgress7?.pr === 107,
+  inProgress7?.branch === 'codex/task-7' && inProgress7?.hasRemoteBranch === true && inProgress7?.foreignLock === true && inProgress7?.pr === 107,
   JSON.stringify(inProgress7),
 );
+const inProgress9 = (out?.inProgress ?? []).find((i: any) => i.number === 9);
+const resumable9 = (out?.resumable ?? []).some((i: any) => i.number === 9);
+check('the same lock with no open PR stays inProgress as a foreign lock, never resumable',
+  inProgress9?.branch === 'codex/task-9' && inProgress9?.foreignLock === true && inProgress9?.pr === null && !resumable9,
+  `${JSON.stringify(inProgress9)} resumable=${JSON.stringify(out?.resumable)}`);
 
 // --- AC3: a remote-tracking ref shadowed by a same-named local branch one
 // level down must still resolve to its real (slash-bearing) branch name, not

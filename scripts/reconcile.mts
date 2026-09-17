@@ -31,9 +31,16 @@
 //                                                              // 'depends-on'. Reported, never
 //                                                              // refused (see below)
 //     ready: [{ number, title, blockedBy: number[] }],       // Blocked-by all closed
-//     inProgress: [{ number, branch, hasRemoteBranch, pr }],  // pr: number | null
+//     inProgress: [{ number, branch, hasRemoteBranch, foreignLock, pr }],
+//                                                              // pr: number | null.
+//                                                              // foreignLock: the branch is
+//                                                              // the *other* route's lock
+//                                                              // (`codex/task-<n>`), so this
+//                                                              // route neither claims nor
+//                                                              // resumes it
 //     resumable: [{ number, branch, commitsAheadOfMain }],    // in-progress, remote
-//                                                              // branch, no open PR, not
+//                                                              // branch of *this* route's
+//                                                              // shape, no open PR, not
 //                                                              // checked out in any *live*
 //                                                              // local worktree of this
 //                                                              // checkout (dead-locked ones
@@ -74,9 +81,20 @@
 // checked out on that branch is not "an implementer is working right now" —
 // it is resumable: round N+1 from `origin/<branch>` (skills/safe-worktree
 // §C). Classification order for an in-progress issue: open PR -> inProgress
-// (with pr); else no remote branch -> stale; else branch checked out in a
-// *live* local worktree of this checkout -> inProgress (pr: null); else ->
-// resumable, and it is removed from inProgress.
+// (with pr); else no remote branch -> stale; else the branch is the other
+// route's lock -> inProgress (`foreignLock: true`); else branch checked out
+// in a *live* local worktree of this checkout -> inProgress (pr: null);
+// else -> resumable, and it is removed from inProgress.
+//
+// That third step is the one an issue locked by the Codex route lands on,
+// and it exists because resolving both lock shapes (#157) is not only a
+// refusal: `resumable` is a *dispatch* list. An issue holding
+// `codex/task-<n>` and no pull request yet is the Codex loop's normal state
+// between its claim push and its PR, and without the step it would read as
+// "a branch, no PR, nobody working" — round N+1 material, sending a Claude
+// implementer to push to another coordinator's lock branch without
+// `claim.mts` ever being consulted. The lock is reported, never resumed:
+// only the route that owns the branch namespace works it.
 //
 // Claude Code locks an agent worktree only while that agent runs, with a
 // reason of the form `claude agent agent-<id> (pid <N> start <date>)`; it
@@ -180,7 +198,7 @@
 // `--milestone` given): there is nothing left to reconcile against.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
-import { lockBranches, parseBlockedBy } from './lib/issues.mts';
+import { codexLockBranch, lockBranches, parseBlockedBy } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
@@ -608,15 +626,27 @@ const inProgressAll = issues
   .map((i) => {
     const branch = branchFor(i.number);
     const pr = prFor(branch);
-    return { number: i.number, branch, hasRemoteBranch: branch !== null, pr: pr ? pr.number : null };
+    return {
+      number: i.number,
+      branch,
+      hasRemoteBranch: branch !== null,
+      // The other route's lock, which this route may report but never take:
+      // no claim (scripts/claim.mts refuses it) and no round N+1 either.
+      foreignLock: branch === codexLockBranch(i.number),
+      pr: pr ? pr.number : null,
+    };
   });
 
-// Resumable: a remote branch, no open PR, not checked out in any *live*
-// local worktree of this checkout (checkedOutBranches already excludes
-// dead-locked worktrees) — see the header comment for the classification
-// order and rationale.
+// Resumable: a remote branch of this route's own shape, no open PR, not
+// checked out in any *live* local worktree of this checkout
+// (checkedOutBranches already excludes dead-locked worktrees) — see the
+// header comment for the classification order and rationale. A foreign lock
+// is excluded here, not merely refused later: `resumable` is what the
+// orchestrator dispatches as round N+1 without claiming again
+// (skills/orchestrate/SKILL.md), so an issue the Codex route holds would
+// reach an implementer with `claim.mts` never consulted.
 const resumable = inProgressAll
-  .filter((i) => i.pr === null && i.branch !== null && !checkedOutBranches.has(i.branch))
+  .filter((i) => i.pr === null && i.branch !== null && !i.foreignLock && !checkedOutBranches.has(i.branch))
   .map((i) => ({ number: i.number, branch: i.branch as string, commitsAheadOfMain: commitsAhead(i.branch as string) }));
 const resumableNumbers = new Set(resumable.map((i) => i.number));
 

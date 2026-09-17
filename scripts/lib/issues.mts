@@ -45,6 +45,14 @@ export function codexLockBranch(number: number): string {
 }
 
 /**
+ * The Claude route's lock branch for an issue — the branch
+ * `scripts/claim.mts` pushes, and one of the shapes `locksIssue` matches.
+ */
+export function lockBranch(type: string, number: number, slug: string): string {
+  return `${type}/${number}-${slug}`;
+}
+
+/**
  * Whether `branch` is a branch name that locks issue `number`. Both routes
  * take a pushed branch as the lock, in namespaces that cannot see each
  * other: `<type>/<n>-<slug>` (`scripts/claim.mts`) and `codex/task-<n>`
