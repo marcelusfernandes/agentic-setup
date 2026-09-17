@@ -302,7 +302,7 @@ go away.
 
 ## 14. 2026-09-17: a hand-typed `gh pr merge` is denied, not discouraged
 
-Status: proposed
+Status: accepted
 
 "`land.mts` is the only way the orchestrator merges a pull request, never `gh pr merge`
 by hand" was written in bold in two contracts (`skills/orchestrate/SKILL.md`, `AGENTS.md`)
@@ -325,6 +325,10 @@ be added — `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to `main` for bootstrap 
 touch this — so an operator who must merge by hand does it in their own terminal or in the
 GitHub UI, where the ruleset (the layer that must not be bypassed) still applies. The hook's
 crash policy stays ALLOW, per invariant 3: it is a round-trip saver, not the gate.
+
+*The written OK this status rests on:* issue #154, opened by the owner, which specified
+this change, its reason and its accepted cost, and required this entry to be written;
+recorded under the orchestrator's standing delegation for M11–M16 (#161).
 
 ## 15. 2026-09-17: one generated adoption record, and `adopt` calls `init`
 
