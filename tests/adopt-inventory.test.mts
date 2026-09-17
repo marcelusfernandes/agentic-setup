@@ -13,33 +13,39 @@
 //
 // Negative control: on the base, `scripts/adopt.mts` does not exist, so
 // every spawn below exits non-zero with nothing on stdout and every JSON
-// assertion has nothing to parse. No case can pass vacuously.
+// assertion has nothing to parse. No case can pass vacuously. Section L is
+// the one exception to "the base has nothing": `inventory.mts` is tracked,
+// and its red there is an assertion red — the file holds both lists as
+// literals, so the two pins fail while the equality cases pass, since a copy
+// that has not drifted yet still equals its source.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { OWNED_WORKFLOWS, SEEDED_LABELS } from '../scripts/lib/adopt/inventory.mts';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
 
-// The label vocabulary scripts/init.mts seeds; a repository missing any of
-// it carries the `labels:missing` gap.
-const ALL_LABELS = [
-  'state:ready',
-  'state:in-progress',
-  'state:in-review',
-  'state:qa-failed',
-  'state:blocked',
-  'type:feature',
-  'type:bug',
-  'type:refactor',
-  'type:infra',
-  'type:spec',
-  'type:docs',
-  'type:deps',
-  'review:approved',
-  'human:pending',
-  'human:decided',
-];
+/**
+ * The label vocabulary `scripts/init.mts` seeds, read straight out of
+ * `labels.json` here: the `claude`-routed entries that are not legacy, in
+ * dictionary order. Nothing in this file imports `scripts/lib/labels.mts` —
+ * the module under test reads the dictionary through it, and reading it
+ * through the same loader would let a bug in the loader make the comparison
+ * agree with itself (the reason `tests/labels.test.mts` gives for its own
+ * independent parse). A repository missing any of these names carries the
+ * `labels:missing` gap.
+ */
+type DictionaryEntry = { name?: unknown; routes?: unknown; legacy?: unknown };
+const DICTIONARY: DictionaryEntry[] = JSON.parse(readFileSync(join(ROOT, 'labels.json'), 'utf8'));
+const ALL_LABELS = DICTIONARY.filter(
+  (entry) => Array.isArray(entry?.routes) && entry.routes.includes('claude') && entry?.legacy !== true,
+).map((entry) => String(entry?.name ?? ''));
 const ALL_LABELS_JSON = JSON.stringify(ALL_LABELS.map((name) => ({ name })));
+
+/** The workflows `scripts/init.mts` copies, read from the directory it copies. */
+const TEMPLATE_WORKFLOWS = readdirSync(join(ROOT, 'templates', '.github', 'workflows'))
+  .filter((name) => /\.ya?ml$/.test(name))
+  .sort();
 
 /**
  * Every value each knob below accepts. A knob is a gate, and a gate read
@@ -609,5 +615,56 @@ check(
   existsSync(kMarker) ? readFileSync(kMarker, 'utf8') : 'no knob-error file written',
 );
 check('a knob typo never yields a report', parse(k.stdout)?.gaps === undefined, k.stdout);
+
+// --- L: the two lists are derived from their owner, never restated (#233) ---
+// `SEEDED_LABELS` and `OWNED_WORKFLOWS` decide two gaps, so a list that has
+// drifted from the thing it describes makes `adopt` report a repository
+// complete when it is not: a label added to `labels.json` and not to the
+// copy, or a fourth template workflow, is a gap nothing would ever name.
+// The pin is textual on purpose — the equality cases below would still pass
+// on a fresh copy typed out by hand, the day it is typed.
+const INVENTORY_SRC = readFileSync(join(ROOT, 'scripts', 'lib', 'adopt', 'inventory.mts'), 'utf8');
+
+/**
+ * The file's code with its comments removed. A docstring that names a label
+ * or a workflow is prose about the list; only an array literal in the code
+ * is a second copy of it.
+ */
+const INVENTORY_CODE = INVENTORY_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+/** An array literal holding a name of the loop's label vocabulary. */
+const LABEL_ARRAY = /\[[^\]]*['"](?:state|type|review|human):[^'"]*['"]/;
+/** An array literal holding a workflow file name. */
+const WORKFLOW_ARRAY = /\[[^\]]*['"][^'"]*\.ya?ml['"]/;
+
+check(
+  'inventory.mts restates no label of the vocabulary as a literal',
+  INVENTORY_SRC.length > 0 && !LABEL_ARRAY.test(INVENTORY_CODE),
+  (INVENTORY_CODE.match(LABEL_ARRAY) ?? []).join(' '),
+);
+check(
+  'inventory.mts restates no workflow file name as a literal',
+  INVENTORY_SRC.length > 0 && !WORKFLOW_ARRAY.test(INVENTORY_CODE),
+  (INVENTORY_CODE.match(WORKFLOW_ARRAY) ?? []).join(' '),
+);
+check(
+  'SEEDED_LABELS is exactly what labels.json routes to the installer, in dictionary order',
+  ALL_LABELS.length > 0 && JSON.stringify(SEEDED_LABELS) === JSON.stringify(ALL_LABELS),
+  `${JSON.stringify(SEEDED_LABELS)} !== ${JSON.stringify(ALL_LABELS)}`,
+);
+// The filter, not only the file: `state:done` is the Codex route's and
+// `human` is the legacy alias, and a derivation that took every entry of the
+// dictionary would seed two names `scripts/init.mts` never creates — so
+// `adopt` would report `labels:missing` on a repository that has everything.
+check(
+  'SEEDED_LABELS carries no entry this route does not seed',
+  !SEEDED_LABELS.includes('state:done') && !SEEDED_LABELS.includes('human'),
+  JSON.stringify(SEEDED_LABELS),
+);
+check(
+  'OWNED_WORKFLOWS is exactly the template workflow directory, sorted',
+  TEMPLATE_WORKFLOWS.length > 0 && JSON.stringify(OWNED_WORKFLOWS) === JSON.stringify(TEMPLATE_WORKFLOWS),
+  `${JSON.stringify(OWNED_WORKFLOWS)} !== ${JSON.stringify(TEMPLATE_WORKFLOWS)}`,
+);
 
 finish();
