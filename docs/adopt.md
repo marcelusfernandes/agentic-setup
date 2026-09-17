@@ -10,6 +10,7 @@ node scripts/adopt.mts --inventory       # describes the repository, writes noth
 node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
 node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
 node scripts/adopt.mts --workflows       # generates the workflows, and the checks they produce
+node scripts/adopt.mts --hooks           # installs the hooks the record names, and reports the rest
 node scripts/proof.mts <slug>            # runs the proof that slug declares, and reports it
 ```
 
@@ -183,7 +184,7 @@ only thing that produces it — one writer, one reader, one validator.
 | `stack` | `ci/lib/detect.mts`'s stack at the moment of writing |
 | `commands.test`, `commands.check` | the commands the loop runs; `null` when nothing was detected and nothing was overridden |
 | `checks[]` | the status checks the merge gate requires on the default branch, as the inventory read them from the branch's effective ruleset. Empty when no ruleset is in force |
-| `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them |
+| `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them. `--hooks` reads it back as the set to install |
 | `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`); `scripts/proof.mts` looks there rather than assuming the default |
 | `labels.source` | *where* the label vocabulary is defined — a pointer, never a copy. `scripts/init.mts` today; it becomes `labels.json` when that file is the one dictionary |
 | `generatedAt` | when the file was generated, ISO 8601 |
@@ -345,6 +346,107 @@ it reads nothing in the repository being adopted.
 `checks` list above, `missingFromRuleset` is how the disagreement is made visible rather
 than prevented: run `--workflows`, and require exactly the names it prints.
 
+## `--hooks` installs the hooks the record names
+
+`scripts/init.mts` installs the hooks unconditionally and reports afterwards: it merges
+the deny list into `.claude/settings.json` and writes `hooks/git-pre-push` into the
+repository's git hooks directory, on every run, for every repository, with no record of
+what it installed and no way to read it back. A repository that already had a `pre-push`,
+or a settings file with its own deny entries, got a merge and no report of what was kept.
+
+`--hooks` makes the hook set data. The adoption record's `hooks[]` names what to install,
+`scripts/lib/adopt/hooks.mts` resolves those names to files and returns a plan **without
+writing**, and this flag executes it — naming every file it did not touch, and why.
+
+```bash
+node scripts/adopt.mts --hooks
+```
+
+```json
+{
+  "hooks": [
+    { "hook": "pre-push", "file": ".git/hooks/pre-push", "outcome": "created", "reason": "absent" },
+    { "hook": "protect-main", "file": "hooks/hooks.json", "outcome": "skipped", "reason": "not-recorded" },
+    { "hook": "protect-worktree", "file": "hooks/hooks.json", "outcome": "skipped", "reason": "not-recorded" },
+    { "hook": "stop-gate", "file": "hooks/hooks.json", "outcome": "skipped", "reason": "not-recorded" },
+    { "hook": "worktree-create", "file": "hooks/hooks.json", "outcome": "skipped", "reason": "not-recorded" },
+    { "hook": "deny-list", "file": ".claude/settings.json", "outcome": "updated", "reason": "merged",
+      "deny": { "added": ["Bash(git push --force *)"], "preserved": ["Bash(terraform apply *)"],
+                "replaced": [{ "from": "Bash(gh pr merge *--admin*)", "to": "Bash(gh pr merge *)" }] } }
+  ],
+  "recorded": ["pre-push"]
+}
+```
+
+- `hooks` — one entry per hook this setup ships, plus the permission file. A hook that is
+  not installed here is a line in this list with the reason, never a silence.
+- `recorded` — the record's `hooks[]`, printed beside what happened to it. A hook named
+  there and `skipped` here is the one line that says the repository does not have what its
+  record claims.
+
+### The hook set, and what `hooks[]` may name
+
+| Name | What installing it means |
+| --- | --- |
+| `pre-push` | `hooks/git-pre-push` is written into the directory git says it runs hooks from (`git rev-parse --git-path hooks` — its answer, never an assumed `.git/hooks`: `core.hooksPath` moves it, and in a worktree `.git` is a file) and made executable |
+| `protect-main`, `protect-worktree`, `stop-gate`, `worktree-create` | nothing is copied. They are the event hooks `hooks/hooks.json` registers, and they run from the plugin root (`${CLAUDE_PLUGIN_ROOT}/hooks/…`), so they are reported as `skipped` / `plugin-provided` |
+
+That list is read from `hooks/hooks.json` rather than restated, so a hook added there is a
+name a record may carry without a second edit. A name in `hooks[]` outside it is
+`{ "error": "hooks:unknown-hook", "field": "<the name>" }`, exit 1, **nothing installed** —
+not one file, not the deny list. A record naming a hook nobody installs is a repository
+that believes it is protected and is not, and a plan that silently dropped the name would
+install part of what was asked for and say nothing about the rest.
+
+`deny-list` is not a name `hooks[]` may hold. The deny list of
+`templates/claude-settings.json` is what makes the hooks enforceable rather than a thing to
+install beside them, so `--hooks` always merges it into `.claude/settings.json`: every rule
+already there that this installer did not seed is kept and reported as `preserved`, a rule
+whose wording an older `init` seeded is `replaced` by the wording that superseded it
+(`Bash(gh pr merge *--admin*)` → `Bash(gh pr merge *)`, #242) instead of being left beside
+it, and every other key of the file — `allow`, `ask`, anything the adopter put there — is
+carried through untouched.
+
+### The marker, and the hook it protects
+
+A `pre-push` whose text does not carry `agentic-setup` was written by a person. It is
+reported as `skipped` with the reason `not-ours` and left byte-identical, and there is no
+`--force` past that refusal — `--force` is a modifier of `--record` alone, and on `--hooks`
+it is a usage error. The remedy is to read the file and decide: move it aside, or chain the
+two. Losing a hand-written hook to a flag is not a remedy.
+
+| `outcome` | `reason` | Means |
+| --- | --- | --- |
+| `created` | `absent` | there was no such file; it was written |
+| `updated` | `reinstalled` | the file carried the marker and its contents moved; it was rewritten |
+| `updated` | `merged` | the deny list gained rules, or a superseded one was replaced |
+| `skipped` | `unchanged` | the file is already what would be written; nothing was written |
+| `skipped` | `not-ours` | the hook does not carry the marker; it was left exactly as it was |
+| `skipped` | `not-recorded` | the record's `hooks[]` does not name this hook, so nothing was installed for it |
+| `skipped` | `plugin-provided` | the record names it, and it runs from the plugin root; nothing of it is copied into a repository |
+
+### Running it twice changes nothing
+
+`--hooks` is safe to re-run: a second run reports `skipped` for every entry and leaves the
+tree exactly as the first one left it (`git status --porcelain` is empty). The hook file is
+compared byte for byte with the one this repository ships, and the settings file is
+rewritten only when the merge actually adds or replaces a rule — a file that already holds
+every wanted rule keeps its own formatting and key order, because rewriting it to this
+tool's formatting would be a change nobody asked for and would make the second run
+something other than the no-op it promises to be.
+
+### The record is the input, and it is required
+
+Like `--workflows`, a repository without `agentic.config.json` is refused —
+`{ "refused": "…", "reason": "hooks:no-record" }`, exit 1, nothing installed. Run `--record`
+first.
+
+One gap remains open, and it is worth naming: `--record` fills `hooks[]` from the hooks the
+inventory found **installed**, so a repository that has adopted nothing yet writes
+`hooks: []` and `--hooks` then installs no hook file for it — only the deny list. Until the
+record can carry the hooks an adoption *intends*, name them in `hooks[]` before running
+this flag, and re-run `--record` afterwards so the record and the repository agree again.
+
 ## `node scripts/proof.mts <slug>` runs the proof
 
 An adoption pull request has to prove itself, and `doctor` has to be able to say whether
@@ -422,9 +524,11 @@ the cause.
 ### What "nothing written" does and does not cover
 
 "Nothing written" above is exact for the filesystem: no run of this script — failing or
-succeeding, on any flag — creates, moves or touches a file other than the one
-`--record` writes. It is **not** a claim that the run had no effect on GitHub, and two
-branches of `--plan-issue` show why:
+succeeding, on any flag — creates, moves or touches a file other than the ones its mode
+names: `agentic.config.json` for `--record`, the files under `.github/workflows/` for
+`--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
+`--inventory` and `--plan-issue` write no file at all. It is **not** a claim that the run
+had no effect on GitHub, and two branches of `--plan-issue` show why:
 
 - **The plan issue itself.** `--plan-issue` is a mutation by design: on success the issue
   exists, and so does the `human:pending` label when the repository did not already have
@@ -448,12 +552,12 @@ reading it as "no record"; delete the file and run `--record` again.
 
 | `error` | Cause |
 | --- | --- |
-| `usage: node scripts/adopt.mts --inventory \| --plan-issue \| --record [--force] \| --workflows` | no mode flag, more than one, or `--force` without `--record` |
+| `usage: node scripts/adopt.mts --inventory \| --plan-issue \| --record [--force] \| --workflows \| --hooks` | no mode flag, more than one, or `--force` without `--record` |
 | `root:not-a-git-repository` | `git rev-parse --show-toplevel` could not answer |
 | `repository:unreadable` | the repository read failed, or answered without a default branch or without the two merge settings |
 | `ruleset:unreadable` | the branch rules read failed or was not a list |
 | `labels:unreadable` | the label list read failed or was not a list |
-| `hooks:unreadable` | `git rev-parse --git-path hooks` could not answer, or a hook file exists and could not be read |
+| `hooks:unreadable` | `git rev-parse --git-path hooks` could not answer, or a hook file or `.claude/settings.json` exists and could not be read |
 | `workflows:unreadable` | `.github/workflows` exists and could not be listed |
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read back from what `gh` printed |
 | `plan-issue:not-created` | `gh issue create` failed; its first line, when it had one, is in `detail` |
@@ -471,6 +575,12 @@ reading it as "no record"; delete the file and run `--record` again.
 | `workflows:command-not-renderable` | a recorded command holds a newline or a control character and cannot be put on one line of YAML; `field` names it (`commands.test`, `commands.check`) |
 | `workflows:unreadable` | a file under `.github/workflows` exists and could not be read, so whether it carries the marker is unknown |
 | `workflows:not-written` | a generated workflow could not be written |
+| `hooks:unknown-hook` | the record's `hooks[]` names a hook this setup does not ship; `field` names it, and nothing is installed |
+| `hooks:source-missing` | a file this repository ships (`hooks/git-pre-push`, `hooks/hooks.json`, `templates/claude-settings.json`) is not there; `field` names it |
+| `hooks:source-unreadable` | one of those exists and could not be read, or is not the shape the installer needs; `field` names it |
+| `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
+| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object; the deny list is never merged into a file this tool could not understand |
+| `hooks:not-written` | a hook file or the settings file could not be written |
 
 The `record:*` and `workflows:*` names carry a `field` alongside `error` whenever the
 problem has one (`commands.test`, `proof.dir`, `agentic-checks.yml`, …), so a caller can

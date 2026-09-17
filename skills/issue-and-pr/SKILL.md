@@ -128,6 +128,15 @@ lint invocation. What CI, and `issue-lint`, will hold the issue to:
   test files; otherwise the check fails as `structural`. `issue-lint` accepts `## Validation` (the Codex route's
   name for the same section) in place of `## Proof`; one non-empty heading is enough.
 - **Dependencies** as `Blocked by: #N`; the orchestrator does not dispatch a blocked issue.
+- **Context** may carry an `Origin: <where this came from>` line. A finding from a dogfood
+  report (`docs/dogfood/<date>.md`) is opened **directly as its own `state:ready` issue**
+  carrying that line, copied verbatim from the finding's `origin` cell — never parked as a
+  bullet in a mother issue, where it becomes a candidate nobody schedules (F12 of #96 came
+  back as L21 of #129). The report owes the return half: its `outcome` cell names the `#N`,
+  the merged PR or closed issue that already covered it, or a one-line reason it is not
+  work, and `tests/dogfood-report.test.mts` fails a report that names none of the three.
+  The line adds no lint rule — `## Context` is required and non-empty already. Format:
+  `docs/dogfood/README.md`.
 - Fits in one PR of roughly ≤ 800 useful lines; larger, split first.
 - An issue that adds an entry point to an existing table, menu or list **names that file in
   `## Files` from the start**, not only the new feature's directory — otherwise the
