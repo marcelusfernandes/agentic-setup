@@ -4,27 +4,35 @@
 // `scripts/adopt.mts --record` is the only thing that produces it.
 //
 // The script is spawned for real (CLAUDE.md invariant 6) against throwaway
-// git repositories, with a minimal fake `gh` first on PATH — only the three
-// reads `takeInventory` makes are answered, because nothing here exercises
-// `--plan-issue`. The one import from production code is of two *constants*
-// (`RECORD_FILE`, `GENERATED_BY`): the behaviour under test all goes through
-// the spawned script, and naming the file and the tool twice is exactly the
-// duplication this record exists to avoid.
+// git repositories, with a small fake `gh` first on PATH: the three reads
+// `takeInventory` makes, plus the `issue list`/`label create`/`issue create`
+// the one `--plan-issue` case needs, dumping that issue's arguments
+// NUL-separated so its body can be read back.
 //
-// Negative control: on the base, `scripts/lib/adopt/record.mts` does not
-// exist, so the import below throws and this file never reaches a single
-// case — a structural red, vouched for by its `test(red):` commit. The
-// `record:stale` cases fail for a second, independent reason: nothing on the
-// base compares a record with detection anywhere in the tree.
+// Nothing here imports the code under test. The record's file name and this
+// tool's `generatedBy` are written out as literals below: they are the
+// contract the script is held to, and importing them from the module that
+// produces them would let both sides move together without a case noticing.
+//
+// Negative control: on the base there is no `--record` flag at all, so every
+// `--record` spawn exits 1 on usage with nothing to parse, and no report
+// carries a `record` key or the `record:stale` gap — nothing on the base
+// compares a record with detection anywhere in the tree.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
-import { GENERATED_BY, RECORD_FILE } from '../scripts/lib/adopt/record.mts';
 
-// --- a fake `gh` that answers only the inventory's three reads --------------
+/** The record's name, as `docs/adopt.md` and `docs/decisions.md` item 15 name it. */
+const RECORD_FILE = 'agentic.config.json';
+
+/** The only `generatedBy` the script may overwrite without `--force`. */
+const GENERATED_BY = 'agentic-setup/adopt';
+
+// --- a fake `gh` -------------------------------------------------------------
 const FAKE_GH = `#!/usr/bin/env bash
+state="$FAKE_GH_STATE_DIR"
 case "\${1:-} \${2:-}" in
   "api repos/{owner}/{repo}")
     echo '{"default_branch":"main","allow_auto_merge":true,"delete_branch_on_merge":false}'
@@ -34,6 +42,17 @@ case "\${1:-} \${2:-}" in
     ;;
   "label list")
     echo '[]'
+    ;;
+  "issue list")
+    echo '[]'
+    ;;
+  "label create")
+    echo "fake-gh: label created"
+    ;;
+  "issue create")
+    : > "$state/issue-create.args"
+    for a in "$@"; do printf '%s\\0' "$a" >> "$state/issue-create.args"; done
+    echo "https://github.com/org/repo/issues/7"
     ;;
   *)
     echo "fake-gh: unknown command: $*" >&2
@@ -53,15 +72,31 @@ const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 // *detected* commands.
 const { AGENTIC_TEST_CMD: _t, AGENTIC_CHECK_CMD: _c, ...BASE_ENV } = process.env;
 
-type Run = { status: number | null; stdout: string; stderr: string };
+type Run = { status: number | null; stdout: string; stderr: string; stateDir: string };
 
-function adopt(args: string[], cwd: string): Run {
+/** A fresh directory for the fake `gh` to dump what it was asked to create into. */
+function newStateDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'agentic-record-state-'));
+  cleanup(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function adopt(args: string[], cwd: string, stateDir = newStateDir()): Run {
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'adopt.mts'), ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...BASE_ENV, PATH: PATH_WITH_FAKE_GH },
+    env: { ...BASE_ENV, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir },
   });
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', stateDir };
+}
+
+/** The `gh issue create` argument that followed `flag`, or ''. */
+function createdArg(stateDir: string, flag: string): string {
+  const path = join(stateDir, 'issue-create.args');
+  if (!existsSync(path)) return '';
+  const args = readFileSync(path, 'utf8').split('\0').filter((s) => s.length > 0);
+  const i = args.indexOf(flag);
+  return i === -1 ? '' : (args[i + 1] ?? '');
 }
 
 function parse(stdout: string): any {
@@ -288,5 +323,91 @@ check(
   readRaw(bare),
 );
 check('a repository with no hook installed records an empty hooks list', Array.isArray(jRecord?.hooks) && jRecord.hooks.length === 0, readRaw(bare));
+
+// --- K: a stale record reaches the plan issue, and the reported gaps --------
+// `--plan-issue` renders the same report `--inventory` prints, so a record
+// detection no longer agrees with has to appear in both the JSON it prints
+// and the checkboxes a person ticks — otherwise the one gap adoption
+// introduced is the one gap the plan never mentions.
+const planned = fixture({ 'package.json': pkg(false) });
+check('the plan fixture starts with a record', adopt(['--record'], planned).status === 0, readRaw(planned));
+writeFileSync(join(planned, 'package.json'), pkg(true));
+
+const k = adopt(['--plan-issue'], planned);
+const kOut = parse(k.stdout);
+check('--plan-issue with a stale record exits 0', k.status === 0 && kOut !== null, `${k.stdout}\n${k.stderr}`);
+check(
+  '--plan-issue reports record:stale among the gaps it printed',
+  Array.isArray(kOut?.gaps) && kOut.gaps.includes('record:stale'),
+  k.stdout,
+);
+const kBody = createdArg(k.stateDir, '--body');
+check(
+  'the plan issue body lists record:stale as a checkbox with a remedy',
+  /^- \[ \] `record:stale` — .{20,}$/m.test(kBody),
+  kBody,
+);
+check(
+  'the plan issue body says the record is stale and on which field',
+  /- Adoption record: .*stale on `commands\.test`/.test(kBody),
+  kBody,
+);
+
+// --- L: the record's own fail-closed branches -------------------------------
+// A record that exists and cannot be read is not a record that is absent,
+// and a record that cannot be written is not a record that was written.
+const IS_ROOT = process.getuid?.() === 0;
+
+/** Runs `fn` with `path` at `mode`, and puts the mode back afterwards. */
+function withMode<T>(path: string, mode: number, fn: () => T): T {
+  const original = statSync(path).mode & 0o7777;
+  const restore = () => {
+    try {
+      chmodSync(path, original);
+    } catch {
+      /* already restored */
+    }
+  };
+  cleanup(restore);
+  chmodSync(path, mode);
+  try {
+    return fn();
+  } finally {
+    restore();
+  }
+}
+
+if (IS_ROOT) {
+  check('unreadable and unwritable record cases skipped (running as root, which EACCES cannot stop)', true);
+} else {
+  const locked = fixture({ 'package.json': pkg(true) });
+  check('the locked fixture starts with a record', adopt(['--record'], locked).status === 0, readRaw(locked));
+
+  const lUnreadable = withMode(recordAt(locked), 0o000, () => adopt(['--inventory'], locked));
+  const lUnreadableOut = parse(lUnreadable.stdout);
+  check(
+    'a record that exists and cannot be read exits 1 with { error: record:unreadable }',
+    lUnreadable.status === 1 && lUnreadableOut?.error === 'record:unreadable',
+    `${lUnreadable.stdout}\n${lUnreadable.stderr}`,
+  );
+  check(
+    'an unreadable record is never reported as no record at all',
+    lUnreadableOut !== null && !Object.prototype.hasOwnProperty.call(lUnreadableOut, 'record'),
+    lUnreadable.stdout,
+  );
+
+  // Readable, valid and ours — so the run gets all the way to the write, and
+  // only the write fails.
+  const before = readRaw(locked);
+  const lNotWritten = withMode(recordAt(locked), 0o444, () => adopt(['--record'], locked));
+  const lNotWrittenOut = parse(lNotWritten.stdout);
+  check(
+    'a record that cannot be written exits 1 with { error: record:not-written }',
+    lNotWritten.status === 1 && lNotWrittenOut?.error === 'record:not-written',
+    `${lNotWritten.stdout}\n${lNotWritten.stderr}`,
+  );
+  check('a failed write never reports { written: true }', lNotWrittenOut?.written === undefined, lNotWritten.stdout);
+  check('a failed write leaves the record as it found it', readRaw(locked) === before, readRaw(locked));
+}
 
 finish();
