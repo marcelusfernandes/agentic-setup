@@ -126,6 +126,9 @@ const csv = (value: string | undefined): string[] =>
 // that an assertion caught the PR's change. See safe-worktree §B7.
 const STRUCTURAL_SIGNATURE = /Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|does not provide an export named/;
 
+const STRUCTURAL_WARNING =
+  'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
+
 /**
  * Whether the overlaid run failed structurally *because of the overlay*.
  *
@@ -155,8 +158,6 @@ function structuralInOverlay(output: string, paths: string[]): boolean {
         && lines.some((line) => named.some((path) => line.includes(path)));
     });
 }
-const STRUCTURAL_WARNING =
-  'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
 
 function finish(outcome: Outcome, detail: string, warning?: string): never {
   const ok = outcome === 'skipped' || outcome === 'pass';
