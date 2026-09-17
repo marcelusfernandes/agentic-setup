@@ -42,8 +42,8 @@ The exit criteria are the point: without them, "the phase is done" is decided by
 issue closing rather than by a criterion. `reconcile.mts` reads the reconciled milestone's
 description and reports `milestoneLint: { ok, missing }`, where `missing` names the absent
 parts — `objective`, `out-of-phase`, `exit-criteria` (the label and at least one `- [ ]`
-item), `depends-on`. It reports and never refuses: a milestone whose description has not
-been migrated yet still reconciles, still dispatches, and the orchestrator migrates the
+item under it), `depends-on`. It reports and never refuses: a milestone whose description
+has not been migrated yet still reconciles, still dispatches, and the orchestrator migrates the
 description as part of the phase.
 
 ## Labels

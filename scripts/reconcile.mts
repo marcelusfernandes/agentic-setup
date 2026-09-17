@@ -120,11 +120,15 @@
 //                       section (a bullet or a `#` heading is not prose).
 //   - `out-of-phase`  — a line starting with `Out of this phase:`.
 //   - `exit-criteria` — a line starting with `Exit criteria:` *and* at least
-//                       one `- [ ]` item: the checklist is the point.
+//                       one `- [ ]` item under that label, before the next
+//                       one: the checklist is the point, and a checkbox
+//                       belonging to another section proves nothing about it.
 //   - `depends-on`    — a line starting with `Depends on:`.
 // A label line may be wrapped in `#`, `*`, `_` or `>` (`**Out of this
-// phase:**`, `## Exit criteria`) and is matched case-insensitively; the colon
-// is optional. `missing` lists the absent parts in that order and `ok` is
+// phase:**`, `## Exit criteria`) and is matched case-insensitively. The colon
+// is required unless the line is a markdown heading, so prose that merely
+// opens with a label's words ("Depends on the day the upstream API lands.")
+// stays prose. `missing` lists the absent parts in that order and `ok` is
 // `missing.length === 0`.
 //
 // It reports; it never refuses. A milestone whose description has not been
@@ -153,11 +157,17 @@
 // Crash policy: never a stack trace. A failing `gh` or `git` call (auth,
 // rate limit, an unknown milestone, no remote) prints { "error": "..." } to
 // stdout and exits 1 — except `gh pr checks`, whose failure degrades that
-// one PR's `checks` to 'pending' instead (see above), and the `git status`
+// one PR's `checks` to 'pending' instead (see above), the `git status`
 // call behind `deadWorktrees[].dirty`, whose failure (a broken or removed
 // worktree) degrades that one entry's `dirty` (and `unpushed`, since a
 // worktree whose status cannot be read cannot be trusted for a commit range
-// either) to `null` instead of failing the whole pass.
+// either) to `null` instead of failing the whole pass, and — when
+// `--milestone` names the milestone — the `gh api .../milestones` read behind
+// `milestoneLint`, whose failure (or unparseable, or non-array output)
+// degrades that one field to "all four parts missing" rather than failing a
+// pass whose milestone the caller already named. That same read still fails
+// the pass in the other direction, when it is what picks the milestone (no
+// `--milestone` given): there is nothing left to reconcile against.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
 import { parseBlockedBy } from './lib/issues.mts';
@@ -230,36 +240,54 @@ const CHECKBOX_ITEM = /^\s*[-*+]\s*\[[ xX]\]/;
 // A bullet or a heading: not the objective's prose.
 const NOT_PROSE = /^\s*(?:[-*+]\s|#|>|\||```)/;
 
-/** The section a line labels (`**Out of this phase:**`, `## Exit criteria`), or null. */
+// A markdown heading: `## Exit criteria` labels its section without a colon.
+const HEADING_LINE = /^\s{0,3}#{1,6}\s/;
+
+/**
+ * The section a line labels (`Out of this phase:`, `**Out of this phase:**`,
+ * `## Exit criteria`), or null. The label must be followed by its colon
+ * unless the line is a heading, so prose that merely opens with a label's
+ * words ("Depends on the day the upstream API lands.") stays prose.
+ */
 function sectionOf(line: string): string | null {
   const bare = line.replace(/^[\s>#*_]+/, '').toLowerCase();
-  return MILESTONE_SECTIONS.find((s) => bare.startsWith(s.label))?.key ?? null;
+  const section = MILESTONE_SECTIONS.find((s) => bare.startsWith(s.label));
+  if (!section) return null;
+  const afterLabel = bare.slice(section.label.length).replace(/^[*_\s]+/, '');
+  return afterLabel.startsWith(':') || HEADING_LINE.test(line) ? section.key : null;
 }
 
 /**
  * Which parts of the one milestone format (`.github/MILESTONE_TEMPLATE.md`) a
  * milestone description does not hold: an objective in prose, `Out of this
- * phase:`, `Exit criteria:` with at least one `- [ ]` item, and `Depends on:`.
- * Pure reporting: nothing here refuses, and an empty or absent description
- * simply misses all four. See the header for the exact matching rules.
+ * phase:`, `Exit criteria:` with at least one `- [ ]` item *under it*, and
+ * `Depends on:`. Pure reporting: nothing here refuses, and an empty or absent
+ * description simply misses all four. See the header for the exact matching
+ * rules.
  */
 function lintMilestoneDescription(description: string | null): { ok: boolean; missing: string[] } {
-  const lines = (description ?? '').split('\n');
   const found = new Set<string>();
   let objective = false;
-  let labelled = false;
+  let section: string | null = null;
+  let exitCriteriaHasItem = false;
 
-  for (const line of lines) {
-    const section = sectionOf(line);
-    if (section !== null) {
-      found.add(section);
-      labelled = true;
+  for (const line of (description ?? '').split('\n')) {
+    const label = sectionOf(line);
+    if (label !== null) {
+      found.add(label);
+      section = label;
       continue;
     }
-    if (!labelled && line.trim().length > 0 && !NOT_PROSE.test(line)) objective = true;
+    if (section === null) {
+      if (line.trim().length > 0 && !NOT_PROSE.test(line)) objective = true;
+    } else if (section === 'exit-criteria' && CHECKBOX_ITEM.test(line)) {
+      exitCriteriaHasItem = true;
+    }
   }
 
-  if (found.has('exit-criteria') && !lines.some((l) => CHECKBOX_ITEM.test(l))) found.delete('exit-criteria');
+  // A checkbox belonging to another section proves nothing about the exit
+  // criteria, so the search is scoped to the lines under their own label.
+  if (!exitCriteriaHasItem) found.delete('exit-criteria');
 
   const missing = [
     ...(objective ? [] : ['objective']),
