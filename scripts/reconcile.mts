@@ -3,9 +3,19 @@
 // step 0 of skills/orchestrate/SKILL.md reads it instead of running three
 // gh/git commands and cross-referencing them by hand.
 //
-//   node scripts/reconcile.mts [--milestone "<title>"] [--no-fetch]
+//   node scripts/reconcile.mts [--milestone "<title>" | --no-milestone] [--no-fetch]
 //
 // Without --milestone, picks the open milestone with the lowest number.
+//
+// --no-milestone reconciles the other set: the open issues that carry no
+// milestone at all. A small fix reasonably goes without one, and until this
+// mode existed step 0 of skills/orchestrate/SKILL.md could not see such an
+// issue — the default pick fails with `no open milestone` and `--milestone`
+// can only name one — so it was claimed and landed by hand, outside the
+// mechanism that exists to stop work being invisible. The two flags name two
+// disjoint sets, so passing both is a usage error naming both rather than a
+// silent precedence, and the `no open milestone` refusal names --no-milestone
+// as the other way out.
 //
 // Without --no-fetch, runs `git fetch --prune origin` once before reading
 // remote branches, so step 0 of skills/orchestrate/SKILL.md no longer runs
@@ -16,10 +26,11 @@
 // hold, so a pass can run offline against the state of the last fetch — at
 // the cost of not seeing a branch deleted on the remote since then.
 //
-// Output shape:
+// Output shape (`milestone` and `milestoneLint` are both null under
+// --no-milestone: there is no milestone to name, and none to lint):
 //   {
-//     milestone: string,
-//     milestoneLint: { ok, missing },                         // whether that milestone's
+//     milestone: string | null,
+//     milestoneLint: { ok, missing } | null,                  // whether that milestone's
 //                                                              // description holds the
 //                                                              // format of
 //                                                              // .github/MILESTONE_TEMPLATE.md;
@@ -165,7 +176,8 @@
 // `checks` reads 'pending' rather than failing the whole pass over one PR.
 //
 // Crash policy: never a stack trace. A failing `gh` or `git` call (auth,
-// rate limit, an unknown milestone, no remote) prints { "error": "..." } to
+// rate limit, an unknown milestone, no remote) — and a usage error, such as
+// `--milestone` and `--no-milestone` together — prints { "error": "..." } to
 // stdout and exits 1 — except `gh pr checks`, whose failure degrades that
 // one PR's `checks` to 'pending' instead (see above), the `git status`
 // call behind `deadWorktrees[].dirty`, whose failure (a broken or removed
@@ -183,7 +195,7 @@ import { parseArgs } from '../ci/lib/args.mts';
 import { parseBlockedBy } from './lib/issues.mts';
 
 type Label = { name: string };
-type Issue = { number: number; title: string; body: string; labels: Label[] };
+type Issue = { number: number; title: string; body: string; labels: Label[]; milestone?: { title?: string } | null };
 type PR = { number: number; headRefName: string; labels: Label[]; reviewDecision: string | null };
 type Milestone = { number: number; title: string; state: string; description?: string | null };
 type PrCheckEntry = { name?: string; bucket?: string };
@@ -405,6 +417,16 @@ function checksForPr(prNumber: number): 'green' | 'red' | 'pending' {
 
 const args = parseArgs(process.argv.slice(2));
 
+// 0. --no-milestone: the other set of issues, not another way to pick a
+// milestone. It and --milestone name two disjoint sets, so either one alone
+// answers "which issues?" and the two together do not — a precedence would
+// silently reconcile one set while the caller asked for the other, so this
+// refuses instead, naming both flags.
+const noMilestone = args['no-milestone'] !== undefined;
+if (noMilestone && args.milestone !== undefined) {
+  fail('--no-milestone and --milestone are mutually exclusive: pass one or the other, not both.');
+}
+
 // 1. milestone: --milestone as given, else the open milestone with the lowest
 // number. Either way the milestone list is read once, across every state and
 // every page (`MILESTONES_ARGS`) — the default pick needs it, and
@@ -415,28 +437,48 @@ const args = parseArgs(process.argv.slice(2));
 // With `--milestone` the read is soft: an unreadable list leaves
 // the description empty and the lint says so, rather than refusing a pass
 // whose milestone the caller already named.
-let milestones: Milestone[];
-let milestone: string;
-if (typeof args.milestone === 'string') {
+// --no-milestone picks none of them and makes neither read: the mode is
+// defined by the absence of a milestone, so there is nothing to pick and
+// nothing to lint.
+let milestones: Milestone[] = [];
+let milestone: string | null = null;
+if (noMilestone) {
+  // Nothing to pick, and the milestones call is not made at all.
+} else if (typeof args.milestone === 'string') {
   milestone = args.milestone;
   const soft = spawnSync('gh', MILESTONES_ARGS, { encoding: 'utf8' });
   milestones = soft.status === 0 ? parseMilestones(soft.stdout) : [];
 } else {
   milestones = parseMilestones(gh(MILESTONES_ARGS));
   const open = milestones.filter((m) => m.state === 'open').sort((a, b) => a.number - b.number);
-  if (open.length === 0) fail('no open milestone (pass --milestone).');
+  if (open.length === 0) fail('no open milestone (pass --milestone, or --no-milestone for the issues that carry none).');
   milestone = open[0].title;
 }
 
 // 1b. milestoneLint: does that milestone's description say when the phase is
-// finished? Reported, never refused — see the header.
-const milestoneLint = lintMilestoneDescription(milestones.find((m) => m.title === milestone)?.description ?? '');
+// finished? Reported, never refused — see the header. Null under
+// --no-milestone: there is no description to lint, and an empty one would
+// report four missing parts of a milestone that does not exist.
+const milestoneLint = milestone === null ? null : lintMilestoneDescription(milestones.find((m) => m.title === milestone)?.description ?? '');
 
-// 2. open issues in the milestone.
-const issues = ghJson<Issue[]>(
-  ['issue', 'list', '--milestone', milestone, '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'],
-  [],
-);
+// 2. open issues: the milestone's, or — under --no-milestone — the ones that
+// carry none. GitHub's own `no:milestone` search qualifier is not used: the
+// search index lags a write by seconds to minutes, and an issue created in
+// this pass would be missing from exactly the report meant to make it
+// visible. The repository-wide open list carries `milestone` per issue, so
+// the filter is a local, immediate `milestone === null` on the same
+// `gh issue list` call shape the milestone branch uses — the two sets are
+// disjoint by construction, never merged.
+const issues =
+  milestone === null
+    ? ghJson<Issue[]>(
+        ['issue', 'list', '--state', 'open', '--json', 'number,title,body,labels,milestone', '--limit', '200'],
+        [],
+      ).filter((i) => i.milestone === null || i.milestone === undefined)
+    : ghJson<Issue[]>(
+        ['issue', 'list', '--milestone', milestone, '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'],
+        [],
+      );
 
 // 3. closed issues, repo-wide (a blocker can sit in another milestone).
 const closedNumbers = new Set(
