@@ -9,11 +9,12 @@ adoption owes an existing project is a description of what is already there.
 node scripts/adopt.mts --inventory       # describes the repository, writes nothing
 node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
 node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
+node scripts/adopt.mts --workflows       # generates the workflows, and the checks they produce
 node scripts/proof.mts <slug>            # runs the proof that slug declares, and reports it
 ```
 
 Run it from inside the repository being adopted (it resolves the root with
-`git rev-parse --show-toplevel`). Exactly one of the three flags is required; anything
+`git rev-parse --show-toplevel`). Exactly one of the `adopt` flags is required; anything
 else prints `{ "error": "usage: …" }` and exits 1 before a single call is made. `--force`
 is a modifier of `--record` and never a mode of its own — on its own it is a usage error,
 not a silent write.
@@ -223,6 +224,127 @@ node scripts/adopt.mts --record --force   # rewrites, and reports every field th
   field, on `--inventory` as much as on `--record`. It is never repaired in place and
   never defaulted. Delete the file to start again.
 
+## `--workflows` generates the workflows and the checks they produce
+
+`scripts/init.mts` copies `templates/.github/workflows/**` verbatim, and the adopting
+repository is then told to edit `AGENTIC_TEST_CMD` by hand. Meanwhile the check names
+`init --rules` puts in the ruleset are computed somewhere else entirely
+(`detectTestCheckName`, which reads the repository's *other* workflow files). Two answers
+to one question is one answer too many: the workflow and the ruleset can name different
+checks and nothing notices.
+
+`--workflows` makes them one answer. It renders the three workflow files from the
+adoption record and writes them under the adopted repository's `.github/workflows/`, and
+the list of check names it prints is the job list of the file it just rendered — not a
+second computation over it.
+
+```bash
+node scripts/adopt.mts --workflows
+```
+
+```json
+{
+  "workflows": [
+    { "file": ".github/workflows/agentic-checks.yml", "outcome": "created", "reason": "absent",
+      "jobs": ["scope", "negative-control", "test", "check"] },
+    { "file": ".github/workflows/guard-main.yml", "outcome": "created", "reason": "absent",
+      "jobs": ["direct-push"] },
+    { "file": ".github/workflows/issue-lint.yml", "outcome": "skipped", "reason": "not-generated",
+      "jobs": ["lint"] }
+  ],
+  "checks": ["scope", "negative-control", "test", "check"],
+  "missingFromRuleset": ["test", "check"],
+  "gaps": []
+}
+```
+
+- `checks` — the status checks these files produce on a pull request: the job ids of the
+  rendered `agentic-checks.yml`, in file order. This is the list the default branch's
+  ruleset must require. The other two workflows run on `push` and on `issues`, so they
+  contribute nothing here: requiring a check that never runs on a pull request blocks
+  every merge.
+- `missingFromRuleset` — the entries of `checks` that the record's `checks[]` (what the
+  ruleset requires today, as `--inventory` read it) does not hold. Empty means the
+  generated workflows and the live ruleset agree.
+- `gaps` — `test-command:none` when the record's `commands.test` is `null`; see below.
+
+### The record is the input, and it is required
+
+The workflows are generated **from** `agentic.config.json`, not from a second detection
+run. A repository without a record is refused —
+`{ "refused": "…", "reason": "workflows:no-record" }`, exit 1, nothing written — because
+detecting again here is how the workflow and the ruleset drifted apart in the first
+place. Run `--record` first. A record that is not the shape stops the run with the same
+`record:…` error `--inventory` would report.
+
+| Record field | Where it lands |
+| --- | --- |
+| `commands.test` | the `AGENTIC_TEST_CMD` the `negative-control` job exports, and the `run:` of a generated `test` job |
+| `commands.check` | the `run:` of a generated `check` job |
+| `checks[]` | read, never written: it is what `missingFromRuleset` is measured against |
+
+A command is written as a single-quoted YAML scalar, so a command holding a `:` or a `#`
+still means what it says. A command holding a newline or a control character cannot be
+put on one line at all and is refused (`workflows:command-not-renderable`) rather than
+truncated into a workflow that runs something else.
+
+### What is rendered and what is copied verbatim
+
+The templates carry no placeholders — they are working files this repository runs — so
+rendering anchors on lines that are already there.
+
+| Template | What happens to it |
+| --- | --- |
+| `agentic-checks.yml` | **rendered.** Its commented `# AGENTIC_TEST_CMD: …` line becomes the recorded test command, and a `test` job and a `check` job are appended for the two recorded commands. Everything else — the `scope` and `negative-control` jobs, the triggers, the permissions — is the template unchanged |
+| `guard-main.yml` | **copied verbatim** under the marker. It names no command and runs on `push`, so the record has nothing to say about it. (It is also pinned byte-identical to this repository's own copy by `tests/guard-main.test.mts`) |
+| `issue-lint.yml` | **copied verbatim** under the marker. It names no command and runs on `issues` |
+
+The generated `test` and `check` jobs carry the same commented *toolchain setup* block the
+template's `negative-control` job carries. That block stays a hand-filled one on purpose:
+the record says what the command is, and the toolchain a repository needs before it can
+run that command is the one thing the record cannot answer.
+
+A record whose `commands.test` is `null` renders **no** `test` job, leaves the
+`AGENTIC_TEST_CMD` line commented out and reports `test-command:none` among `gaps`. It
+never exports an empty command: a `negative-control` job that runs nothing and reports as
+if it had is worse than one that says it has no command. The same record still renders the
+`check` job when `commands.check` is set.
+
+### The marker, and the file it protects
+
+Every generated file carries this on its first three lines:
+
+```yaml
+# generated by agentic-setup adopt — the commands come from `agentic.config.json`, not from this file.
+# Regenerate it with `node scripts/adopt.mts --workflows`; edits made here are lost.
+# A workflow without this marker on its first lines is never overwritten.
+```
+
+`generated by agentic-setup adopt` is the marker. A file that does not carry it on those
+first lines was written by a person, and `--workflows` reports it as `skipped` with the
+reason `not-generated` and leaves it byte-identical. There is no `--force` past that
+refusal — `--force` is a modifier of `--record` alone, and on `--workflows` it is a usage
+error. The remedy is to read the file and decide: move it aside, or keep it and require
+its own job names instead. Losing a hand-written workflow to a flag is not a remedy.
+
+| `outcome` | `reason` | Means |
+| --- | --- | --- |
+| `created` | `absent` | there was no such file; it was written |
+| `updated` | `regenerated` | the file carried the marker and its contents moved; it was rewritten |
+| `skipped` | `unchanged` | the file carried the marker and is already what would be written; nothing was written |
+| `skipped` | `not-generated` | the file does not carry the marker; it was left exactly as it was |
+
+Rendering itself is pure: `scripts/lib/adopt/workflows.mts` takes a record and the
+template texts and returns strings. It writes nothing — `adopt.mts` is what writes — and
+it reads nothing in the repository being adopted.
+
+### What this does not close yet
+
+`node scripts/init.mts --rules` still computes its own check names with
+`detectTestCheckName` when it builds the ruleset payload. Until that path reads the
+`checks` list above, `missingFromRuleset` is how the disagreement is made visible rather
+than prevented: run `--workflows`, and require exactly the names it prints.
+
 ## `node scripts/proof.mts <slug>` runs the proof
 
 An adoption pull request has to prove itself, and `doctor` has to be able to say whether
@@ -326,7 +448,7 @@ reading it as "no record"; delete the file and run `--record` again.
 
 | `error` | Cause |
 | --- | --- |
-| `usage: node scripts/adopt.mts --inventory \| --plan-issue \| --record [--force]` | no mode flag, more than one, or `--force` without `--record` |
+| `usage: node scripts/adopt.mts --inventory \| --plan-issue \| --record [--force] \| --workflows` | no mode flag, more than one, or `--force` without `--record` |
 | `root:not-a-git-repository` | `git rev-parse --show-toplevel` could not answer |
 | `repository:unreadable` | the repository read failed, or answered without a default branch or without the two merge settings |
 | `ruleset:unreadable` | the branch rules read failed or was not a list |
@@ -343,13 +465,30 @@ reading it as "no record"; delete the file and run `--record` again.
 | `record:wrong-type` | a field is not the type the shape defines, or the file does not hold one JSON object; `field` names it when there is one |
 | `record:unknown-version` | its `version` is not the one this reader knows; a future shape is refused, never read with today's rules |
 | `record:not-written` | the record could not be written to the repository root |
+| `workflows:template-missing` | a shipped template under `templates/.github/workflows/` is not there; `field` names it |
+| `workflows:template-unreadable` | a shipped template exists and could not be read; `field` names it |
+| `workflows:template-anchor-missing` | a template no longer carries the line the record is substituted into, so the file would be written with the placeholder still in it; `field` names it |
+| `workflows:command-not-renderable` | a recorded command holds a newline or a control character and cannot be put on one line of YAML; `field` names it (`commands.test`, `commands.check`) |
+| `workflows:unreadable` | a file under `.github/workflows` exists and could not be read, so whether it carries the marker is unknown |
+| `workflows:not-written` | a generated workflow could not be written |
 
-The `record:*` names carry a `field` alongside `error` whenever the problem has one
-(`commands.test`, `proof.dir`, …), so a caller can point at the line rather than the file.
+The `record:*` and `workflows:*` names carry a `field` alongside `error` whenever the
+problem has one (`commands.test`, `proof.dir`, `agentic-checks.yml`, …), so a caller can
+point at the line rather than the file.
+
+`workflows:no-record` is a *refusal* rather than an error — it is printed as
+`{ "refused": …, "reason": "workflows:no-record" }`, the shape `record:not-ours` and
+`plan-issue:already-open` use, because nothing failed: the repository simply has no
+record yet.
 
 ## What this is not
 
-`adopt` performs none of the remedies it lists — the plan issue is a question, and the
-answer is a person's. And the record it writes is not a configuration file a person
-maintains: invariant 4 still holds, detection remains the default, and the record is its
-output, not its replacement.
+The plan issue is a question, and the answer is a person's: `--plan-issue` performs none
+of the remedies it lists, and no flag of this script performs a remedy a person has not
+asked for by name. `--workflows` is the first remedy `adopt` can carry out — the
+`workflows:missing` one — and it is a flag someone runs, on files it will not overwrite
+unless it wrote them. Every other gap in the plan is still a person's to close.
+
+And the record it writes is not a configuration file a person maintains: invariant 4
+still holds, detection remains the default, and the record is its output, not its
+replacement.

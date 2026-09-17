@@ -44,7 +44,7 @@ and you **cast no GitHub review**. The orchestrator turns the verdict into state
 `review:approved` on the PR plus the `<!-- agentic-reviewed-sha: <oid> -->` marker naming
 the head you read — and `land.mts` merges only when every required check is green on that
 same head. Nothing is missing when no second identity exists: that is the mode this
-repository runs (`docs/decisions.md` item 17), and saying an approval is "not backed by a
+repository runs (`docs/decisions.md` item 18), and saying an approval is "not backed by a
 second identity" misreads it.
 
 ### Opt-in: the `approved` mode

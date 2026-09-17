@@ -158,5 +158,5 @@ is the approval, pinned to the reviewed head by the `<!-- agentic-reviewed-sha: 
 marker the orchestrator comments beside it. In the opt-in `approved` mode —
 `AGENTIC_REVIEWER_TOKEN` configured for the reviewer's own environment — the reviewer also
 casts a real GitHub review as that separate identity, and `scripts/land.mts` gates on that
-server-verified review instead (`docs/decisions.md` item 17). `scope:` and `type:` by
+server-verified review instead (`docs/decisions.md` item 18). `scope:` and `type:` by
 whoever writes the issue. A new dependency is a `type:deps` issue for the orchestrator.

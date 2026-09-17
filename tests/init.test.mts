@@ -10,7 +10,7 @@ import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './
 const repo = tempRepo();
 commit(repo, { 'README.md': '# x\n' }, 'init');
 mkdirSync(join(repo, '.claude'), { recursive: true });
-writeFileSync(join(repo, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Bash(rm -rf / *)', 'WebFetch'] }, other: true }));
+writeFileSync(join(repo, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Bash(rm -rf / *)', 'WebFetch', 'Bash(gh pr merge *--admin*)', 'toString', 'constructor'] }, other: true }));
 const init = (...extra: string[]) => spawnSync(RUNTIME, [join(ROOT, 'scripts', 'init.mts'), '--no-gh', ...extra], { cwd: repo, encoding: 'utf8' });
 
 let r = init();
@@ -26,6 +26,18 @@ check('init leaves nothing stray at the root', !existsSync(join(repo, 'claude-se
 const settings = JSON.parse(readFileSync(join(repo, '.claude', 'settings.json'), 'utf8'));
 check('init keeps existing settings', settings.other === true && settings.permissions.deny.includes('WebFetch'));
 check('init merges the deny list without duplicates', settings.permissions.deny.includes('Bash(git push --force *)') && settings.permissions.deny.filter((d: string) => d === 'Bash(rm -rf / *)').length === 1);
+// #204: a deny rule this installer once seeded is replaced by its current
+// wording, not kept beside it; a rule the adopter added is left alone.
+const mergeRules = settings.permissions.deny.filter((d: unknown) => typeof d === 'string' && d.includes('gh pr merge'));
+check('init replaces the stale --admin-only merge rule with the current one', mergeRules.length === 1 && mergeRules[0] === 'Bash(gh pr merge *)', JSON.stringify(mergeRules));
+check('init leaves a rule it never seeded untouched', settings.permissions.deny.includes('WebFetch'));
+// #204: the seeded set is matched by own property, never by prototype — a deny
+// rule spelled `toString` or `constructor` is the adopter's, not the installer's.
+check(
+  'init keeps a deny rule named like an Object prototype key',
+  ['toString', 'constructor'].every((rule) => settings.permissions.deny.includes(rule)) && settings.permissions.deny.every((rule: unknown) => typeof rule === 'string'),
+  JSON.stringify(settings.permissions.deny),
+);
 
 const prePush = join(repo, '.git', 'hooks', 'pre-push');
 check('init installs an executable pre-push', existsSync(prePush) && (statSync(prePush).mode & 0o111) !== 0);

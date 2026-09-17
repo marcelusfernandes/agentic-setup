@@ -3,7 +3,8 @@
 [`../decisions.md`](../decisions.md) holds items 1 to 13 — the reasoning behind the
 loop, each item a decision, its reason and what it costs. This file is the rule the
 register runs by: what earns a number, what the three statuses mean, who may move an
-item between them, and where a new decision lands.
+item between them, and where a new decision lands. The index below is the authority on
+which item lives in which file, because some later material has not been relocated yet.
 
 ## What becomes a numbered decision
 
@@ -73,8 +74,15 @@ not a detail of item 8:
   moved, renamed or renumbered. Only its `Status:` lines change from here on.
 - **Every decision after them is one dated file** in this directory, named
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
-  register's numbering, so the next one is `0014-<slug>.md` and "item 14" resolves to
-  it. The date lives inside the file, on its `Date:` line.
+  register's numbering, so "item 14" resolves to
+  [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
+  the next free number is `0019-<slug>.md`. The date lives inside the file, on its
+  `Date:` line.
+- **Two exceptions exist today, recorded in the index rather than hidden.** Items 16 and
+  18, and the dated note under item 13, were written into `../decisions.md` and still
+  live there — each because its issue's `## Files` listed `../decisions.md` and no path
+  in this directory, and an implementer never widens its own globs. Relocating them is
+  its own issue.
 - [`0000-template.md`](0000-template.md) is the shape such a file takes. It is a
   template, not a decision, and holds no number of its own.
 - A PR that adds a decision file adds its line to the index below in the same diff.
@@ -96,4 +104,8 @@ not a detail of item 8:
 | 11 | [Every mutating orchestrator step is a script with a refusal path](../decisions.md#11-every-mutating-orchestrator-step-is-a-script-with-a-refusal-path) | accepted |
 | 12 | [Issue-time entry-point warnings are advisory, not a gate](../decisions.md#12-issue-time-entry-point-warnings-are-advisory-not-a-gate-superseded--see-item-13) | superseded by item 13 |
 | 13 | [The 2026-09-06 audit: trim to the core, and a separate reviewer identity](../decisions.md#13-the-2026-09-06-audit-trim-to-the-core-and-a-separate-reviewer-identity) | accepted |
-| 0001 | [The decision nudge stays a warning, over five mechanism globs](0001-decision-nudge-strength.md) | accepted |
+| 14 | [A hand-typed `gh pr merge` is denied, not discouraged](0014-hand-typed-gh-pr-merge-denied.md) | accepted |
+| 15 | [One generated adoption record, and `adopt` calls `init`](0015-generated-adoption-record-and-adopt-calls-init.md) | accepted |
+| 16 | [One label dictionary, a union with a per-route marker](../decisions.md#16-2026-09-17-one-label-dictionary-a-union-with-a-per-route-marker) — still in `../decisions.md`, not yet relocated | accepted |
+| 17 | [The decision nudge stays a warning, over five mechanism globs](0017-decision-nudge-strength.md) | accepted |
+| 18 | [One review mode: an isolated agent, a label the orchestrator writes](../decisions.md#18-2026-09-17-one-review-mode--an-isolated-agent-a-label-the-orchestrator-writes) — still in `../decisions.md`, not yet relocated | accepted |

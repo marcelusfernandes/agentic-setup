@@ -238,7 +238,7 @@ check(
 // The review gate this repository runs is an isolated agent whose JSON verdict the
 // orchestrator turns into `review:approved` plus the `<!-- agentic-reviewed-sha: <oid> -->`
 // marker; the second GitHub identity is the opt-in `approved` mode and nothing promises it
-// by default (`docs/decisions.md` item 17). Three of the five files #148 corrects sit
+// by default (`docs/decisions.md` item 18). Three of the five files #148 corrects sit
 // outside the negative control's skipped path classes (`agents/**`, `skills/**`), so the
 // prose they carry gets its consumer here — `authorised: tests/doctrine.test.mts` on
 // #148's `## Files`, logged on #142.
@@ -328,25 +328,25 @@ check(
 );
 
 // AC1-AC3: the register carries the dated item, its opt-in half and the evidence.
-// Item 17 is the last item in the register, so its span runs to the end of the file; a
-// later item 18 would make this a `span(..., '## 18.')` instead.
-const item17At = decisions.indexOf('## 17. 2026-09-17:');
-const item17 = item17At === -1 ? '' : decisions.slice(item17At);
-check('#148 AC1 docs/decisions.md carries a dated 2026-09-17 item 17', item17.length > 0);
+// Item 18 is the last item in the register, so its span runs to the end of the file; a
+// later item 19 would make this a `span(..., '## 19.')` instead.
+const item18At = decisions.indexOf('## 18. 2026-09-17:');
+const item18 = item18At === -1 ? '' : decisions.slice(item18At);
+check('#148 AC1 docs/decisions.md carries a dated 2026-09-17 item 18', item18.length > 0);
 check(
-  '#148 AC1 item 17 states the merge condition: required checks on the reviewed head plus the label and its marker',
-  item17.includes('review:approved') && item17.includes('agentic-reviewed-sha'),
-  item17.slice(0, 400),
+  '#148 AC1 item 18 states the merge condition: required checks on the reviewed head plus the label and its marker',
+  item18.includes('review:approved') && item18.includes('agentic-reviewed-sha'),
+  item18.slice(0, 400),
 );
 check(
-  '#148 AC2 item 17 describes the opt-in mode by the flag that turns it on',
-  item17.includes('--require-review') && item17.includes('required_approving_review_count'),
-  item17.slice(0, 400),
+  '#148 AC2 item 18 describes the opt-in mode by the flag that turns it on',
+  item18.includes('--require-review') && item18.includes('required_approving_review_count'),
+  item18.slice(0, 400),
 );
 check(
-  '#148 AC3 item 17 names the evidence: `protege-main`, 0 of 200 and 0 of 147',
-  item17.includes('protege-main') && item17.includes('0 of 200') && item17.includes('0 of 147'),
-  item17.slice(0, 400),
+  '#148 AC3 item 18 names the evidence: `protege-main`, 0 of 200 and 0 of 147',
+  item18.includes('protege-main') && item18.includes('0 of 200') && item18.includes('0 of 147'),
+  item18.slice(0, 400),
 );
 
 // AC4: docs/orchestration.md describes the two modes instead of one state to reach.

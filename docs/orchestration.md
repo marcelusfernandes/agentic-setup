@@ -303,7 +303,7 @@ default mode and the whole of it: the reviewer casts no GitHub review. In the op
 `approved` mode — `AGENTIC_REVIEWER_TOKEN` set in its environment — the reviewer also
 casts a real GitHub review (`gh pr review --approve` or `--request-changes`) as that
 separate identity, and `land.mts` gates on that review instead of the marker
-(`agents/reviewer.md`, `docs/decisions.md` item 17). Never edits, never merges, never
+(`agents/reviewer.md`, `docs/decisions.md` item 18). Never edits, never merges, never
 offers to fix.
 
 ## Hooks (deterministic, instead of prose)
@@ -403,7 +403,7 @@ split is read as pending.
   what holds the line is the ruleset's required status checks on the reviewed head, the
   `<!-- agentic-reviewed-sha: <oid> -->` marker `land.mts` compares against that head, the
   pre-push hook, `guard-main` and the hook that refuses a hand-typed `gh pr merge`
-  (`docs/decisions.md` item 17). The opt-in `approved` mode is the other half: a second
+  (`docs/decisions.md` item 18). The opt-in `approved` mode is the other half: a second
   login or GitHub App installation with pull-request write, `AGENTIC_REVIEWER_TOKEN` where
   the reviewer and the orchestrator run, and the base branch ruleset's
   `required_approving_review_count` raised to 1 with `dismiss_stale_reviews_on_push`

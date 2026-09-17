@@ -302,8 +302,10 @@ script fails closed rather than merging), `checks:required`, or `gh-pr-view` (co
 read the PR at all).
 
 "Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
-command segment starting with `gh pr merge` — with or without `--admin`, with any merge
-flag — and refuses with a message naming `node scripts/land.mts <pr>` as the way to merge;
+command segment that invokes `gh pr merge` — with or without `--admin`, with any merge
+flag, and whether or not a global flag is typed before the subcommand
+(`gh -R owner/repo pr merge`, `--repo`, `--hostname`); `--admin` only chooses the reason
+text — and refuses with a message naming `node scripts/land.mts <pr>` as the way to merge;
 the permission deny list in `.claude/settings.json` (and its copy
 `templates/claude-settings.json`, which `init` merges into an adopting repository) says the
 same declaratively as `Bash(gh pr merge *)`. `node scripts/land.mts <pr>` in the same
