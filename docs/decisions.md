@@ -3,7 +3,15 @@
 The reasoning behind the loop, condensed. Each item is a decision, its reason, and
 what it costs.
 
+[`decisions/README.md`](decisions/README.md) is the rule this register runs by: what
+becomes a numbered decision rather than a note, what the three `Status:` values mean
+and who may move an item between them (silence never accepts one), and where a new
+decision lands — items 1 to 13 keep their numbers here, everything after them is one
+dated file under `decisions/`.
+
 ## 1. Unit of work: a GitHub sub-issue
+
+Status: accepted
 
 Child of the milestone's parent issue. Declares **file globs**, dependencies
 (`Blocked by #N`), verifiable acceptance criteria and its proof. The orchestrator, as
@@ -14,11 +22,15 @@ issue is the only channel that survives context loss.
 
 ## 2. Claiming: the remote branch is the lock
 
+Status: accepted
+
 The orchestrator pushes `<type>/<n>-<slug>` from `origin/main`; the push of a new ref
 fails if it exists. Then it assigns and flips the label. With one orchestrator this is
 belt and braces; with two, the ref is what holds.
 
 ## 3. Isolation: one worktree per issue
+
+Status: accepted
 
 `isolation: worktree` on the implementer. A worktree is born with tracked files only,
 so whatever is gitignored and needed (env files) is copied in by a versioned include
@@ -28,6 +40,8 @@ with `main` are resolved with `merge origin/main` — rebase there would need a
 force-push, which is denied everywhere.
 
 ## 4. Merge without a human
+
+Status: accepted
 
 PR to `main` with `Closes`/`Fixes`/`Resolves #N` (several issues may be linked; the diff
 must stay inside the union of their globs; a keyword inside backticks or a fence is
@@ -41,10 +55,14 @@ blocking and on the negative control being verified by CI, not by the agent.
 
 ## 5. Parallelism
 
+Status: accepted
+
 Up to four issues in flight, with non-intersecting globs. Schema or contract changes
 are their own issues, opened first; features that need them are born blocked.
 
 ## 6. PR classes
+
+Status: accepted
 
 - `feature` / `bug`: checks + reviewer.
 - `db` / schema (or your equivalent serialised class): same, one at a time.
@@ -55,12 +73,16 @@ are their own issues, opened first; features that need them are born blocked.
 
 ## 7. Restart
 
+Status: accepted
+
 On start, the orchestrator reconciles from GitHub, not memory: `in-progress` with no
 PR and no remote branch goes back to `ready`; `in-review` with green CI and an
 approved review is merged; an orphan worktree is deleted. A pass that finds nothing to
 do posts what is blocked on the parent issue.
 
 ## 8. Explicit human points
+
+Status: accepted
 
 Approving these decisions (explicit OK; silence does not approve); secrets and
 variables; the main-protection choice below; anything that needs hardware or accounts
@@ -73,6 +95,8 @@ that needed a person stays traceable from its labels. A bare `human` from before
 split is read as pending. Earlier items above keep their original wording.
 
 ## 9. Single trunk, and how `main` is protected
+
+Status: accepted
 
 `main` is the only trunk. Protection has three layers; use as many as your plan allows.
 
@@ -106,12 +130,16 @@ that judgment is `land.mts`'s alone (item 13).
 
 ## 10. Negative control is the load-bearing check
 
+Status: accepted
+
 Every feature PR carries a `test(red):` commit. CI checks out the PR's base, applies
 only the test files from the diff, runs the test command and requires a failure. A PR
 whose tests pass without its change has proven nothing; this job is what makes "merge
 without a human" honest rather than hopeful.
 
 ## 11. Every mutating orchestrator step is a script with a refusal path
+
+Status: accepted
 
 Every orchestrator step that mutates GitHub — locking an issue, dispatching one, merging a
 PR — is a script that reads live state and refuses rather than guessing, not a prose
@@ -146,6 +174,8 @@ file and its own refusal shapes to keep in sync with the skills that call it.
 
 ## 12. Issue-time entry-point warnings are advisory, not a gate (superseded — see item 13)
 
+Status: superseded by item 13
+
 `ci/issue-lint.mts`'s AC4 used to warn when a tracked file outside an issue's `## Files`
 named a path the issue's globs cover — the check #3's shape needed (item 11 above). But
 the same `git grep` fired on every reference, not only the ones a diff would break: at
@@ -177,6 +207,8 @@ numbers); the mechanical form of the #3 gap moved to PR time instead, where a di
 exists to tell a rename from an in-place edit (item 13).
 
 ## 13. The 2026-09-06 audit: trim to the core, and a separate reviewer identity
+
+Status: accepted
 
 *Trigger:* the maintainer asked for an independent, sceptical audit of overengineering —
 an opus agent with no history on this project, reading the code (not just the docs).
