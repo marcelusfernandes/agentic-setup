@@ -178,6 +178,17 @@ check('## Files with no bullet glob fails', noFilesBullet.status === 1 && /Files
 
 const noBlockedByLine = lint(106, issueBody({ deps: '## Dependencies\nnothing here\n' }));
 check('## Dependencies with no "Blocked by:" line fails', noBlockedByLine.status === 1 && /Blocked by/.test(noBlockedByLine.out), noBlockedByLine.out);
+// #258: the failure text quotes both forms it accepts, so a writer who reads
+// only the message completes the section instead of deleting it. Asserted on
+// the parsed failure string, not on raw stdout: the message carries double
+// quotes, which JSON.stringify escapes.
+const noBlockedByLineOut = parse(noBlockedByLine.out);
+const noBlockedByLineFailure = (noBlockedByLineOut?.failures ?? []).find((f: any) => typeof f === 'string' && f.includes('Blocked by'));
+check(
+  'the ## Dependencies failure quotes both accepted forms ("Blocked by: #N" and "Blocked by: none")',
+  typeof noBlockedByLineFailure === 'string' && noBlockedByLineFailure.includes('Blocked by: #N') && noBlockedByLineFailure.includes('Blocked by: none'),
+  noBlockedByLine.out,
+);
 
 // --- AC2: globs must parse and match something -----------------------------
 const newFile = lint(107, issueBody({ files: '## Files\n- `tests/newfile.mts`\n' }));
@@ -354,6 +365,80 @@ check(
   'the sequenced overlap is reported in sequenced: [{ issue, files }] instead of failures',
   Array.isArray(sequencedOut?.sequenced) && sequencedOut.sequenced.some((s: any) => s?.issue === 201 && s?.files?.includes('tests/smoke.mts')),
   sequenced.out,
+);
+
+// #258: the Blocked-by relation that accepts an overlap is transitive. A
+// chain A -> B -> C is strictly ordered, so A and C may share a file without
+// C restating B's predecessor — before this, only a direct `Blocked by:`
+// counted and every sub-issue of a chain had to list all of them by hand.
+// B's globs are disjoint from A's on purpose: the only thing that can make
+// this pass is the closure, not a direct relation.
+const chainMilestone = milestoneFile([
+  { number: 220, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n\n## Dependencies\nBlocked by: #221\n' },
+  { number: 221, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n\n## Dependencies\nBlocked by: none\n' },
+]);
+const chain = lint(1130, issueBody({ deps: '## Dependencies\nBlocked by: #220\n' }), { milestone: chainMilestone });
+const chainOut = parse(chain.out);
+check(
+  'a three-issue chain A -> B -> C: the A/C overlap is not a failure (transitive Blocked by)',
+  chain.status === 0 && chainOut?.ok === true && !(chainOut?.failures ?? []).some((f: any) => f?.issue === 221),
+  chain.out,
+);
+check(
+  'the transitive A/C overlap is reported in sequenced: [{ issue, files }]',
+  Array.isArray(chainOut?.sequenced) && chainOut.sequenced.some((s: any) => s?.issue === 221 && s?.files?.includes('tests/smoke.mts')),
+  chain.out,
+);
+
+// The closure is read in both directions, exactly as the direct check was:
+// here the *other* issue reaches this one (222 -> 223 -> 1131).
+const reverseChainMilestone = milestoneFile([
+  { number: 222, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n\n## Dependencies\nBlocked by: #223\n' },
+  { number: 223, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n\n## Dependencies\nBlocked by: #1131\n' },
+]);
+const reverseChain = lint(1131, issueBody(), { milestone: reverseChainMilestone });
+const reverseChainOut = parse(reverseChain.out);
+check(
+  'a chain that reaches this issue (other -> B -> self) is sequenced too',
+  reverseChain.status === 0 &&
+    reverseChainOut?.ok === true &&
+    Array.isArray(reverseChainOut?.sequenced) &&
+    reverseChainOut.sequenced.some((s: any) => s?.issue === 222 && s?.files?.includes('tests/smoke.mts')),
+  reverseChain.out,
+);
+
+// A cycle in the graph must terminate on a visited set and be named, not
+// hang. The two issues here do not overlap at all: the cycle itself is the
+// failure.
+const cycleMilestone = milestoneFile([
+  { number: 224, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n\n## Dependencies\nBlocked by: #1132\n' },
+]);
+const cycle = lint(1132, issueBody({ deps: '## Dependencies\nBlocked by: #224\n' }), { milestone: cycleMilestone });
+const cycleOut = parse(cycle.out);
+check(
+  'a Blocked-by cycle fails with ok: false instead of hanging',
+  cycle.status === 1 && cycleOut?.ok === false,
+  cycle.out,
+);
+check(
+  'the cycle failure names every issue in it',
+  (cycleOut?.failures ?? []).some((f: any) => typeof f === 'string' && /cycle/i.test(f) && f.includes('#1132') && f.includes('#224')),
+  cycle.out,
+);
+
+// The closure follows the direction of `Blocked by:`, so a shared blocker is
+// not an ordering: two issues both blocked by the same third one still
+// overlap and still fail.
+const sharedBlockerMilestone = milestoneFile([
+  { number: 225, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n\n## Dependencies\nBlocked by: none\n' },
+  { number: 226, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n\n## Dependencies\nBlocked by: #225\n' },
+]);
+const sharedBlocker = lint(1133, issueBody({ deps: '## Dependencies\nBlocked by: #225\n' }), { milestone: sharedBlockerMilestone });
+const sharedBlockerOut = parse(sharedBlocker.out);
+check(
+  'two issues that share a blocker but do not order each other still fail on the overlap',
+  sharedBlocker.status === 1 && sharedBlockerOut?.failures.some((f: any) => f?.issue === 226 && f?.files?.includes('tests/smoke.mts')),
+  sharedBlocker.out,
 );
 
 const nonOverlapping = milestoneFile([{ number: 202, labels: ['state:ready'], body: '## Files\n- `docs/**`\n' }]);
