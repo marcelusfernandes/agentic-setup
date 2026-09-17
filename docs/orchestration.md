@@ -140,9 +140,16 @@ A milestone does not close because its issues closed — it closes against its c
 the closeout lands before the close (`docs/closeout/README.md`). The order is: the last
 issue merges → the orchestrator opens a `docs: closeout M<n>` issue in that milestone from
 `docs/closeout/TEMPLATE.md`, labelled `type:docs`/`scope:docs`, carrying the decision log's
-lines → the docs-writer lands it as a `type:docs` PR → the milestone is now empty →
-`scripts/close-milestone.mts` closes it → and only then does the next milestone's parent
-issue get opened. The script never opens anything itself.
+lines → the docs-writer lands it as a `type:docs` PR → the parent spec issue and the
+closeout issue close too → the milestone is now empty → `scripts/close-milestone.mts`
+closes it → and only then does the next milestone's parent issue get opened. The script
+never opens anything itself.
+
+Two of the milestone's issues ship no PR and so can never be rows in `## Issues`: the
+parent spec issue, and the closeout issue itself (its own squash commit does not exist
+when the file is written). Both belong in `## Left out` as `#N` — the script holds every
+*closed* issue of the milestone to a row or such a bullet, and every *open* one blocks the
+close outright.
 
 ```
 node scripts/close-milestone.mts <milestone> --evidence docs/closeout/M<n>.md

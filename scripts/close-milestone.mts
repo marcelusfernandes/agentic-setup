@@ -48,7 +48,13 @@
 //   evidence:issue-missing a closed issue of the milestone appears neither as
 //                          a row in the evidence table nor as `#N` in a
 //                          `## Left out` bullet (the README's own rule: an
-//                          issue that closed without a PR did not ship)
+//                          issue that closed without a PR did not ship — which
+//                          the parent spec issue and the closeout issue itself
+//                          always are). *Any* `#N` in a `## Left out` bullet
+//                          counts, including the "where it went" trailer, so
+//                          the check is deliberately generous: it catches an
+//                          issue nobody wrote down, not a bullet worded
+//                          loosely.
 // Every determinable code is collected, so one run names everything that is
 // wrong instead of one thing per run.
 //
