@@ -220,6 +220,39 @@ export function decisionNudge(files: string[]): string[] {
   return files.filter((f) => matchesAny(f, MECHANISM_GLOBS));
 }
 
+// The mechanism the dogfood loop itself runs on (#182). Deliberately
+// narrower than MECHANISM_GLOBS: a workflow file decides what CI runs, but a
+// dogfood pass exercises the hooks, the checks, the scripts and the skill
+// cards an agent actually meets, which is the list #181 and #182 both name.
+export const DOGFOOD_GLOBS = ['hooks/**', 'ci/**', 'scripts/**', 'skills/**/SKILL.md'];
+
+// A dated report under `docs/dogfood/`, the format #183 defines. Matched by
+// shape rather than by the `docs/dogfood/**` glob on purpose: the README and
+// the template that will live beside the reports are not reports, and must
+// not silence the nudge.
+export const DOGFOOD_REPORT_RE = /docs\/dogfood\/\d{4}-\d{2}-\d{2}\.md/;
+
+/**
+ * The mechanism files a diff changes while pointing at no dogfood report —
+ * empty when the PR body names a `docs/dogfood/<date>.md` path or the diff
+ * itself carries one. Order follows the diff, like `decisionNudge`.
+ *
+ * "The diff adds one" is read as "the diff contains one": `git diff
+ * --name-only` cannot tell an added file from an edited one, and editing the
+ * report of the pass that is being reported on is the same claim.
+ *
+ * A nudge, never a verdict: the caller reports it as a `warning:` and still
+ * exits 0, the same shape the decision nudge settled on (#180). A required
+ * check cannot tell from a file name whether a dogfood run was owed. The
+ * binding half is once per phase, in `scripts/close-milestone.mts`, where the
+ * whole phase is visible.
+ */
+export function dogfoodTrigger(files: string[], prBody?: string | null): string[] {
+  if (DOGFOOD_REPORT_RE.test(String(prBody ?? ''))) return [];
+  if (files.some((f) => DOGFOOD_REPORT_RE.test(f))) return [];
+  return files.filter((f) => matchesAny(f, DOGFOOD_GLOBS));
+}
+
 export type LinkedIssueGlobs = { issue: number | null; globs: string[]; authorised: string[] };
 
 /**

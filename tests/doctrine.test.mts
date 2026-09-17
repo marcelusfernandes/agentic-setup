@@ -358,5 +358,73 @@ check(
   '#148 AC4 docs/orchestration.md names the opt-in `approved` mode where it names the token',
   orchestration.includes('AGENTIC_REVIEWER_TOKEN') && /opt-in `approved` mode/.test(orchestration),
 );
+// --- #209: the closeout file is a required step before a milestone closes -----------
+// Both accounts of step 6 used to name the `state=closed` PATCH without saying that a
+// `docs/closeout/M<n>.md` PR has to merge first, so the ordering only existed in
+// `docs/closeout/README.md`. These pins hold the ordering where an orchestrator reads
+// it, and hold the template's example row to numbers that cannot be mistaken for a
+// historical claim about this repository's issues.
+
+const SKILL = join('skills', 'orchestrate', 'SKILL.md');
+const CLOSEOUT_README = join('docs', 'closeout', 'README.md');
+const CLOSEOUT_TEMPLATE = join('docs', 'closeout', 'TEMPLATE.md');
+
+const stepSix = span(orchestration, "6. milestone's last issue merged", '```');
+check('#209 AC1 docs/orchestration.md still has a step 6 to read', stepSix.length > 0);
+check(
+  '#209 AC1 step 6 requires the closeout PR to merge before the milestone closes',
+  stepSix.includes('before the milestone closes'),
+  stepSix.slice(0, 500),
+);
+check(
+  '#209 AC1 step 6 points at docs/closeout/README.md for that ordering',
+  stepSix.includes('docs/closeout/README.md'),
+  stepSix.slice(0, 500),
+);
+check(
+  '#209 AC1 step 6 still names the script that makes the close, not a hand-typed PATCH',
+  stepSix.includes('scripts/close-milestone.mts') && stepSix.includes('state=closed'),
+  stepSix.slice(0, 500),
+);
+
+const skill = readNormalized(SKILL);
+const closeStep = span(skill, '## 6. Close the milestone', '## Escalate to a person');
+check('#209 AC2 skills/orchestrate/SKILL.md still has a milestone-close step', closeStep.length > 0);
+check(
+  '#209 AC2 the close step states the order: the closeout PR merges first, then the PATCH',
+  closeStep.includes('the closeout PR merges first'),
+  closeStep.slice(-900),
+);
+check(
+  '#209 AC2 the close step still forbids the hand-typed `state=closed` PATCH',
+  closeStep.includes('-f state=closed` by hand'),
+  closeStep.slice(-900),
+);
+
+const template = readNormalized(CLOSEOUT_TEMPLATE);
+check(
+  '#209 AC3 the template\'s example row cites no real issue or PR of this repository',
+  !template.includes('#170') && !template.includes('#175'),
+  template,
+);
+check(
+  '#209 AC3 the example row uses obviously illustrative 9xx numbers',
+  /\| #9\d\d \|/.test(template) && /\| #9\d\d \|[^|]*\|[^|]*\|/.test(template),
+  template,
+);
+
+const honest = span(readNormalized(CLOSEOUT_README), '## What keeps it honest', '## Format');
+check('#209 AC4 docs/closeout/README.md still has a "What keeps it honest" section', honest.length > 0);
+check(
+  '#209 AC4 it names scripts/close-milestone.mts as where the issue-closed half runs for real',
+  honest.includes('scripts/close-milestone.mts'),
+  honest.slice(-900),
+);
+check(
+  '#209 AC4 it calls the CI half a no-op by design rather than leaving the gap implicit',
+  honest.includes('no-op by design'),
+  honest.slice(-900),
+);
+
 
 finish();

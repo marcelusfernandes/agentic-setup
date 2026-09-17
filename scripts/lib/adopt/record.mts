@@ -19,10 +19,17 @@
 // **It copies nothing that already has an owner.** `checks` comes from the
 // default branch's effective ruleset as the inventory read it, `hooks` from
 // the hooks the inventory found installed, and `labels.source` is a
-// *pointer* to where the label vocabulary lives, not a copy of it — the
-// review of #193 noted that `SEEDED_LABELS` and `OWNED_WORKFLOWS` already
-// restate `scripts/init.mts`, and this file deliberately adds no third
-// restatement.
+// *pointer* to where the label vocabulary lives, not a copy of it —
+// `scripts/lib/adopt/inventory.mts` derives its own two lists from
+// `labels.json` and `templates/.github/workflows` (#233), and this file
+// restates neither.
+//
+// **Every export here has a caller.** A name this module exports and nothing
+// outside it reads is read as part of the record's contract without being
+// one: `LABELS_SOURCE` and `RECORD_VERSION` were placeholders for steps that
+// had not landed, and the review of #193 read them as the shape the record
+// promises. `tests/adopt-record.test.mts` pins the rule, so a name that is
+// genuinely needed is exported together with the call that needs it (#233).
 //
 // **Crash policy: fail closed.** Every function here either returns the
 // answer or throws a `RecordError` carrying a named `reason`; none of them
@@ -41,7 +48,7 @@ import { join } from 'node:path';
 export const RECORD_FILE = 'agentic.config.json';
 
 /** The shape's version. A reader that does not know it refuses the file. */
-export const RECORD_VERSION = 1;
+const RECORD_VERSION = 1;
 
 /** The only value of `generatedBy` this tool will overwrite without `--force`. */
 export const GENERATED_BY = 'agentic-setup/adopt';
@@ -53,12 +60,13 @@ export const GENERATED_BY = 'agentic-setup/adopt';
 export const PROOF_DIR = 'proof';
 
 /**
- * Where the label vocabulary this setup seeds is defined today. A pointer,
- * never a copy: the record names the file so `doctor` can say which
- * dictionary a record was generated from, and it moves to `labels.json` when
- * #145 makes that the one source.
+ * Where the label vocabulary this setup seeds is defined today, as
+ * `docs/adopt.md` documents the field. A pointer, never a copy: the record
+ * names the file so `doctor` can say which dictionary a record was generated
+ * from. Module-private — `buildRecord` is the only thing that reads it, and
+ * the value a record carries is read off the record, never off this name.
  */
-export const LABELS_SOURCE = 'scripts/init.mts';
+const LABELS_SOURCE = 'scripts/init.mts';
 
 export type AdoptionRecord = {
   /** The shape's version; `RECORD_VERSION` when this tool wrote it. */
@@ -108,7 +116,7 @@ export class RecordError extends Error {
 }
 
 /** The record's path inside a repository. */
-export function recordPath(root: string): string {
+function recordPath(root: string): string {
   return join(root, RECORD_FILE);
 }
 
@@ -184,7 +192,7 @@ function validateObject(value: Record<string, unknown>, fields: Record<string, F
  * Parses and validates the record's text. The only entry point that turns
  * bytes into an `AdoptionRecord`; every rejection is a `RecordError`.
  */
-export function parseRecord(text: string): AdoptionRecord {
+function parseRecord(text: string): AdoptionRecord {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -226,7 +234,7 @@ export function readRecord(root: string): AdoptionRecord | null {
 }
 
 /** What `buildRecord` needs from the inventory; a subset of `Inventory`. */
-export type RecordSource = {
+type RecordSource = {
   stack: string;
   test: string | null;
   check: string | null;
@@ -253,7 +261,7 @@ export function buildRecord(source: RecordSource, now: Date = new Date()): Adopt
 }
 
 /** One field that differs between two records, by its dotted path. */
-export type Change = { field: string; from: unknown; to: unknown };
+type Change = { field: string; from: unknown; to: unknown };
 
 /**
  * Fields that are not compared: `generatedAt` moves on every write by

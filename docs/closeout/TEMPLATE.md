@@ -9,7 +9,8 @@
 | --- | --- | --- | --- |
 <!-- One row per issue in the milestone, in issue order. Copy the shape below;
      the commented row does not count as a row, so this file stays the empty case.
-| #170 | feat(tests): milestone closeout format proved by a provenance pin test | #175 | 0000000000000000000000000000000000000000 |
+     Its numbers are illustrative, not a record of anything this repository shipped.
+| #901 | feat(scope): what the issue shipped, in its own words | #905 | 0000000000000000000000000000000000000000 |
 -->
 
 ## Left out

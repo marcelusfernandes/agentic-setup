@@ -37,7 +37,8 @@ already-required `test` check, not a new check name. It reads every
   (`git merge-base --is-ancestor <sha> <ref>`), or is not a commit in the
   repository at all;
 - the rows are not in ascending issue order;
-- a listed issue is not closed.
+- a listed issue is not closed — only where `gh` is authenticated, which the `test` job
+  is not; see the paragraph below.
 
 That main ref is resolved, not assumed. The pin takes the first of
 `origin/main`, then `main`, then `HEAD` that resolves to a commit in the
@@ -52,7 +53,14 @@ Ancestry needs history, which is why `.github/workflows/test.yml` checks out wit
 The issue-closed check needs credentials the `test` job does not have
 (`contents: read`, no token), so against the real tree it runs only when `gh` is
 authenticated and leaves a note on stderr when it is not — its refusal path is
-covered by a controlled `gh` fixture in the test. A tree with no closeout file
+covered by a controlled `gh` fixture in the test. In CI that half is a no-op by
+design and not an oversight: the run that asks GitHub with a real token is
+`scripts/close-milestone.mts`, the only way a milestone closes. It reads the
+milestone's issues itself and refuses `milestone:open-issues` while one is still
+open, or `evidence:issue-missing` when a closed issue is neither a row above nor
+a `#N` in a `## Left out` bullet — so the close is where that check has to hold,
+and giving the `test` job a token to repeat it would widen the workflow's
+permissions for a question the close already answers. A tree with no closeout file
 yet passes with a note. One case inside the test is allowed to skip itself: the
 shallow-checkout case needs `git clone --depth 1` to work in the environment
 running the suite, and where it does not it prints a note on stderr instead of
@@ -105,7 +113,11 @@ The rules the parser applies, in order:
   appears twice and two rows out of order are named in the failure.
 - `## Left out` and `## Dogfood` each carry at least one bullet. Nothing to say
   is written out, not omitted: `- None — every issue shipped.` and
-  `- None needed — <why>`.
+  `- None needed — <why>`. The second holds only for a phase that touched none of
+  the paths the dogfood loop runs on: when a pull request merged into the phase
+  changed `hooks/`, `ci/`, `scripts/` or a `skills/**/SKILL.md`,
+  `close-milestone.mts` refuses the close with `missing: ['dogfood']` until a
+  bullet here names a `docs/dogfood/<date>.md` report (#182).
 - A document is either **empty** — every field a `<...>` placeholder and no rows,
   which is what `TEMPLATE.md` is — or **filled** — no placeholder left and at
   least one row. A half-filled document is an error, and an `M<n>.md` left as
