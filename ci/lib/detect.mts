@@ -112,8 +112,11 @@ function trackedPythonFiles(root: string): string[] {
 // asked for, and the two cases at the end of `tests/detect.test.mts` run the
 // command and pin both halves of this behaviour rather than describing it.
 // Which command a marker-less Python tree should really get — `pytest`, a
-// discovered start directory, something else — is a follow-up, recorded in the
-// orchestrator note of 2026-09-17 on issue #256; do not substitute it here.
+// discovered start directory, or no command at all so the adopter reads
+// `cannot-run` instead of `inconclusive` — is issue #277, whose reasoning is
+// the orchestrator note of 2026-09-17 on issue #256. Do not substitute a
+// command here: #277 decides it, updates the two cases that pin this
+// behaviour, and removes this block once it no longer describes the code.
 function fromPythonTestTree(root: string): Commands | null {
   const files = trackedPythonFiles(root);
   const isTestTree = files.some((path) => {
