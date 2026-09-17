@@ -113,22 +113,32 @@
 //
 // `milestoneLint` answers "does this phase say when it is finished?" from the
 // milestone's own description, read from the single `gh api
-// repos/{owner}/{repo}/milestones` call this script already makes to pick the
-// default milestone (so `--milestone` now costs that one call too, not two).
+// repos/{owner}/{repo}/milestones?state=all --paginate --jq '.[]'` call this
+// script already makes to pick the default milestone (so `--milestone` now
+// costs that one call too, not two). `state=all` and `--paginate` are what
+// make that one call able to answer for *any* milestone the pass may name:
+// the endpoint returns open milestones only, 30 per page, by default, so a
+// closed phase or a 31st one would otherwise be invisible — to the default
+// pick and to this lint alike. The flatten is needed because `--paginate`
+// prints one array per page, which does not parse as a whole.
 // The format it lints is the one `.github/MILESTONE_TEMPLATE.md` fixes:
 //   - `objective`     — at least one line of prose before the first labelled
 //                       section (a bullet or a `#` heading is not prose).
 //   - `out-of-phase`  — a line starting with `Out of this phase:`.
 //   - `exit-criteria` — a line starting with `Exit criteria:` *and* at least
-//                       one `- [ ]` item under that label, before the next
-//                       one: the checklist is the point, and a checkbox
+//                       one checklist item under that label, before the next
+//                       one — bulleted (`- [ ]`) or numbered (`1. [ ]`,
+//                       `2) [x]`): the checklist is the point, and a checkbox
 //                       belonging to another section proves nothing about it.
 //   - `depends-on`    — a line starting with `Depends on:`.
 // A label line may be wrapped in `#`, `*`, `_` or `>` (`**Out of this
 // phase:**`, `## Exit criteria`) and is matched case-insensitively. The colon
 // is required unless the line is a markdown heading, so prose that merely
 // opens with a label's words ("Depends on the day the upstream API lands.")
-// stays prose. `missing` lists the absent parts in that order and `ok` is
+// stays prose. Fenced code blocks (``` or ~~~) and HTML comments are stripped
+// before any of that, so a label or a checkbox the description only *shows*
+// — a template pasted into a fence, a commented-out criterion — satisfies
+// nothing. `missing` lists the absent parts in that order and `ok` is
 // `missing.length === 0`.
 //
 // It reports; it never refuses. A milestone whose description has not been
@@ -163,9 +173,9 @@
 // worktree whose status cannot be read cannot be trusted for a commit range
 // either) to `null` instead of failing the whole pass, and — when
 // `--milestone` names the milestone — the `gh api .../milestones` read behind
-// `milestoneLint`, whose failure (or unparseable, or non-array output)
-// degrades that one field to "all four parts missing" rather than failing a
-// pass whose milestone the caller already named. That same read still fails
+// `milestoneLint`, whose failure (or output no line of which is a milestone
+// object) degrades that one field to "all four parts missing" rather than
+// failing a pass whose milestone the caller already named. That same read still fails
 // the pass in the other direction, when it is what picks the milestone (no
 // `--milestone` given): there is nothing left to reconcile against.
 import { spawnSync } from 'node:child_process';
@@ -215,16 +225,36 @@ function hasLabel(labels: Label[] | undefined, name: string): boolean {
   return (labels ?? []).some((l) => l.name === name);
 }
 
-/** `gh api .../milestones` output, or `[]` for anything that is not an array of milestones. */
+// The one milestones read, shared by both callers below. `state=all` because
+// a phase being reconciled can already be closed, and `--paginate` because
+// the endpoint answers 30 per page by default — either way the milestone the
+// pass names must be in the list. `--paginate` prints one JSON array per
+// page, which does not parse as a whole, so `--jq '.[]'` flattens the pages
+// into one object per line, the same way `scripts/log-decision.mts` keeps its
+// paginated comments read honest.
+const MILESTONES_ARGS = ['api', 'repos/{owner}/{repo}/milestones?state=all', '--paginate', '--jq', '.[]'];
+
+/**
+ * The `--jq '.[]'` flatten above: one compact JSON object per line. A line
+ * that is not an object carrying a string `title` is not a milestone and is
+ * dropped, so a `gh` error payload (`{"message":"Not Found"}`) or a non-JSON
+ * line reads as no milestones rather than as one.
+ */
 function parseMilestones(stdout: string): Milestone[] {
-  const out = stdout.trim();
-  if (!out) return [];
-  try {
-    const parsed = JSON.parse(out);
-    return Array.isArray(parsed) ? (parsed as Milestone[]) : [];
-  } catch {
-    return [];
+  const milestones: Milestone[] = [];
+  for (const line of stdout.split('\n')) {
+    const text = line.trim();
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.title === 'string') {
+        milestones.push(parsed as Milestone);
+      }
+    } catch {
+      // Not JSON: an actual `gh` failure printed on stdout, not a milestone.
+    }
   }
+  return milestones;
 }
 
 // The labelled sections of `.github/MILESTONE_TEMPLATE.md`, in the order the
@@ -235,13 +265,42 @@ const MILESTONE_SECTIONS = [
   { key: 'depends-on', label: 'depends on' },
 ];
 
-// A checklist item: `- [ ]`, `* [x]`, `+ [X]`.
-const CHECKBOX_ITEM = /^\s*[-*+]\s*\[[ xX]\]/;
+// A checklist item, bulleted (`- [ ]`, `* [x]`, `+ [X]`) or numbered
+// (`1. [ ]`, `2) [x]`): both are checklists, and the template's own list
+// being bulleted does not make a numbered one an absent one.
+const CHECKBOX_ITEM = /^\s*(?:[-*+]|\d+[.)])\s*\[[ xX]\]/;
 // A bullet or a heading: not the objective's prose.
 const NOT_PROSE = /^\s*(?:[-*+]\s|#|>|\||```)/;
 
 // A markdown heading: `## Exit criteria` labels its section without a colon.
 const HEADING_LINE = /^\s{0,3}#{1,6}\s/;
+
+// A line opening or closing a fenced code block: ``` or ~~~, up to three
+// spaces of indent, plus whatever info string follows.
+const FENCE_LINE = /^\s{0,3}(```+|~~~+)/;
+
+/**
+ * The description with everything it only *shows* removed, so the scan below
+ * reads only what it *states*: HTML comments first (a commented-out fence
+ * opens nothing), then every line from a fence to its matching close — or to
+ * the end, when the block is never closed. Stripped before parsing, the order
+ * `docs/closeout/README.md` already states for its own HTML-comment rule and
+ * `scripts/close-milestone.mts` already applies to a closeout table.
+ */
+function stripShownText(description: string): string {
+  const kept: string[] = [];
+  let fence: string | null = null;
+  for (const line of description.replace(/<!--[\s\S]*?-->/g, '').split('\n')) {
+    const marker = FENCE_LINE.exec(line)?.[1] ?? null;
+    if (fence === null) {
+      if (marker === null) kept.push(line);
+      else fence = marker;
+    } else if (marker !== null && marker[0] === fence[0] && marker.length >= fence.length) {
+      fence = null;
+    }
+  }
+  return kept.join('\n');
+}
 
 /**
  * The section a line labels (`Out of this phase:`, `**Out of this phase:**`,
@@ -262,8 +321,10 @@ function sectionOf(line: string): string | null {
  * milestone description does not hold: an objective in prose, `Out of this
  * phase:`, `Exit criteria:` with at least one `- [ ]` item *under it*, and
  * `Depends on:`. Pure reporting: nothing here refuses, and an empty or absent
- * description simply misses all four. See the header for the exact matching
- * rules.
+ * description simply misses all four. Fenced code blocks and HTML comments
+ * are stripped first (`stripShownText`), so a sample label or checkbox the
+ * description merely displays satisfies nothing. See the header for the exact
+ * matching rules.
  */
 function lintMilestoneDescription(description: string | null): { ok: boolean; missing: string[] } {
   const found = new Set<string>();
@@ -271,7 +332,7 @@ function lintMilestoneDescription(description: string | null): { ok: boolean; mi
   let section: string | null = null;
   let exitCriteriaHasItem = false;
 
-  for (const line of (description ?? '').split('\n')) {
+  for (const line of stripShownText(description ?? '').split('\n')) {
     const label = sectionOf(line);
     if (label !== null) {
       found.add(label);
@@ -345,19 +406,23 @@ function checksForPr(prNumber: number): 'green' | 'red' | 'pending' {
 const args = parseArgs(process.argv.slice(2));
 
 // 1. milestone: --milestone as given, else the open milestone with the lowest
-// number. Either way the milestone list is read once — the default pick needs
-// it, and `milestoneLint` (step 1b) needs the reconciled milestone's
-// description. With `--milestone` the read is soft: an unreadable list leaves
+// number. Either way the milestone list is read once, across every state and
+// every page (`MILESTONES_ARGS`) — the default pick needs it, and
+// `milestoneLint` (step 1b) needs the reconciled milestone's description,
+// which is as likely to be a closed phase's as an open one's. The default
+// pick still filters to `state === 'open'` itself: reading the closed ones is
+// what lets a caller name one, not a reason to reconcile against one.
+// With `--milestone` the read is soft: an unreadable list leaves
 // the description empty and the lint says so, rather than refusing a pass
 // whose milestone the caller already named.
 let milestones: Milestone[];
 let milestone: string;
 if (typeof args.milestone === 'string') {
   milestone = args.milestone;
-  const soft = spawnSync('gh', ['api', 'repos/{owner}/{repo}/milestones'], { encoding: 'utf8' });
+  const soft = spawnSync('gh', MILESTONES_ARGS, { encoding: 'utf8' });
   milestones = soft.status === 0 ? parseMilestones(soft.stdout) : [];
 } else {
-  milestones = ghJson<Milestone[]>(['api', 'repos/{owner}/{repo}/milestones'], []);
+  milestones = parseMilestones(gh(MILESTONES_ARGS));
   const open = milestones.filter((m) => m.state === 'open').sort((a, b) => a.number - b.number);
   if (open.length === 0) fail('no open milestone (pass --milestone).');
   milestone = open[0].title;
