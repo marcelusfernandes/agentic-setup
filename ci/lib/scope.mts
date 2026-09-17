@@ -163,6 +163,36 @@ export function parseLinkedIssues(prBody: string | null | undefined): number[] {
   return result;
 }
 
+// The mechanism of the loop: a hook, a CI check, a script, a skill card or
+// a workflow. A change here changes the contract the next agent runs under,
+// which is what `docs/decisions/README.md` says earns a numbered decision.
+// `tests/**` and `templates/**` are deliberately out — they follow a
+// mechanism change rather than deciding one (#180).
+export const MECHANISM_GLOBS = ['hooks/**', 'ci/**', 'scripts/**', 'skills/**/SKILL.md', '.github/workflows/**'];
+
+// Any of these in the same diff means the decision was recorded: item 1-13
+// live in `docs/decisions.md`, everything after them is one dated file
+// under `docs/decisions/`.
+export const DECISION_GLOBS = ['docs/decisions.md', 'docs/decisions/**'];
+
+/**
+ * The mechanism files a diff changes while recording no decision — empty
+ * when the same diff also touches `docs/decisions.md` or anything under
+ * `docs/decisions/`. Order follows the diff, so the warning reads in the
+ * order `git diff --name-only` printed.
+ *
+ * A nudge, never a verdict: the caller reports it as a `warning:` and still
+ * exits 0. A required check cannot tell from a file name whether a change
+ * deserves a decision entry, and failing on that guess would gate every
+ * mechanism PR on a judgement it cannot make (the decision on #180). The
+ * binding half stays where a judgement is possible: the reviewer's
+ * checklist and the milestone closeout.
+ */
+export function decisionNudge(files: string[]): string[] {
+  if (files.some((f) => matchesAny(f, DECISION_GLOBS))) return [];
+  return files.filter((f) => matchesAny(f, MECHANISM_GLOBS));
+}
+
 export type LinkedIssueGlobs = { issue: number | null; globs: string[] };
 
 /**
