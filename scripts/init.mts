@@ -351,8 +351,8 @@ if (existsSync(settingsPath)) {
 }
 if (settings) {
   const existing: string[] = [...new Set<string>(settings.permissions?.deny ?? [])];
-  const stale = existing.filter((rule) => rule in SUPERSEDED_DENY_RULES);
-  const kept = existing.filter((rule) => !(rule in SUPERSEDED_DENY_RULES));
+  const stale = existing.filter((rule) => Object.hasOwn(SUPERSEDED_DENY_RULES, rule));
+  const kept = existing.filter((rule) => !Object.hasOwn(SUPERSEDED_DENY_RULES, rule));
   const current = new Set(kept);
   const wantedDeny: string[] = [...wanted.permissions.deny, ...stale.map((rule) => SUPERSEDED_DENY_RULES[rule])];
   const added = [...new Set(wantedDeny)].filter((rule) => !current.has(rule));
