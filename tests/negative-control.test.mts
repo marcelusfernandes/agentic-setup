@@ -200,6 +200,27 @@ check(
   r.out,
 );
 
+// The same shape across the stream boundary: the noise goes to stdout and the
+// runtime writes its own diagnostic to stderr, so concatenating the two
+// without a blank line put the logged `Cannot find module` in the same block
+// as the stack header naming the overlaid file. The red here is a thrown
+// `Error`, which carries no structural signature of its own.
+git(['checkout', '-q', '-b', 'feat/15-noisy-throw', base], repo);
+const noisyThrowHead = commit(repo, {
+  'lib.mts': 'export const v = 7;\n',
+  'tests/check.mts':
+    "import { v } from '../lib.mts';\n" +
+    'console.log("vendor/dep: Cannot find module \'optional-extra\' — ignored");\n' +
+    "if (v !== 7) throw new Error('v is not 7');\n",
+}, 'feat: a thrown red whose stdout carries an unrelated structural line');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(noisyThrowHead);
+check(
+  'a structural line on stdout does not borrow the file name from the stderr diagnostic',
+  r.status === 0 && /\bpass\b/.test(r.out) && !/structural/.test(r.out) && !/warning:/.test(r.out),
+  r.out,
+);
+
 check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
 
 // --- `proof/<slug>.json`: the overlay a branch declares (#136) -------------

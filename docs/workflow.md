@@ -272,7 +272,7 @@ touches any file outside those classes runs the check, whatever it is labelled â
 refactor that changes behaviour is a `bug` or a `feature` and owes a failing test either
 way. One path is outside every class and stays there, `AGENTIC_SKIP_GLOBS` included:
 `.github/scripts/agentic/**`, the copy of this repository's `ci/` that `scripts/init.mts`
-writes into an adopting repository (`scripts/init.mts:325`). `.github/**` would otherwise
+writes into an adopting repository (`scripts/init.mts:332`). `.github/**` would otherwise
 cover it, and a pull request rewriting the negative control would be skipped by the
 negative control. For one release `type:docs`, `type:deps`, `type:infra`, `type:refactor` and
 `type:spec` are still read, only to print a `note:` line saying they no longer skip on

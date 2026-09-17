@@ -281,10 +281,17 @@ if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TE
 
 type RunResult = { status: number | null; crashed: boolean; output: string };
 
-/** Runs the detected test command in `cwd`; never throws. */
+/**
+ * Runs the detected test command in `cwd`; never throws. The two streams are
+ * joined by a blank line, not concatenated: `structuralInOverlay` reads
+ * diagnostic blocks, and without the separation the last line a test logs on
+ * stdout shares a block with the first line a runtime writes on stderr — a
+ * `Cannot find module` the test merely printed would then borrow the file
+ * name out of the stack header that follows it.
+ */
 function runTests(cwd: string): RunResult {
   const r = spawnSync(String(testCommand), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
-  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim() };
 }
 
 const tail = (output: string): string => output.split('\n').slice(-TAIL).join('\n');
