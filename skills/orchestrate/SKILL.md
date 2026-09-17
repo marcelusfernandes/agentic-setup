@@ -243,8 +243,11 @@ When an implementer returns with a PR: first copy the issue's `type:` and `scope
 onto it — `gh pr edit <pr> --add-label "type:<t>" --add-label "scope:<s>"`, the same
 `type:` you wrote on the issue at step 3. The implementer sets only `state:in-review`, so
 until you do this the PR carries no `type:`/`scope:` at all, and `scope`/`land` read the
-**PR's** labels, never the issue's. Then launch the `reviewer` agent with the PR number and
-the issue body. The reviewer returns the JSON verdict to you; it does not comment on the
+**PR's** labels, never the issue's. Then read the head you are about to have reviewed and
+keep it — `OID="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"` — and launch the
+`reviewer` agent with the PR number and the issue body. Read the oid here, not after the
+verdict: a push that lands while the reviewer is reading must leave the marker naming the
+commit the reviewer actually read, so that step 5's comparison catches it. The reviewer returns the JSON verdict to you; it does not comment on the
 PR or touch its labels any more (`agents/reviewer.md`) — commenting and labelling are this
 step's job now, done in step 5, so both happen from one place instead of two. Check CI
 with `gh pr checks <n>`; do not poll in a tight loop — a check takes minutes, look once
@@ -263,14 +266,14 @@ apply the labels — `land.mts` and `reconcile.mts` read them regardless of what
   commit, and `land.mts` merges nothing else:
 
   ```bash
-  OID="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"
   gh pr comment <pr> --body "<!-- agentic-reviewed-sha: $OID -->"
   ```
 
-  Read the oid from the same PR you gave the reviewer, and comment it right after the
-  verdict, before anything else touches the branch. A push that lands after this marker
-  leaves it naming an older commit, which is exactly what makes `land.mts` send the pull
-  request back for a new review rather than merge a head nobody read.
+  `$OID` is the one you read at step 4, before launching the reviewer — never re-read it
+  here, or a push that landed during the review would be marked as reviewed. A push that
+  lands after this marker leaves it naming an older commit, which is exactly what makes
+  `land.mts` send the pull request back for a new review rather than merge a head nobody
+  read.
 - `rejected` → `gh pr edit <pr> --add-label state:qa-failed --remove-label state:in-review`.
 - a **second** `rejected` verdict on the same issue → additionally `gh issue edit <n>
   --add-label state:blocked --add-label human:pending`, comment the summary on the issue,
@@ -309,7 +312,8 @@ Then act on the verdict:
   and nothing is merged), or `gh-pr-view` (could not even read the PR). `mode` names which
   review binding ran: `agent` for that label-plus-marker path, `approved` when a
   server-verified review satisfied approval, `docs` for the `type:docs` exemption, which
-  merges with no review at all and so reads no marker.
+  merges with no review at all and so reads no marker — and `null` on the one refusal that
+  has no mode to name, the PR it could not read at all.
 
   On a refusal that clears, it re-reads the base branch's *effective* rules (`gh api
   repos/{owner}/{repo}/rules/branches/<base>`). When they include a

@@ -351,6 +351,7 @@ check('mode: approved when a server-verified review satisfied approval', kOut?.m
 check('mode: docs on the type:docs exemption', cOut?.mode === 'docs', c.stdout);
 check('mode: agent on a head:changed refusal', pOut?.mode === 'agent', p.stdout);
 check('mode: agent on a review:not-approved refusal', bOut?.mode === 'agent', b.stdout);
+check('mode: agent on a checks:required refusal', dOut?.mode === 'agent', d.stdout);
 check('mode: docs is exempt from the marker read as well (no comments call)', !/--json comments/.test(c.log), c.log);
 
 // --- T: the newest marker wins: PR 15 carries an older, stale marker before

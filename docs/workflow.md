@@ -214,7 +214,8 @@ marker at all is the same refusal, because a label records no commit and so bind
 `land.mts` names the review mode it applied on every output — `agent` for that
 label-plus-marker path, `approved` when a server-verified review (`reviewDecision`) is
 what satisfied approval, `docs` for the `type:docs` exemption, which merges with no review
-at all and so reads no marker. `missing` names what is wrong on a refusal: `state=<x>`
+at all and so reads no marker, and `null` on the one refusal with no mode to name, a PR it
+could not read at all. `missing` names what is wrong on a refusal: `state=<x>`
 (not `OPEN`), `review:not-approved`, `head:changed` (the head is not the reviewed commit,
 or no marker records one), `gh-pr-comments` (the comments read could not answer — the
 script fails closed rather than merging), `checks:required`, or `gh-pr-view` (could not
