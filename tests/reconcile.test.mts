@@ -15,7 +15,13 @@ import { check, cleanup, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harn
 // --- a fake `gh` on PATH ----------------------------------------------------
 const FAKE_GH = `#!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
-  "api repos/{owner}/{repo}/milestones")
+  "api repos/{owner}/{repo}/milestones"*)
+    # Modelled on the real endpoint, so what the call asks for decides what it
+    # gets: open milestones only unless the URL carries state=all, and the
+    # first page of 30 unless --paginate. With a --jq flatten the answer is one
+    # compact object per line (gh applies the filter per page); without one it
+    # is a single JSON array, which is all an un-paginated call can read.
+    args="\$*"
     case "\${FAKE_GH_MILESTONES:-ok}" in
       fail)
         echo "fake-gh: milestones unavailable" >&2
@@ -29,16 +35,36 @@ case "\${1:-} \${2:-}" in
         echo '{"message":"Not Found"}'
         exit 0
         ;;
-    esac
-    cat <<'JSON'
-[
-  {"number":2,"title":"M2","state":"open","description":"Only an objective sentence, and nothing else.\\n"},
-  {"number":1,"title":"M1","state":"open","description":"The loop reports what a phase still owes.\\n\\nOut of this phase:\\n- anything a person must decide\\n\\nExit criteria:\\n- [ ] every sub-issue closed\\n- [ ] docs equal code\\n\\nDepends on: none\\n"},
-  {"number":3,"title":"M3","state":"open","description":null},
-  {"number":4,"title":"M4","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- [ ] a checkbox that is not an exit criterion\\n\\nExit criteria:\\nthe phase is done when it feels done\\n\\nDepends on: none\\n"},
-  {"number":5,"title":"M5","state":"open","description":"An objective.\\nDepends on the day the upstream API lands.\\n\\n**Out of this phase:**\\n- none\\n\\n## Exit criteria\\n- [ ] one\\n"}
-]
+      closed)
+        all=\$(cat <<'JSON'
+{"number":1,"title":"MClosed","state":"closed","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n- [ ] one\\n\\nDepends on: none\\n"}
+{"number":2,"title":"M1","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n- [ ] one\\n\\nDepends on: none\\n"}
 JSON
+)
+        ;;
+      many)
+        all=\$(for n in \$(seq 1 30); do printf '{"number":%d,"title":"P%d","state":"open","description":"filler"}\\n' "\$n" "\$n"; done
+               printf '%s\\n' '{"number":31,"title":"M31","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n- [ ] one\\n\\nDepends on: none\\n"}')
+        ;;
+      *)
+        all=\$(cat <<'JSON'
+{"number":2,"title":"M2","state":"open","description":"Only an objective sentence, and nothing else.\\n"}
+{"number":1,"title":"M1","state":"open","description":"The loop reports what a phase still owes.\\n\\nOut of this phase:\\n- anything a person must decide\\n\\nExit criteria:\\n- [ ] every sub-issue closed\\n- [ ] docs equal code\\n\\nDepends on: none\\n"}
+{"number":3,"title":"M3","state":"open","description":null}
+{"number":4,"title":"M4","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- [ ] a checkbox that is not an exit criterion\\n\\nExit criteria:\\nthe phase is done when it feels done\\n\\nDepends on: none\\n"}
+{"number":5,"title":"M5","state":"open","description":"An objective.\\nDepends on the day the upstream API lands.\\n\\n**Out of this phase:**\\n- none\\n\\n## Exit criteria\\n- [ ] one\\n"}
+{"number":6,"title":"M6","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n\`\`\`text\\n- [ ] a sample criterion\\nDepends on: nothing real\\n\`\`\`\\n<!-- - [ ] a commented criterion -->\\n"}
+{"number":7,"title":"M7","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n1. [ ] every sub-issue closed\\n2) [x] docs equal code\\n\\nDepends on: none\\n"}
+JSON
+)
+        ;;
+    esac
+    case "\$args" in *"state=all"*) ;; *) all=\$(printf '%s\\n' "\$all" | grep '"state":"open"') ;; esac
+    case "\$args" in *--paginate*) ;; *) all=\$(printf '%s\\n' "\$all" | head -n 30) ;; esac
+    case "\$args" in
+      *--jq*) printf '%s\\n' "\$all" ;;
+      *) printf '%s\\n' "\$all" | paste -s -d , - | sed 's/^/[/; s/\$/]/' ;;
+    esac
     ;;
   "issue list")
     args="$*"
@@ -72,7 +98,7 @@ JSON
 ]
 JSON
         ;;
-      *"--milestone M2"*|*"--milestone M3"*|*"--milestone M4"*|*"--milestone M5"*)
+      *"--milestone M2"*|*"--milestone M3"*|*"--milestone M4"*|*"--milestone M5"*|*"--milestone M6"*|*"--milestone M7"*|*"--milestone M31"*|*"--milestone MClosed"*)
         echo '[]'
         ;;
       *)
@@ -641,6 +667,48 @@ check(
   outNoCheckbox?.milestoneLint?.ok === false &&
     JSON.stringify(outNoCheckbox?.milestoneLint?.missing) === JSON.stringify(['exit-criteria']),
   JSON.stringify(outNoCheckbox?.milestoneLint),
+);
+
+// --- #206: what a description *shows* is not what it *states*. M6 puts a
+// checklist item and a `Depends on:` label inside a fenced block, and another
+// checklist item inside an HTML comment: stripped before the line-by-line
+// scan (the order `docs/closeout/README.md` states for its own comment rule),
+// none of the three counts, so M6 misses exit-criteria and depends-on. ------
+const outFenced = parseJson(reconcile('--milestone', 'M6').stdout);
+check(
+  'a checklist item and a label inside a fenced block or an HTML comment are sample text, not content',
+  outFenced?.milestoneLint?.ok === false &&
+    JSON.stringify(outFenced?.milestoneLint?.missing) === JSON.stringify(['exit-criteria', 'depends-on']),
+  JSON.stringify(outFenced?.milestoneLint),
+);
+
+// A numbered exit-criteria list (`1. [ ]`, `2) [x]`) is a checklist too.
+const outNumbered = parseJson(reconcile('--milestone', 'M7').stdout);
+check(
+  'a numbered exit-criteria checklist is recognised, so nothing is missing',
+  outNumbered?.milestoneLint?.ok === true && outNumbered?.milestoneLint?.missing?.length === 0,
+  JSON.stringify(outNumbered?.milestoneLint),
+);
+
+// The milestones read covers every state and every page: a closed milestone
+// (state=all) and a 31st one (--paginate past the default page of 30) are
+// both found by title, and the default pick still ignores closed ones.
+const outClosed = parseJson(reconcileWithEnv({ FAKE_GH_MILESTONES: 'closed' }, '--milestone', 'MClosed').stdout);
+check(
+  'a closed milestone is read, so its description is linted instead of reported wholly missing',
+  outClosed?.milestone === 'MClosed' && outClosed?.milestoneLint?.ok === true,
+  JSON.stringify({ milestone: outClosed?.milestone, lint: outClosed?.milestoneLint }),
+);
+check(
+  'the default pick still takes the lowest-numbered *open* milestone when a lower-numbered closed one is in the list',
+  parseJson(reconcileWithEnv({ FAKE_GH_MILESTONES: 'closed' }).stdout)?.milestone === 'M1',
+  JSON.stringify(parseJson(reconcileWithEnv({ FAKE_GH_MILESTONES: 'closed' }).stdout)?.milestone),
+);
+const outPaged = parseJson(reconcileWithEnv({ FAKE_GH_MILESTONES: 'many' }, '--milestone', 'M31').stdout);
+check(
+  'a milestone past the first page of 30 is read, so its description is linted instead of reported wholly missing',
+  outPaged?.milestone === 'M31' && outPaged?.milestoneLint?.ok === true,
+  JSON.stringify({ milestone: outPaged?.milestone, lint: outPaged?.milestoneLint }),
 );
 
 // The soft milestones read behind milestoneLint under --milestone: a failing,

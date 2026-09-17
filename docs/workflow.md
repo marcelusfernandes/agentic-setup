@@ -19,10 +19,17 @@ written in English; the language you talk to the agents in is your business.
   commit *log* for one thing only — when that red is
   *structural* (a missing module or export, a syntax error), a `test(red):` commit in
   `base..head` touching one of those test files is what makes it acceptable (#135).
-  That outcome is the convention's mechanical consumer, and it is why the reviewer's
-  check 3 (`agents/reviewer.md`) still asks for the commit: the card and this document
-  name one mechanism — without the commit a structurally red overlay fails as
+  That outcome is the convention's mechanical consumer at PR time, and it is why the
+  reviewer's check 3 (`agents/reviewer.md`) still asks for the commit: the card and this
+  document name one mechanism — without the commit a structurally red overlay fails as
   `structural`, so the commit is what buys it its `pass`.
+  The convention has a second mechanical consumer before the PR exists: the `SubagentStop`
+  gate (`hooks/stop-gate.mts`) runs the detected check and test commands when an
+  implementer tries to stop and blocks the stop while either is red, and a **last** commit
+  whose subject starts with `test(red):` is exempt — that red is what the commit is for.
+  The gate caps at three consecutive blocks per branch and never runs on `main`/`master`;
+  `docs/orchestration.md` has the row, and item 13 of `docs/decisions.md` the 2026-09-17
+  note on why it is the one client-side check that earns an exception (#137).
 
 ## Milestones
 

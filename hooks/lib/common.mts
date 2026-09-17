@@ -65,6 +65,22 @@ export function deny(hook: string, reason: string): never {
   process.exit(2);
 }
 
+/**
+ * Block a `Stop`/`SubagentStop`: the agent is sent back to work instead of
+ * stopping. Same three channels as `deny()` — JSON decision on stdout, the
+ * reason on stderr (what the agent reads), exit 2 (blocks regardless) — but
+ * the stop events take a **top-level** `{ decision: 'block', reason }`, not
+ * `hookSpecificOutput.permissionDecision`, which is `PreToolUse`-only. The
+ * other documented pair, `continue: false` + `stopReason`, is the opposite
+ * of what a gate wants: it ends the turn rather than sending the agent back.
+ */
+export function blockStop(hook: string, reason: string): never {
+  const text = `[agentic-setup/${hook}] ${reason}`;
+  process.stdout.write(JSON.stringify({ decision: 'block', reason: text }));
+  process.stderr.write(`${text}\n`);
+  process.exit(2);
+}
+
 export function note(hook: string, message: string): void {
   process.stderr.write(`[agentic-setup/${hook}] ${message}\n`);
 }

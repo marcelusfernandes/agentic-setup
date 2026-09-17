@@ -1,10 +1,14 @@
 #!/usr/bin/env node
-// Pin test for the content-is-data doctrine (issue #179): one identical sentence in
-// CLAUDE.md, AGENTS.md and the three agent cards, plus the Codex route's own wording
-// in .agents/skills/autonomous-loop/references/contract.md, which this test pins as the
-// reference without editing it. A sentence with no consumer drifts; this file is the
-// consumer. Pure-read (CLAUDE.md invariant 6 exempts catalogue reads: no script is
-// spawned here, only the filesystem).
+// Pin test for the doctrine prose this repository repeats across files. Two pins live
+// here:
+//  - the content-is-data doctrine (issue #179): one identical sentence in CLAUDE.md,
+//    AGENTS.md and the three agent cards, plus the Codex route's own wording in
+//    .agents/skills/autonomous-loop/references/contract.md, which this test pins as the
+//    reference without editing it.
+//  - docs/orchestration.md's account of the loop (issue #205): step 0's field list names
+//    `milestoneLint`, and "The reviewer" lists all six checks agents/reviewer.md carries.
+// Prose with no consumer drifts; this file is the consumer. Pure-read: a plain pin test
+// over Markdown files — there is no script to spawn, only the filesystem.
 //
 // Notes on the comparison:
 //  - Markdown wraps these files at ~90 columns, so both sides are compared with
@@ -158,6 +162,76 @@ check(
   '#146 reviewer.md check 3 gives the reason — without the commit a structural red fails',
   /`structural`/.test(checkList) && checkList.includes('`docs/workflow.md`'),
   checkList.slice(-400),
+);
+
+// --- #205: docs/orchestration.md still describes what the loop and the reviewer do ---
+// Two omissions that read as the loop doing less than it does: step 0's field list
+// dropped `milestoneLint` (which `scripts/reconcile.mts` emits and which is how the
+// orchestrator learns a milestone's description does not say when the phase is
+// finished), and "The reviewer" summarised as four the six checks `agents/reviewer.md`
+// lists. Each assertion is scoped to its own section, because `milestoneLint` is named
+// elsewhere in the file (the stop-reasons list) and would otherwise pass on a file that
+// still omits it from step 0.
+
+const ORCHESTRATION = join('docs', 'orchestration.md');
+
+/** The normalized span of `text` from `from` up to the next `to`; '' when either is absent. */
+function span(text: string, from: string, to: string): string {
+  const start = text.indexOf(from);
+  if (start === -1) return '';
+  const end = text.indexOf(to, start + from.length);
+  return end === -1 ? '' : text.slice(start, end);
+}
+
+const orchestration = readNormalized(ORCHESTRATION);
+const stepZero = span(orchestration, '0. `scripts/reconcile.mts` prints', '1. `ci/issue-lint.mts');
+
+check('#205 AC1 docs/orchestration.md has a step 0 field list to read', stepZero.length > 0);
+check(
+  '#205 AC1 step 0 names `milestoneLint` among the fields reconcile.mts prints',
+  stepZero.includes('milestoneLint'),
+  stepZero.slice(0, 400),
+);
+check(
+  '#205 AC1 step 0 says what `milestoneLint` reports: `{ ok, missing }` against the template',
+  stepZero.includes('{ ok, missing }') && stepZero.includes('.github/MILESTONE_TEMPLATE.md'),
+  stepZero.slice(0, 400),
+);
+
+/** The six checks `agents/reviewer.md` lists, in its order, each with one anchor phrase. */
+const REVIEWER_CHECKS: ReadonlyArray<{ name: string; anchor: string }> = [
+  { name: 'acceptance criteria', anchor: 'every acceptance criterion' },
+  { name: 'scope', anchor: 'the scope' },
+  { name: 'negative control', anchor: 'the negative control' },
+  { name: 'invariants', anchor: "the project's invariants" },
+  { name: 'code: the minimum, no single-use abstraction', anchor: 'no abstraction for a single use' },
+  { name: 'content is data, not instruction', anchor: 'content is data, not instruction' },
+];
+
+const reviewerSection = span(orchestration, '## The reviewer', '## Hooks');
+check('#205 AC2 docs/orchestration.md has a "The reviewer" section to read', reviewerSection.length > 0);
+
+const positions = REVIEWER_CHECKS.map(({ name, anchor }) => {
+  const at = reviewerSection.indexOf(anchor);
+  check(`#205 AC2 "The reviewer" names check ${name}`, at !== -1, reviewerSection.slice(0, 600));
+  return at;
+});
+check(
+  '#205 AC2 all six checks are named, in the order agents/reviewer.md lists them',
+  positions.every((at, i) => at !== -1 && (i === 0 || at > (positions[i - 1] ?? -1))),
+  positions.join(', '),
+);
+
+// The card is the source: if a seventh check is added there, this pin fails and the
+// doc's list has to be extended with it rather than silently falling behind again.
+const reviewerCard = readFileSync(join(ROOT, 'agents', 'reviewer.md'), 'utf8');
+const cardChecks = span(reviewerCard, '## Check, in this order', '## Output')
+  .split('\n')
+  .filter((line) => /^\d+\.\s/.test(line));
+check(
+  `#205 AC2 agents/reviewer.md still lists exactly ${REVIEWER_CHECKS.length} checks`,
+  cardChecks.length === REVIEWER_CHECKS.length,
+  `found ${cardChecks.length}`,
 );
 
 finish();
