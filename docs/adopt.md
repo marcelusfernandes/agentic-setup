@@ -545,8 +545,37 @@ exists and carries `human:decided`**:
 exit 1, nothing pushed and no pull request opened. A repository with no plan issue at all
 is refused the same way, with `missing: ["plan:not-found"]`. Adoption is not something a
 script decides for a repository; the issue is the question and the label is the answer.
-Closed issues are searched too — a decision that was recorded and then closed is still a
-decision.
+
+### Which plan issue authorises, when two share the title
+
+Two can. `--plan-issue` deduplicates against **open** issues only, so closing a plan issue
+and running the documented sequence again leaves a closed one beside an open one — an
+ordinary state, not an anomaly. `--pr` is the only mode that writes to a remote
+repository, and a gate that read whichever match the search returned first would not be a
+gate: a closed `human:decided` issue could authorise the push and put `Closes #<a closed
+issue>` in the body — a keyword GitHub will not act on — and a closed undecided one could
+produce a refusal the live question does not deserve.
+
+So the search asks GitHub for each issue's `state`, and **the open issue is what
+authorises**:
+
+| The repository holds | `--pr` reads |
+| --- | --- |
+| one open plan issue | that one; `human:decided` on it is the gate |
+| a closed one and an open one | the **open** one, whichever of the two the search returned first |
+| only closed ones | nothing — `pr:no-plan-issue`, `missing: ["plan:not-found"]`, naming them |
+| more than one **open** | nothing — `pr:plan-ambiguous`, `missing: ["plan:ambiguous"]`, naming them in `issues` |
+
+The open issue is the live question, and it is the one `--plan-issue` maintains as unique.
+A closed one is history — a decision that was made, acted on and filed — and history is
+not a standing authorisation; a pull request cannot close a closed issue anyway. Preferring
+the open match resolves the ordinary case. Where preference cannot decide — several open
+matches, which only a person opening one by hand produces — the run refuses by name rather
+than picking one, because each may carry a different decision and search order is not an
+answer. Close all but the one that holds the decision and run it again.
+
+A `state` this reader cannot recognise as open is treated as closed. That is the
+fail-closed direction: a state it cannot name never authorises a push.
 
 Steps 1–2 and 4 are the whole sequence: `--record`, `--workflows` and `--hooks` are not
 steps a person has to remember before `--pr`. It generates the record itself when there is
@@ -717,7 +746,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:not-written` | a hook file or the settings file could not be written |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:origin-unreadable` | `git fetch origin` could not answer, so the base the branch would be built on is unknown |
-| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit |
+| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed, or a path the tree holds could not be read — an unreadable file is never planned as an absent one |
 | `pr:stack-not-supported` | the record's `stack` is not `node`, so the generated `node:test` file would never be discovered; `field` names it |
 | `pr:no-test-command` | the record holds no `commands.test`, so the deliberate red has nothing to be red in; `field` names it |
 | `pr:nothing-to-commit` | the base already carries every file the adoption would write |
@@ -732,9 +761,11 @@ point at the line rather than the file.
 `workflows:no-record` is a *refusal* rather than an error — it is printed as
 `{ "refused": …, "reason": "workflows:no-record" }`, the shape `record:not-ours` and
 `plan-issue:already-open` use, because nothing failed: the repository simply has no
-record yet. `pr:no-plan-issue` and `pr:plan-not-decided` are refusals of the same shape,
-with one more field: `missing`, the named list of what a person still owes
-(`["plan:not-found"]`, `["plan:not-decided"]`).
+record yet. `pr:no-plan-issue`, `pr:plan-not-decided` and `pr:plan-ambiguous` are refusals
+of the same shape, with one more field: `missing`, the named list of what a person still
+owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). The first two
+carry `issue`, the one they read; `pr:plan-ambiguous` carries `issues` instead, because the
+refusal *is* that there was more than one.
 
 ## What this is not
 

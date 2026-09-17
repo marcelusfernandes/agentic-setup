@@ -80,6 +80,114 @@ export const ADOPT_COMMIT = 'chore(adopt): the adoption record, the generated wo
  */
 export const ADOPTION_GLOBS = [RECORD_FILE, `${WORKFLOW_DIR}/**`, SETTINGS_FILE, `${PROOF_DIR}/**`];
 
+/**
+ * One issue as the plan search returned it, before anything about it is
+ * believed. Every field is optional because this is what GitHub answered, not
+ * a shape this repository controls.
+ */
+export type PlanCandidate = {
+  number?: number;
+  title?: string;
+  state?: unknown;
+  labels?: Array<{ name?: string } | string>;
+};
+
+/** Every named reason the plan-issue gate can refuse for. */
+export type PlanRefusal = 'pr:no-plan-issue' | 'pr:plan-not-decided' | 'pr:plan-ambiguous';
+
+/**
+ * The gate's answer: the issue that authorises, or a named refusal carrying
+ * the message a person reads and the issue(s) it was about.
+ */
+export type PlanDecision =
+  | { ok: true; issue: number }
+  | { ok: false; reason: PlanRefusal; missing: string[]; message: string; issue: number | null; issues: number[] | null };
+
+/** True only for a state this reader recognises as open; everything else is closed. */
+const isOpen = (issue: PlanCandidate): boolean => String(issue.state ?? '').toUpperCase() === 'OPEN';
+
+const numbersOf = (issues: PlanCandidate[]): number[] => issues.map((issue) => Number(issue.number)).sort((a, b) => a - b);
+
+/**
+ * Which plan issue authorises an adoption pull request, out of everything the
+ * search returned.
+ *
+ * **Two issues can share the title.** `scripts/adopt.mts --plan-issue`
+ * deduplicates against *open* issues only, so closing a plan issue and running
+ * the documented sequence again leaves a closed one beside an open one — an
+ * ordinary state, not an anomaly. `--pr` is the only mode that writes to a
+ * remote repository, and reading whichever match the search returned first
+ * would not be a gate: a closed `human:decided` issue could authorise the push
+ * and put `Closes #<a closed issue>` into the body, a keyword GitHub will not
+ * act on, while a closed undecided one could refuse on behalf of a live
+ * question that was in fact decided.
+ *
+ * So the **open** issue is what authorises. It is the live question, and the
+ * one `--plan-issue` maintains as unique; a closed issue is a decision already
+ * acted on and filed, which is history rather than a standing authorisation.
+ * Preference settles the ordinary case. Where it cannot — several open matches,
+ * which only a person opening one by hand produces — this refuses by name
+ * rather than choosing, because each may carry a different decision.
+ *
+ * A `state` this reader cannot recognise as open counts as closed: the
+ * fail-closed direction, since a state it cannot name must never authorise a
+ * push. Pure — it reads the search's answer and nothing else.
+ */
+export function resolvePlanIssue(plans: PlanCandidate[], title: string, decidedLabel: string): PlanDecision {
+  const matches = plans.filter((issue) => issue?.title === title && Number.isInteger(issue?.number));
+  const open = matches.filter(isOpen);
+
+  if (open.length > 1) {
+    const issues = numbersOf(open);
+    return {
+      ok: false,
+      reason: 'pr:plan-ambiguous',
+      missing: ['plan:ambiguous'],
+      issue: null,
+      issues,
+      message:
+        `this repository has ${open.length} open \`${title}\` issues (#${issues.join(', #')}), and adoption cannot choose ` +
+        'between them: each may carry a different decision, and the one a search happens to return first is not an answer. ' +
+        'Close all but the one that holds the decision, then run this again.',
+    };
+  }
+
+  const planIssue = open[0];
+  if (!planIssue) {
+    const closed = numbersOf(matches);
+    return {
+      ok: false,
+      reason: 'pr:no-plan-issue',
+      missing: ['plan:not-found'],
+      issue: null,
+      issues: null,
+      message:
+        closed.length === 0
+          ? `there is no \`${title}\` issue in this repository; run \`node scripts/adopt.mts --plan-issue\` and let a person ` +
+            'decide what adoption should do before it does any of it.'
+          : `every \`${title}\` issue in this repository is closed (#${closed.join(', #')}). A closed plan issue is a decision ` +
+            'that was already acted on, not a standing authorisation, and a pull request cannot close one. Run ' +
+            '`node scripts/adopt.mts --plan-issue` to ask the question again.',
+    };
+  }
+
+  const number = Number(planIssue.number);
+  const labels = (planIssue.labels ?? []).map((label) => (typeof label === 'string' ? label : (label?.name ?? '')));
+  if (!labels.includes(decidedLabel)) {
+    return {
+      ok: false,
+      reason: 'pr:plan-not-decided',
+      missing: ['plan:not-decided'],
+      issue: number,
+      issues: null,
+      message:
+        `the adoption plan issue (#${number}) does not carry \`${decidedLabel}\`; adoption is not something a script decides ` +
+        'for a repository. Read the plan, tick what should happen, and move it to `human:decided`.',
+    };
+  }
+  return { ok: true, issue: number };
+}
+
 /** Every named reason this module can refuse to assemble a pull request for. */
 export type PrReason =
   | 'pr:stack-not-supported'

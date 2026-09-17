@@ -83,7 +83,12 @@
 // deliberate red test under the record's `proof.dir`, pushes it and opens a
 // pull request (#167). It **refuses unless the plan issue `--plan-issue`
 // opened carries `human:decided`** — `{ refused, missing: ['plan:not-decided'] }`
-// — because adoption is not something a script decides for a repository.
+// — because adoption is not something a script decides for a repository. Two
+// issues can share that title (`--plan-issue` deduplicates against open ones
+// only), so the **open** one is what authorises: a closed issue is history
+// rather than a standing authorisation, and several open ones are
+// `{ refused, missing: ['plan:ambiguous'] }` rather than a choice made by
+// search order.
 // The branch is assembled through git's plumbing against a temporary index,
 // so nothing is ever written into the working tree; the push is the
 // create-only push `scripts/claim.mts` uses
@@ -146,6 +151,8 @@ import {
   buildBranch,
   planPullRequest,
   renderBody,
+  resolvePlanIssue,
+  type PlanCandidate,
 } from './lib/adopt/pr.mts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -430,47 +437,62 @@ if (wantPr) {
     process.exit(1);
   };
 
-  /** A refusal a person answers, rather than a failure: named, and never a write. */
-  function refuse(refused: string, reason: string, missing: string[], issue: number | null = null): never {
-    console.log(JSON.stringify({ refused, reason, missing, ...(issue === null ? {} : { issue }) }));
+  /**
+   * A refusal a person answers, rather than a failure: named, and never a
+   * write. `issue` names the one it read when there is exactly one; `issues`
+   * names them all when the refusal is that there is more than one.
+   */
+  function refuse(refused: string, reason: string, missing: string[], issue: number | null = null, issues: number[] | null = null): never {
+    console.log(
+      JSON.stringify({
+        refused,
+        reason,
+        missing,
+        ...(issue === null ? {} : { issue }),
+        ...(issues === null ? {} : { issues }),
+      }),
+    );
     process.exit(1);
   }
 
   // 1. the decision. A script does not decide adoption for a repository: the
-  // plan issue is the question, and the label is the answer. Closed issues are
-  // searched too — a decision recorded and then closed is still a decision.
+  // plan issue is the question, and the label is the answer.
+  //
+  // **Two issues can share the title, so the gate cannot read "the" match.**
+  // `--plan-issue` deduplicates against *open* issues only (step 8 below), so
+  // closing a plan issue and running the documented sequence again leaves a
+  // closed one beside an open one. Taking whichever the search returned first
+  // would let a closed `human:decided` issue authorise a push and put
+  // `Closes #<a closed issue>` in the body — a keyword GitHub will not act on
+  // — or let a closed undecided one produce a refusal the live question does
+  // not deserve. Resolving the only mode that writes to a remote repository by
+  // search order is not a gate.
+  //
+  // So the state is *requested* and the **open** issue is preferred: it is the
+  // live question, and it is the one `--plan-issue` maintains as unique. A
+  // closed issue is history — a decision that was made, acted on and filed —
+  // and history is not a standing authorisation. Preference resolves the
+  // ordinary case; where it cannot (several open matches, which only a person
+  // opening one by hand produces) the run refuses by name rather than picking.
   const search = gh([
     'issue', 'list', '--search', `"${PLAN_ISSUE_TITLE}" in:title`,
-    '--state', 'all', '--limit', '100', '--json', 'number,title,labels',
+    '--state', 'all', '--limit', '100', '--json', 'number,title,state,labels',
   ]);
   if (search.status !== 0 || !search.stdout.trim()) fail('pr:plan-unreadable');
-  let plans: Array<{ number?: number; title?: string; labels?: Array<{ name?: string } | string> }>;
+  let plans: PlanCandidate[];
   try {
     plans = JSON.parse(search.stdout);
   } catch {
     fail('pr:plan-unreadable');
   }
   if (!Array.isArray(plans)) fail('pr:plan-unreadable');
-  const planIssue = plans.find((issue) => issue?.title === PLAN_ISSUE_TITLE);
-  if (!planIssue || !Number.isInteger(planIssue.number)) {
-    refuse(
-      `there is no \`${PLAN_ISSUE_TITLE}\` issue in this repository; run \`node scripts/adopt.mts --plan-issue\` and let a ` +
-        'person decide what adoption should do before it does any of it.',
-      'pr:no-plan-issue',
-      ['plan:not-found'],
-    );
-  }
-  const planNumber = Number(planIssue.number);
-  const planLabels = (planIssue.labels ?? []).map((label) => (typeof label === 'string' ? label : (label?.name ?? '')));
-  if (!planLabels.includes(DECIDED_LABEL)) {
-    refuse(
-      `the adoption plan issue (#${planNumber}) does not carry \`${DECIDED_LABEL}\`; adoption is not something a script decides ` +
-        'for a repository. Read the plan, tick what should happen, and move it to `human:decided`.',
-      'pr:plan-not-decided',
-      ['plan:not-decided'],
-      planNumber,
-    );
-  }
+
+  // Which of the matches authorises is `resolvePlanIssue`'s answer, not this
+  // file's: it is a decision over what GitHub returned, so it is a pure
+  // function tested directly rather than only through a spawn.
+  const decision = resolvePlanIssue(plans, PLAN_ISSUE_TITLE, DECIDED_LABEL);
+  if (!decision.ok) refuse(decision.message, decision.reason, decision.missing, decision.issue, decision.issues);
+  const planNumber = decision.issue;
 
   // 2. the record. An existing one is used as it stands, so the pull request
   // carries what the repository already decided; one that a person wrote is
@@ -496,9 +518,23 @@ if (wantPr) {
   const rev = gitHere(['rev-parse', `origin/${inventory.defaultBranch}`]);
   if (rev.status !== 0 || rev.stdout.trim().length !== 40) fail('pr:base-unreadable');
   const base = rev.stdout.trim();
+  // What the base tree holds is asked once, of `ls-tree`, and never inferred
+  // from a failed read. `git show <sha>:<path>` exits non-zero both for "the
+  // tree does not carry this path" and for every other reason it could not
+  // answer, so branching on its status alone would plan a file as `created` —
+  // and write over the base's version of it — because the read for it failed.
+  // That is the one thing this module's header promises it does not do.
+  // `-z` keeps a path with a special character unquoted and whole.
+  const listing = gitHere(['ls-tree', '-r', '--name-only', '-z', base]);
+  if (listing.status !== 0) fail('pr:base-unreadable', (listing.stderr || '').trim().split('\n')[0] || undefined);
+  const inBase = new Set(listing.stdout.split('\0').filter((path) => path.length > 0));
   const baseFile = (path: string): string | null => {
+    if (!inBase.has(path)) return null;
     const show = spawnSync('git', ['show', `${base}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    return show.status === 0 ? (show.stdout ?? '') : null;
+    // The tree says this path is there, so a read that fails is a failure and
+    // never an absence: fail closed rather than plan a write over it.
+    if (show.status !== 0) fail('pr:base-unreadable', (show.stderr || '').trim().split('\n')[0] || undefined);
+    return show.stdout ?? '';
   };
 
   // 4. the plan, and the commits it implies.

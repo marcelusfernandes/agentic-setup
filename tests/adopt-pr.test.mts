@@ -95,11 +95,15 @@ type Plan = {
   checks: string[];
   proof: { slug: string; command: string; declaration: string };
 };
+type PlanDecision =
+  | { ok: true; issue: number }
+  | { ok: false; reason: string; missing: string[]; message: string; issue: number | null; issues: number[] | null };
 type Module = {
   ADOPTION_BRANCH: string;
   ADOPTION_SLUG: string;
   planPullRequest: (record: unknown, options: unknown) => Plan;
   renderBody: (plan: Plan, context: unknown) => string;
+  resolvePlanIssue: (plans: unknown[], title: string, decidedLabel: string) => PlanDecision;
 };
 
 let mod: Module | null = null;
@@ -647,6 +651,64 @@ const strange = fixture({ [RECORD_FILE]: '{"version":1}\n' });
 const s = adopt(['--pr'], strange.repo, { FAKE_GH_PLAN: 'decided' });
 check('--pr over a record that is not the shape exits 1 by name', s.status === 1 && /^record:/.test(parse(s.stdout)?.error ?? ''), `${s.stdout}\n${s.stderr}`);
 check('--pr over a record that is not the shape pushes nothing', remoteSha(strange.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
+
+// --- I2: the gate itself, as a pure function --------------------------------
+// The cases above prove the gate through the real script, which is what
+// invariant 6 asks for. These prove the *decision* directly, because it is a
+// pure function over what the search returned (`ci/lib/` pure functions may be
+// imported and tested directly, and this is the same kind): the orderings a
+// spawn cannot conveniently enumerate belong here.
+const decide = (plans: unknown[]): PlanDecision | null => {
+  if (!mod?.resolvePlanIssue) return null;
+  try {
+    return mod.resolvePlanIssue(plans, PLAN_ISSUE_TITLE, DECIDED_LABEL);
+  } catch {
+    return null;
+  }
+};
+const issueOf = (n: number, label: string, state: string) => ({
+  number: n,
+  title: PLAN_ISSUE_TITLE,
+  state,
+  labels: [{ name: label }],
+});
+
+check('resolvePlanIssue is exported', typeof mod?.resolvePlanIssue === 'function');
+check(
+  'one open decided issue authorises',
+  decide([issueOf(PLAN_ISSUE, DECIDED_LABEL, 'OPEN')])?.ok === true,
+  JSON.stringify(decide([issueOf(PLAN_ISSUE, DECIDED_LABEL, 'OPEN')])),
+);
+
+// The ordering the search returns must not change the answer. Both orders of
+// the same two issues resolve to the same open one — that is the whole point.
+const closedFirst = decide([issueOf(PLAN_ISSUE, DECIDED_LABEL, 'CLOSED'), issueOf(OPEN_PLAN_ISSUE, DECIDED_LABEL, 'OPEN')]);
+const openFirst = decide([issueOf(OPEN_PLAN_ISSUE, DECIDED_LABEL, 'OPEN'), issueOf(PLAN_ISSUE, DECIDED_LABEL, 'CLOSED')]);
+check(
+  'search order cannot change which issue authorises',
+  closedFirst?.ok === true && openFirst?.ok === true && closedFirst.issue === OPEN_PLAN_ISSUE && openFirst.issue === OPEN_PLAN_ISSUE,
+  `${JSON.stringify(closedFirst)} vs ${JSON.stringify(openFirst)}`,
+);
+
+const onlyClosed = decide([issueOf(PLAN_ISSUE, DECIDED_LABEL, 'CLOSED')]);
+check(
+  'a closed decided issue alone never authorises',
+  onlyClosed?.ok === false && onlyClosed.reason === 'pr:no-plan-issue' && onlyClosed.missing.includes('plan:not-found'),
+  JSON.stringify(onlyClosed),
+);
+check('the closed-only refusal names the issue it found', String(onlyClosed?.ok === false ? onlyClosed.message : '').includes(`#${PLAN_ISSUE}`), JSON.stringify(onlyClosed));
+
+// Fail closed on a state this reader cannot name: `null`, a typo or a shape
+// GitHub may grow later must never be read as open.
+for (const state of ['', 'oPeN', 'MERGED', 'unknown']) {
+  const answer = decide([issueOf(PLAN_ISSUE, DECIDED_LABEL, state)]);
+  const authorises = answer?.ok === true;
+  const shouldAuthorise = state.toUpperCase() === 'OPEN';
+  check(`a state of "${state}" ${shouldAuthorise ? 'authorises' : 'does not authorise'}`, authorises === shouldAuthorise, JSON.stringify(answer));
+}
+check('an issue carrying no state at all does not authorise', decide([{ number: PLAN_ISSUE, title: PLAN_ISSUE_TITLE, labels: [{ name: DECIDED_LABEL }] }])?.ok === false, 'no state');
+check('an issue of another title is not a plan issue', decide([{ ...issueOf(PLAN_ISSUE, DECIDED_LABEL, 'OPEN'), title: 'something else' }])?.ok === false, 'other title');
+check('an empty search is no plan issue', decide([])?.ok === false, JSON.stringify(decide([])));
 
 // --- J: the documentation the acceptance criterion asks for -----------------
 const docs = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
