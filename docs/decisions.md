@@ -554,9 +554,10 @@ goes with them, so the test count drops by that file's cases — a fall in the t
 #152's PR states rather than hides.
 
 Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
-under `decisions/` — `0019-<slug>.md` is the next free number. This item lives here for
-the same reason items 16 and 18 and the 2026-09-17 note under item 13 do: #150's
-`## Files` lists `docs/decisions.md` and no path under `decisions/`, and an implementer
-never widens its own globs. Its index row in
-[`decisions/README.md`](decisions/README.md) and its relocation to that dated file are
-owed, as they are for items 16 and 18 (#211).
+under `decisions/`. This item lives here for the same reason items 16 and 18 and the
+2026-09-17 note under item 13 do: #150's `## Files` lists `docs/decisions.md` and no path
+under `decisions/`, and an implementer never widens its own globs. Its index row *is*
+written, in this same diff, under the `authorised: docs/decisions/README.md` grant the
+orchestrator added to that list; the register's next free number is therefore
+`0020-<slug>.md`, with `0019-<slug>.md` reserved for this item. Only the move itself is
+still owed, as it is for items 16 and 18 (#211).
