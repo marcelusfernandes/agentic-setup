@@ -667,6 +667,23 @@ the only thing in this repository that queues a merge — `gh pr merge --squash 
 gated by the base branch's ruleset when it has one and by `gh pr checks --required`
 otherwise (M12). The adoption pull request is reviewed and landed like any other.
 
+## `node scripts/doctor.mts` reads back what the loop requires
+
+Read-only — three `gh` reads, no write. Prints `{ ok, mode, checks: [{ name, ok, found,
+expected }], missing }` and exits 1 on `ok: false`; each `missing` entry is one field to fix.
+
+| check | `missing` | what fixes it |
+| --- | --- | --- |
+| `review-mode` | `review:no-second-identity` | `approved` mode nobody can satisfy: set `AGENTIC_REVIEWER_TOKEN`, or `node scripts/init.mts --rules`, which resets the review count to 0 |
+| `record` | `record:absent`, `record:stale`, `record:unknown-key`, … | `node scripts/adopt.mts --record` (`--force` when only `generatedBy` is wrong); one field, however many checks it broke |
+| `ruleset` | `ruleset:absent` | `node scripts/init.mts --rules` on the default branch |
+| `required-checks` | `ruleset:required_status_checks` | require every check name `--workflows` reports; `--rules` writes them |
+| `labels` | `labels:missing` | `node scripts/init.mts`, which seeds the dictionary |
+| `hooks` | `hooks:not-recorded`, `:not-installed`, `:not-ours`, `:drifted` | `node scripts/adopt.mts --hooks`; a `pre-push` someone else wrote is never overwritten |
+| `auto-merge` | `repository:allow_auto_merge` | `node scripts/init.mts`, which turns it on |
+| `proof` | `proof:no-command`, other `proof:*` | name a `command` in `proof/<slug>.json` (`--slug` picks the branch), record `commands.test`, or set `AGENTIC_TEST_CMD` |
+| the one that read | `read-failed:<what>` | that read could not answer (`repository`, `ruleset`, `labels`, `hooks`, `workflows`); authenticate `gh` here and run again |
+
 ## Crash policy: fail closed
 
 This is `scripts/adopt.mts`'s policy; the runner states its own above, and holds to the

@@ -131,6 +131,35 @@ left by the last one, for an offline check against the last fetch. Fields:
 A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
 rather than guessing the state.
 
+Then, once per pass and before step 1, the read-back the installer never had. Locate it
+the same way:
+
+```bash
+DOCTOR="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/doctor.mts}"
+[ -f "$DOCTOR" ] || DOCTOR="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/doctor.mts' 2>/dev/null | head -1)"
+[ -f "$DOCTOR" ] || { echo "agentic-setup: doctor.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$DOCTOR"
+```
+
+`scripts/doctor.mts` is read-only — it writes nothing and calls no mutating `gh` verb. It
+says whether this repository actually satisfies what the loop requires: the review mode it
+runs (`agent` or `approved`), the effective ruleset on the default branch and whether it
+names the generated checks, the label dictionary, the hooks the adoption record names,
+`allow_auto_merge`, and whether a proof can resolve a command. It prints
+`{ ok, mode, checks, missing }`, and every `missing` entry names the exact field rather
+than a sentence — `docs/adopt.md` lists each name and what fixes it.
+
+**`ok: false` is a report, not a stop reason, and not a gate.** Exactly like
+`milestoneLint` above, it never blocks a dispatch and it is not a fourth entry in the
+closed list: name what `missing` holds in this pass's first comment and in the stop
+summary, open an issue for each field only a person can close
+(`review:no-second-identity` needs a login, not a commit), and keep the loop running.
+What it does change is what you may claim about a merge — when `missing` holds
+`ruleset:absent` or `ruleset:required_status_checks`, the server is not holding the line:
+`land.mts` will report `gate: 'client-checks'`, and step 5's green checks plus the
+reviewed-SHA marker are the whole of what stands between a pull request and `main`. Say
+that in the verdict comment instead of treating the merge as server-gated.
+
 ## 1. Candidates
 
 Use `ready` from the JSON above — it already excludes issues with an open blocker. Before
