@@ -521,6 +521,9 @@ in the repository installs this catalogue yet … this is source material for a 
 a future installer) to read and adapt by hand", and `README.md:269-275` repeats it —
 "Nothing installs it yet; it is source material". (#150 cites `README.md:144-145` for that
 sentence; the line moved, the sentence is at 269-275 and the map row at `README.md:305`.)
+The installer agrees with the prose: `scripts/init.mts:318-342` copies
+`templates/.github`, `templates/.worktreeinclude` and `templates/claude-settings.json` by
+name and never the directory, so `templates/agents/` reaches no adopting repository.
 
 Second, its vocabulary is not this repository's. The eleven `scopes` keys in
 `templates/agents/index.json:4-14` are `scope:qa`, `architecture`, `backend`, `frontend`,
@@ -536,8 +539,10 @@ index has no target to rewrite it to.
 Third, the shape the reference practices actually ask for is already here: one file per
 role with minimal `tools` (`lohra-ts`, `apollo`), which is what `agents/implementer.md`,
 `agents/reviewer.md` and `agents/docs-writer.md` are. Fourteen discipline cards are a
-second, unreferenced answer to a question three files already answer, and the M4 audit
-rule (item 13) is that what duplicates is deleted. "Reduce" — keeping
+second, unreferenced answer to a question three files already answer, and the choice the
+2026-09-06 audit produced (item 13) was to "delete the duplicates" and keep the core.
+(#150 attributes that rule to "the M4 audit"; the register carries it as item 13, the
+2026-09-06 audit, and M4 is named nowhere in it.) "Reduce" — keeping
 `security-reviewer` as a fourth read-only role — needs a real case for that role, and
 none exists yet; it can be opened as its own issue the day one does.
 
