@@ -46,34 +46,22 @@
 // that whenever AGENTIC_REVIEWER_TOKEN is unset in the environment, and says
 // the flag was ignored when it is passed without --rules or under --no-gh.
 //
+// The labels it seeds are not written here: they are the `claude`-routed
+// entries of `labels.json` at the plugin root, the one dictionary this
+// repository keeps (#145), read through scripts/lib/labels.mts. That read
+// happens before the first byte is written, and a malformed dictionary
+// refuses the whole run with the reason named — a partial set of labels is
+// worse than none.
+//
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { labelsSeededByInit, loadLabels, type LabelEntry } from './lib/labels.mts';
 
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const LABELS: [string, string, string][] = [
-  ['state:ready', '0e8a16', 'Ready to be picked up by an agent'],
-  ['state:in-progress', 'fbca04', 'An agent holds the branch lock'],
-  ['state:in-review', '1d76db', 'PR open, waiting for CI and the reviewer'],
-  ['state:qa-failed', 'd93f0b', 'Sent back by CI or the reviewer'],
-  ['state:blocked', 'b60205', 'Two failed rounds; needs a person'],
-  ['type:feature', 'a2eeef', ''],
-  ['type:bug', 'd73a4a', ''],
-  ['type:refactor', 'c5def5', ''],
-  ['type:infra', 'bfd4f2', ''],
-  ['type:spec', 'd4c5f9', ''],
-  ['type:docs', '0075ca', 'Docs only: no reviewer, no negative control'],
-  ['type:deps', 'ededed', 'Dependency change: orchestrator only'],
-  ['review:approved', '0e8a16', 'The reviewer approved'],
-  // Same names, colours and descriptions as the Codex route's `LABELS`
-  // (`.agents/skills/autonomous-loop/scripts/github.mts`), so a repository
-  // running both routes reads one vocabulary. The bare `human` label is no
-  // longer seeded; an existing one is left as found and read as pending.
-  ['human:pending', 'f9d0c4', 'A human decision is required; affected work is paused'],
-  ['human:decided', 'c2e0c6', 'A human decision was recorded; kept as the audit trail'],
-];
+const LABELS_FILE = join(PLUGIN, 'labels.json');
 
 const MANAGED_RULE_TYPES = ['pull_request', 'required_status_checks', 'non_fast_forward', 'deletion'];
 const DEFAULT_RULESET_NAME = 'agentic-setup';
@@ -277,6 +265,22 @@ if (!top.ok) {
 }
 const root = top.out;
 
+/**
+ * The labels this route seeds, read from the dictionary before anything is
+ * written. Fail closed: a dictionary that cannot be read or does not
+ * validate refuses the run, naming the reason, rather than seeding whatever
+ * part of it happened to parse.
+ */
+function labelsToSeed(): LabelEntry[] {
+  try {
+    return labelsSeededByInit(loadLabels(LABELS_FILE));
+  } catch (err) {
+    console.error(`init: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+const LABELS = labelsToSeed();
+
 const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 18)) {
   say(`! node ${process.versions.node}: the hooks and CI scripts run TypeScript directly and need 22.18 or newer`);
@@ -399,7 +403,7 @@ if (useGh) {
       say(`  + ${LABELS.length}/${LABELS.length} labels present`);
     } else {
       let created = 0;
-      for (const [name, color, description] of LABELS) {
+      for (const { name, color, description } of LABELS) {
         const r = run('gh', ['label', 'create', name, '--color', color, '--description', description, '--force'], root);
         if (r.ok) created++;
         else say(`  ! label ${name}: ${r.err.split('\n')[0]}`);

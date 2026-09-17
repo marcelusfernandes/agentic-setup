@@ -2,7 +2,7 @@
 // Cases for scripts/init.mts: the installer copies templates into a target
 // repository, merges settings, and installs an executable pre-push hook.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
@@ -99,7 +99,11 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // does not have an `autoMergeAllowed` field on `repo view --json`, so that
 // command is deliberately left unmocked -- it falls to the catch-all);
 // `repo edit --enable-auto-merge` / `--delete-branch-on-merge` create the
-// matching marker; `label create` is a no-op. `repo view --json
+// matching marker; `label create` succeeds and dumps its argv
+// NUL-separated, one record per line, to `$state/gh-label-argv.log`, so a
+// label seeded with an empty `--description` (every `type:` label) can still
+// be read back argument by argument — the space-joined `gh-argv.log` above
+// cannot show one. `repo view --json
 // defaultBranchRef` (the ruleset's target) always answers "main". Every
 // call touching `.../rulesets` (list, detail, POST, PUT) is handled by one
 // case arm keyed on the endpoint prefix: a 403 fixture
@@ -156,7 +160,10 @@ case "\${1:-} \${2:-}" in
       --delete-branch-on-merge) touch "$state/deletebranch-enabled" ;;
     esac
     ;;
-  "label create") exit 0 ;;
+  "label create")
+    printf '%s\\0' "$@" >> "$state/gh-label-argv.log"
+    printf '\\n' >> "$state/gh-label-argv.log"
+    exit 0 ;;
   "api") echo "" ;;
   *) exit 0 ;;
 esac
@@ -205,6 +212,43 @@ check('init seeds human:pending with the colour and description shared with the 
 check('init seeds human:decided with the colour and description shared with the Codex route',
   /label create human:decided --color c2e0c6 --description A human decision was recorded; kept as the audit trail/.test(ghLog(state1)), ghLog(state1));
 check('init no longer seeds the bare human label, so a pre-existing one is left untouched', !/label create human --color/.test(ghLog(state1)), ghLog(state1));
+
+// #145: the seeded set is `labels.json`, not an array inside the installer.
+// The dictionary is read here with plain JSON.parse — `scripts/lib/labels.mts`
+// is the code under test, so the expectation cannot come from it.
+type DictionaryEntry = { name: string; color: string; description: string; routes: string[]; legacy?: boolean };
+function dictionary(): DictionaryEntry[] {
+  try {
+    const parsed = JSON.parse(readFileSync(join(ROOT, 'labels.json'), 'utf8'));
+    return Array.isArray(parsed) ? (parsed as DictionaryEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+/** Every `gh label create` the fake gh recorded, as its argv. */
+function labelCalls(stateDir: string): string[][] {
+  const log = join(stateDir, 'gh-label-argv.log');
+  if (!existsSync(log)) return [];
+  return readFileSync(log, 'utf8')
+    .split('\n')
+    .filter((record) => record !== '')
+    .map((record) => {
+      const args = record.split('\0');
+      args.pop(); // the trailing NUL of the last argument
+      return args;
+    });
+}
+const argAfter = (args: string[], flag: string): string => args[args.indexOf(flag) + 1] ?? '';
+const seeded = labelCalls(state1).map((args) => `${args[2]}\t${argAfter(args, '--color')}\t${argAfter(args, '--description')}`).sort();
+const expectedSeeded = dictionary()
+  .filter((entry) => entry.routes?.includes('claude') && !entry.legacy)
+  .map((entry) => `${entry.name}\t${entry.color}\t${entry.description}`)
+  .sort();
+check('init seeds exactly the claude-routed entries of labels.json, colours and descriptions included',
+  expectedSeeded.length > 0 && JSON.stringify(seeded) === JSON.stringify(expectedSeeded),
+  `seeded:\n${seeded.join('\n')}\nexpected:\n${expectedSeeded.join('\n')}`);
+check('init passes --force on every label create, so a drifted colour is corrected',
+  labelCalls(state1).length > 0 && labelCalls(state1).every((args) => args.includes('--force')), JSON.stringify(labelCalls(state1)));
 
 const gh2 = initWithGh(ghRepo, state1); // same state dir: both markers now present
 check('init rerun (both settings already enabled) exits 0', gh2.status === 0, `${gh2.stdout}${gh2.stderr}`);
@@ -688,5 +732,42 @@ check(
     ruleBody(stateRulesDryLive, 'put') === null,
   ghLog(stateRulesDryLive),
 );
+
+// --- a malformed dictionary refuses the run (#145). The installer reads
+// `labels.json` from its own plugin root, so these cases run a copy of that
+// root (the same trick tests/codex-plugin.test.mts uses) whose dictionary is
+// the broken one. The refusal is checked like a happy path: a named reason
+// on stderr, a non-zero exit, and nothing written into the target.
+const pluginCopy = mkdtempSync(join(tmpdir(), 'agentic-init-plugin-'));
+cleanup(() => rmSync(pluginCopy, { recursive: true, force: true }));
+for (const dir of ['templates', 'ci', 'hooks', 'scripts']) cpSync(join(ROOT, dir), join(pluginCopy, dir), { recursive: true });
+const realDictionary = existsSync(join(ROOT, 'labels.json')) ? readFileSync(join(ROOT, 'labels.json'), 'utf8') : '';
+
+/** Runs the copied installer, with `text` as its dictionary, in a fresh repository. */
+function initFromCopy(text: string) {
+  writeFileSync(join(pluginCopy, 'labels.json'), text);
+  const target = tempRepo();
+  commit(target, { 'README.md': '# x\n' }, 'init');
+  const r = spawnSync(RUNTIME, [join(pluginCopy, 'scripts', 'init.mts'), '--no-gh'], { cwd: target, encoding: 'utf8' });
+  return { out: `${r.stdout}${r.stderr}`, status: r.status, wrote: existsSync(join(target, '.github')) };
+}
+
+const copyOk = initFromCopy(realDictionary);
+check('the installer copy, with the real labels.json, still installs', copyOk.status === 0 && copyOk.wrote, copyOk.out);
+
+const ENTRY = '{ "name": "state:ready", "color": "0e8a16", "description": "Ready", "routes": ["claude"] }';
+for (const [name, text, reason] of [
+  ['unparseable JSON', '{\n', /not valid JSON/],
+  ['a dictionary that is not an array', `{ "labels": [${ENTRY}] }`, /must be a JSON array/],
+  ['an unknown key', '[{ "name": "state:ready", "colour": "0e8a16", "color": "0e8a16", "description": "Ready", "routes": ["claude"] }]', /unknown key "colour"/],
+  ['a missing field', '[{ "name": "state:ready", "color": "0e8a16", "routes": ["claude"] }]', /"description"/],
+  ['a duplicate name', `[${ENTRY}, ${ENTRY}]`, /duplicate/],
+  ['an unknown route', '[{ "name": "state:ready", "color": "0e8a16", "description": "Ready", "routes": ["gemini"] }]', /unknown route "gemini"/],
+  ['an empty dictionary', '[]', /at least one label/],
+] as Array<[string, string, RegExp]>) {
+  const r = initFromCopy(text);
+  check(`init refuses ${name} instead of seeding a partial set`, r.status !== 0 && /labels\.json/.test(r.out) && reason.test(r.out), r.out);
+  check(`init refuses ${name} before writing anything into the repository`, !r.wrote, r.out);
+}
 
 finish();
