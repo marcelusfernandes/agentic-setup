@@ -6,13 +6,16 @@ adoption owes an existing project is a description of what is already there.
 `scripts/adopt.mts` is that step.
 
 ```bash
-node scripts/adopt.mts --inventory     # describes the repository, writes nothing
-node scripts/adopt.mts --plan-issue    # turns that description into one plan issue
+node scripts/adopt.mts --inventory       # describes the repository, writes nothing
+node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
+node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
 ```
 
 Run it from inside the repository being adopted (it resolves the root with
-`git rev-parse --show-toplevel`). Exactly one of the two flags is required; anything
-else prints `{ "error": "usage: …" }` and exits 1 before a single call is made.
+`git rev-parse --show-toplevel`). Exactly one of the three flags is required; anything
+else prints `{ "error": "usage: …" }` and exits 1 before a single call is made. `--force`
+is a modifier of `--record` and never a mode of its own — on its own it is a usage error,
+not a silent write.
 
 ## `--inventory` writes nothing
 
@@ -53,7 +56,8 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   "workflows": ["agentic-checks.yml", "guard-main.yml", "issue-lint.yml"],
   "autoMerge": true,
   "deleteBranchOnMerge": false,
-  "gaps": []
+  "gaps": [],
+  "record": null
 }
 ```
 
@@ -75,6 +79,12 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   missing directory is none; a directory that exists and cannot be listed fails closed.
 - `autoMerge`, `deleteBranchOnMerge` — the repository settings `scripts/init.mts` turns
   on and `scripts/land.mts` depends on.
+- `record` — `null` when the repository has no adoption record, otherwise
+  `{ "generatedBy": …, "generatedAt": …, "stale": [ … ] }`: who generated the record, when,
+  and every field where it and detection now disagree. The record's *values* are
+  deliberately not echoed here — the fields above are detection's answer, and detection is
+  what the loop follows. A record that exists and is not the shape stops the run
+  (`record:…` below); it is never read as "no record".
 - `gaps` — the named list below.
 
 ### The gap names
@@ -89,6 +99,7 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 | `hooks:not-installed` | the `pre-push` hook is absent or is not ours |
 | `workflows:missing` | at least one of `agentic-checks.yml`, `guard-main.yml`, `issue-lint.yml` is absent |
 | `test-command:none` | no test command was detected and none was overridden — `negative-control` cannot prove anything without one |
+| `record:stale` | an adoption record exists and detection no longer agrees with it on at least one field; `record.stale` names them |
 
 ## `--plan-issue` asks
 
@@ -106,12 +117,86 @@ already exist: `scripts/reconcile.mts` reports it under `humanPending`,
 A person reads the issue, ticks what should happen and flips the label to
 `human:decided`, which stays as the audit trail.
 
-On success it prints `{ "issue": 7, "url": "…", "gaps": [ … ] }`.
+On success it prints `{ "issue": 7, "url": "…", "gaps": [ … ] }`. `gaps` is the same list
+the body's checkboxes were rendered from, `record:stale` included — the JSON a caller
+reads and the issue a person reads never disagree.
 
 A second run never opens a second issue. When an open issue with that exact title
 already exists it refuses — `{ "refused": "…", "reason": "plan-issue:already-open",
 "issue": 7 }`, exit 1 — and makes no `gh issue create` call at all. Close the issue to
 get a new one.
+
+## `--record` writes the adoption record
+
+`--record` writes exactly one file, `agentic.config.json`, at the adopted repository's
+root. It is the adoption record of [`decisions.md`](decisions.md) item 15: the one place
+that says what an adopting repository decided, so the generated workflows, the hooks, the
+proof runner and `doctor` read one answer instead of detecting the same facts four times
+and drifting apart.
+
+**No person edits this file.** It is generated, and `scripts/lib/adopt/record.mts` is the
+only thing that produces it — one writer, one reader, one validator.
+
+```json
+{
+  "version": 1,
+  "stack": "node",
+  "commands": { "test": "npm test", "check": "npm run check" },
+  "checks": ["negative-control", "scope"],
+  "hooks": ["pre-push"],
+  "proof": { "dir": "proof" },
+  "labels": { "source": "scripts/init.mts" },
+  "generatedAt": "2026-09-17T10:04:00.000Z",
+  "generatedBy": "agentic-setup/adopt"
+}
+```
+
+| Field | What it holds |
+| --- | --- |
+| `version` | the shape's version; `1` today. A reader that does not know a version refuses the file rather than guessing |
+| `stack` | `ci/lib/detect.mts`'s stack at the moment of writing |
+| `commands.test`, `commands.check` | the commands the loop runs; `null` when nothing was detected and nothing was overridden |
+| `checks[]` | the status checks the merge gate requires on the default branch, as the inventory read them from the branch's effective ruleset. Empty when no ruleset is in force |
+| `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them |
+| `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`) |
+| `labels.source` | *where* the label vocabulary is defined — a pointer, never a copy. `scripts/init.mts` today; it becomes `labels.json` when that file is the one dictionary |
+| `generatedAt` | when the file was generated, ISO 8601 |
+| `generatedBy` | what generated it. Anything other than `agentic-setup/adopt` means a person touched it |
+
+Nothing in the record restates a list that already has an owner: `checks[]` and `hooks[]`
+are what the inventory read, and `labels.source` names the file the vocabulary lives in
+rather than repeating its 15 entries.
+
+### Detection stays the default
+
+The record pins; it does not replace. `ci/lib/detect.mts` still runs on **every** read,
+and `--inventory` compares `stack`, `commands.test` and `commands.check` with what
+detection says now. Any field where they disagree is reported as the gap `record:stale`
+and named in `record.stale`, so the file cannot quietly outlive the repository it
+describes. The report's own `stack`, `test` and `check` are always detection's answer,
+never the record's.
+
+### Writing, refusing and rewriting
+
+```bash
+node scripts/adopt.mts --record           # { "record": "agentic.config.json", "written": true, "changed": [] }
+node scripts/adopt.mts --record --force   # rewrites, and reports every field that changed
+```
+
+- **No record yet** — it is written, and `changed` is empty. Nothing else on disk is
+  touched.
+- **A record this tool generated** — it is rewritten, and `changed` lists one
+  `{ "field": "commands.test", "from": null, "to": "npm test" }` per field that moved.
+  `generatedAt` is never reported as a change: it moves on every write by definition.
+- **A record whose `generatedBy` is not this tool** — it is *not* overwritten:
+  `{ "refused": "…", "reason": "record:not-ours", "generatedBy": "…" }`, exit 1, the file
+  left byte-identical. Someone hand-edited it, and silently discarding that edit would
+  hide the very thing worth knowing. `--record --force` is the way past the refusal; it
+  regenerates the file and reports `generatedBy` among the changed fields.
+- **A record that is not the shape** — an unknown key, a missing required field, a wrong
+  type or text that is not JSON — stops the run with a named error and the offending
+  field, on `--inventory` as much as on `--record`. It is never repaired in place and
+  never defaulted. Delete the file to start again.
 
 ## Crash policy: fail closed
 
@@ -129,7 +214,7 @@ the cause.
 
 | `error` | Cause |
 | --- | --- |
-| `usage: node scripts/adopt.mts --inventory \| --plan-issue` | neither flag, or both |
+| `usage: node scripts/adopt.mts --inventory \| --plan-issue \| --record [--force]` | no mode flag, more than one, or `--force` without `--record` |
 | `root:not-a-git-repository` | `git rev-parse --show-toplevel` could not answer |
 | `repository:unreadable` | the repository read failed, or answered without a default branch or without the two merge settings |
 | `ruleset:unreadable` | the branch rules read failed or was not a list |
@@ -139,11 +224,20 @@ the cause.
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read back from what `gh` printed |
 | `plan-issue:not-created` | `gh issue create` failed; its first line, when it had one, is in `detail` |
 | `label:human:pending:not-created` | the label does not exist and could not be created |
+| `record:unreadable` | `agentic.config.json` exists and could not be read |
+| `record:unparsable` | it exists and is not JSON |
+| `record:unknown-key` | it holds a key the shape does not define; `field` names it |
+| `record:missing-field` | a required field is absent; `field` names it |
+| `record:wrong-type` | a field is not the type the shape defines, or the file does not hold one JSON object; `field` names it when there is one |
+| `record:unknown-version` | its `version` is not the one this reader knows; a future shape is refused, never read with today's rules |
+| `record:not-written` | the record could not be written to the repository root |
+
+The `record:*` names carry a `field` alongside `error` whenever the problem has one
+(`commands.test`, `proof.dir`, …), so a caller can point at the line rather than the file.
 
 ## What this is not
 
-`adopt` reads and writes no adoption record: what an adopting repository decided has no
-home yet, because invariant 4 (`AGENTS.md`) says detection is a default and there is no
-config file, and changing that is the owner's decision, not this script's. `adopt` also
-performs none of the remedies it lists — the plan issue is a question, and the answer is
-a person's.
+`adopt` performs none of the remedies it lists — the plan issue is a question, and the
+answer is a person's. And the record it writes is not a configuration file a person
+maintains: invariant 4 still holds, detection remains the default, and the record is its
+output, not its replacement.

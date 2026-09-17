@@ -6,11 +6,13 @@
 //
 //   node scripts/adopt.mts --inventory
 //   node scripts/adopt.mts --plan-issue
+//   node scripts/adopt.mts --record [--force]
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
 // JSON on stdout and performs **no write of any kind**: no file is created
 // or touched, and the only `gh` calls are reads (`api repos/{owner}/{repo}`,
-// the default branch's effective rules, `label list`).
+// the default branch's effective rules, `label list`). It reads one more
+// thing from disk than the inventory does — the adoption record, below.
 //
 // `--plan-issue` is the one mutation, and it is a question rather than a
 // change: it opens a single `human:pending` issue whose body renders the
@@ -21,15 +23,34 @@
 // (`scripts/reconcile.mts`, `scripts/claim.mts` and the Codex route's
 // `github.mts`) are already in place. A second run never opens a second
 // issue: it refuses with `{ refused, reason: 'plan-issue:already-open' }`.
-// Nothing here reads or writes an adoption record; that is a later issue,
-// behind the owner's decision on invariant 4.
+//
+// `--record` is the second mutation, and it writes exactly one file:
+// `agentic.config.json` at the repository root, the adoption record of
+// `docs/decisions.md` item 15, built from the inventory by
+// `scripts/lib/adopt/record.mts` — the one writer. It refuses to overwrite a
+// record whose `generatedBy` is not this tool (`record:not-ours`); `--force`
+// is the way past that refusal. Either way a rewrite reports every field
+// that changed.
+//
+// **Detection stays the default.** The record is compared with what
+// `ci/lib/detect.mts` says on *every* run, not only when it is written, and
+// `--inventory` reports each field where the two disagree as the gap
+// `record:stale`. That comparison lives here rather than in
+// `inventory.mts` because the inventory is what a repository *has*, read
+// once; the record is a layer over it, and the values to compare against —
+// `stack`, `test`, `check` — are already in the report, so no second
+// detection run happens.
 //
 // **Crash policy: fail closed.** Any `git` or `gh` read that cannot answer
 // prints `{ error: <named reason> }` and exits 1. No field is ever reported
 // as absent because the read for it failed — "there is no ruleset" and "the
 // ruleset could not be read" are different answers, and a caller acting on
 // the first when the second is true would delete a protection it never saw.
-// A usage problem is reported the same way, before any call is made.
+// The record is held to the same rule on every flag, `--inventory`
+// included: a record that is not the shape prints `{ error, field }` and
+// exits 1 rather than being ignored, because a rejected record silently read
+// as "no record" is a stale configuration nothing would ever report. A usage
+// problem is reported the same way, before any call is made.
 //
 // Node built-ins only.
 import { spawnSync } from 'node:child_process';
@@ -43,8 +64,19 @@ import {
   type Gap,
   type Inventory,
 } from './lib/adopt/inventory.mts';
+import {
+  GENERATED_BY,
+  RECORD_FILE,
+  RecordError,
+  buildRecord,
+  diffRecords,
+  readRecord,
+  staleFields,
+  writeRecord,
+  type AdoptionRecord,
+} from './lib/adopt/record.mts';
 
-const USAGE = 'usage: node scripts/adopt.mts --inventory | --plan-issue';
+const USAGE = 'usage: node scripts/adopt.mts --inventory | --plan-issue | --record [--force]';
 
 /** The title the plan issue is deduplicated by; one per repository. */
 const PLAN_ISSUE_TITLE = 'Adoption plan: what this repository is missing';
@@ -61,6 +93,13 @@ const PENDING_DESCRIPTION = 'A human decision is required; affected work is paus
  */
 function fail(reason: string, detail?: string): never {
   console.log(JSON.stringify(detail ? { error: reason, detail } : { error: reason }));
+  process.exit(1);
+}
+
+/** The same exit for a record this tool refuses, with the field it rejected. */
+function failRecord(err: RecordError): never {
+  const field = err.field === null ? {} : { field: err.field };
+  console.log(JSON.stringify({ error: err.reason, ...field, detail: err.message }));
   process.exit(1);
 }
 
@@ -81,7 +120,13 @@ function gitIn(cwd: string) {
 const flags = parseArgs(process.argv.slice(2));
 const wantInventory = flags.inventory === true;
 const wantPlanIssue = flags['plan-issue'] === true;
-if (wantInventory === wantPlanIssue) fail(USAGE);
+const wantRecord = flags.record === true;
+const force = flags.force === true;
+// Exactly one mode. `--force` is a modifier of `--record` and never a mode
+// of its own: on its own it names nothing to do, and it must not be read as
+// "write the record" by accident.
+if ([wantInventory, wantPlanIssue, wantRecord].filter(Boolean).length !== 1) fail(USAGE);
+if (force && !wantRecord) fail(USAGE);
 
 // --- 2. the repository root -------------------------------------------------
 const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
@@ -92,16 +137,66 @@ const root = top.stdout.trim();
 const inventory = takeInventory(root, gh, gitIn(root));
 if (isFailure(inventory)) fail(inventory.error);
 
+// --- 4. the adoption record, read on every run ------------------------------
+// Read before anything is written, and validated before it is believed. A
+// record that is not the shape stops the run here, whichever flag asked.
+let existing: AdoptionRecord | null;
+try {
+  existing = readRecord(root);
+} catch (err) {
+  if (err instanceof RecordError) failRecord(err);
+  throw err;
+}
+
+/** What the report says about the record: never the record itself, which detection replaces. */
+type RecordView = { generatedBy: string; generatedAt: string; stale: string[] } | null;
+type ReportGap = Gap | 'record:stale';
+type Report = Omit<Inventory, 'gaps'> & { gaps: ReportGap[]; record: RecordView };
+
+const stale = existing === null ? [] : staleFields(existing, inventory);
+const record: RecordView =
+  existing === null ? null : { generatedBy: existing.generatedBy, generatedAt: existing.generatedAt, stale };
+const report: Report = {
+  ...inventory,
+  gaps: stale.length > 0 ? [...inventory.gaps, 'record:stale'] : inventory.gaps,
+  record,
+};
+
 if (wantInventory) {
-  console.log(JSON.stringify(inventory));
+  console.log(JSON.stringify(report));
   process.exit(0);
 }
 
-// --- 4. --plan-issue: render the plan ---------------------------------------
+// --- 5. --record: the one file adoption generates ---------------------------
+if (wantRecord) {
+  if (existing !== null && existing.generatedBy !== GENERATED_BY && !force) {
+    console.log(
+      JSON.stringify({
+        refused:
+          `${RECORD_FILE} says it was generated by \`${existing.generatedBy}\`, not by this tool; ` +
+          'no person edits this file. Run `--record --force` to regenerate it, losing every hand edit.',
+        reason: 'record:not-ours',
+        generatedBy: existing.generatedBy,
+      }),
+    );
+    process.exit(1);
+  }
+  const next = buildRecord(inventory);
+  const changed = existing === null ? [] : diffRecords(existing, next);
+  try {
+    writeRecord(root, next);
+  } catch (err) {
+    fail('record:not-written', (err as Error).message);
+  }
+  console.log(JSON.stringify({ record: RECORD_FILE, written: true, changed }));
+  process.exit(0);
+}
+
+// --- 6. --plan-issue: render the plan ---------------------------------------
 const show = (value: string | null): string => (value === null ? 'none' : `\`${value}\``);
 
 /** What adoption would do about each gap, in the gap's own words. */
-const REMEDIES: Record<Gap, (report: Inventory) => string> = {
+const REMEDIES: Record<ReportGap, (report: Report) => string> = {
   'ruleset:absent': (r) =>
     `create the \`agentic-setup\` branch ruleset on \`${r.defaultBranch}\` (\`node scripts/init.mts --rules\`), ` +
     'requiring a pull request and the checks the merge gate reads',
@@ -120,9 +215,12 @@ const REMEDIES: Record<Gap, (report: Inventory) => string> = {
   },
   'test-command:none': () =>
     'set `AGENTIC_TEST_CMD`, or add a test command detection can find — `negative-control` proves nothing without one',
+  'record:stale': (r) =>
+    `regenerate \`${RECORD_FILE}\` (\`node scripts/adopt.mts --record --force\`): detection no longer agrees with it on ` +
+    `\`${(r.record?.stale ?? []).join('`, `')}\`, and detection is what the loop follows`,
 };
 
-function renderPlan(report: Inventory): string {
+function renderPlan(report: Report): string {
   const ruleset =
     report.ruleset === null
       ? 'absent'
@@ -140,6 +238,13 @@ function renderPlan(report: Inventory): string {
     `- Workflows: ${workflowsPresent}/${OWNED_WORKFLOWS.length} of the loop's workflows present`,
     `- Auto-merge: ${report.autoMerge ? 'enabled' : 'disabled'}`,
     `- Delete branch on merge: ${report.deleteBranchOnMerge ? 'enabled' : 'disabled'}`,
+    `- Adoption record: ${
+      report.record === null
+        ? 'none'
+        : `generated by \`${report.record.generatedBy}\` at ${report.record.generatedAt}${
+            report.record.stale.length === 0 ? '' : `, stale on \`${report.record.stale.join('`, `')}\``
+          }`
+    }`,
   ].join('\n');
   const plan =
     report.gaps.length === 0
@@ -167,7 +272,7 @@ function renderPlan(report: Inventory): string {
   ].join('\n');
 }
 
-// --- 5. --plan-issue: refuse when one is already open -----------------------
+// --- 7. --plan-issue: refuse when one is already open -----------------------
 const search = gh(['issue', 'list', '--search', `"${PLAN_ISSUE_TITLE}" in:title`, '--state', 'open', '--json', 'number,title']);
 if (search.status !== 0 || !search.stdout.trim()) fail('plan-issue:unreadable');
 let open: Array<{ number?: number; title?: string }>;
@@ -189,7 +294,7 @@ if (already) {
   process.exit(1);
 }
 
-// --- 6. --plan-issue: the one mutation --------------------------------------
+// --- 8. --plan-issue: the one mutation --------------------------------------
 // The label has to exist before it can be applied; the inventory already
 // says whether it does, so this costs no extra read.
 if (!inventory.labels.includes(PENDING_LABEL)) {
@@ -197,9 +302,12 @@ if (!inventory.labels.includes(PENDING_LABEL)) {
   if (label.status !== 0) fail(`label:${PENDING_LABEL}:not-created`);
 }
 
-const created = gh(['issue', 'create', '--title', PLAN_ISSUE_TITLE, '--label', PENDING_LABEL, '--body', renderPlan(inventory)]);
+const created = gh(['issue', 'create', '--title', PLAN_ISSUE_TITLE, '--label', PENDING_LABEL, '--body', renderPlan(report)]);
 if (created.status !== 0) fail('plan-issue:not-created', (created.stderr || created.stdout || '').trim().split('\n')[0] || undefined);
 const url = created.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
 const number = Number(url.match(/\/(\d+)\s*$/)?.[1]);
 if (!Number.isInteger(number)) fail('plan-issue:unreadable');
-console.log(JSON.stringify({ issue: number, url, gaps: inventory.gaps }));
+// `report.gaps`, not `inventory.gaps`: the body above was rendered from the
+// report, so printing the inventory's list would leave the one gap the
+// record introduces in the issue and out of the JSON a caller reads.
+console.log(JSON.stringify({ issue: number, url, gaps: report.gaps }));

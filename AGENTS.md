@@ -42,7 +42,9 @@ feature parity between the two runtimes.
    fail open on their own errors; `land.mts` fails closed (refuses) when `gh` cannot
    answer.
 4. **Detection is a default, never a contract.** New stacks go in `ci/lib/detect.mts` with an
-   env override path; no config file.
+   env override path; the only file is `agentic.config.json`, written by `adopt` and never
+   by hand. Detection remains the default, and the record is its output, not its
+   replacement.
 5. **The parsers stay strict.** `## Files` reads bullets only; `authorised:` is one glob per
    line; the closing-keyword line (`Closes`/`Fixes`/`Resolves #N`, several allowed) is
    plain text — a keyword inside backticks or a fence is ignored. Loosening a parser
