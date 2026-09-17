@@ -17,6 +17,13 @@
 // silent precedence, and the `no open milestone` refusal names --no-milestone
 // as the other way out.
 //
+// That set is the repository-wide open issue list filtered locally on
+// `milestone === null`, not GitHub's own `no:milestone` search qualifier: the
+// search index can lag a write, so an issue created during a pass would be
+// missing from exactly the report meant to make it visible. Under
+// --no-milestone the milestones endpoint is not read at all — there is no
+// milestone to pick and none to lint.
+//
 // Without --no-fetch, runs `git fetch --prune origin` once before reading
 // remote branches, so step 0 of skills/orchestrate/SKILL.md no longer runs
 // its own fetch and a pass makes one network call for git, not two. Remote
@@ -462,14 +469,11 @@ if (noMilestone) {
 const milestoneLint = milestone === null ? null : lintMilestoneDescription(milestones.find((m) => m.title === milestone)?.description ?? '');
 
 // 2. open issues: the milestone's, or — under --no-milestone — the ones that
-// carry none. GitHub's own `no:milestone` search qualifier is not used: the
-// search index can lag a write (the L6 lesson of #129 — a listing right after
-// a write may lag), and an issue created in this pass would then be missing
-// from exactly the report meant to make it visible. The repository-wide open
-// list carries `milestone` per issue, so
-// the filter is a local, immediate `milestone === null` on the same
-// `gh issue list` call shape the milestone branch uses — the two sets are
-// disjoint by construction, never merged.
+// carry none. The repository-wide open list carries `milestone` per issue, so
+// the filter is a local, immediate `milestone === null` on the same `gh issue
+// list` call shape the milestone branch uses, rather than GitHub's
+// `no:milestone` search qualifier (see the header for why the index is not
+// trusted here). The two sets are disjoint by construction, never merged.
 const issues =
   milestone === null
     ? ghJson<Issue[]>(

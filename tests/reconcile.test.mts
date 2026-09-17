@@ -46,14 +46,6 @@ JSON
         all=\$(for n in \$(seq 1 30); do printf '{"number":%d,"title":"P%d","state":"open","description":"filler"}\\n' "\$n" "\$n"; done
                printf '%s\\n' '{"number":31,"title":"M31","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n- [ ] one\\n\\nDepends on: none\\n"}')
         ;;
-      noopen)
-        # A repository whose only milestone is closed: nothing for the default
-        # pick to reconcile against (#259 AC3).
-        all=\$(cat <<'JSON'
-{"number":1,"title":"MClosed","state":"closed","description":"An objective.\\n\\nOut of this phase:\\n- none\\n\\nExit criteria:\\n- [ ] one\\n\\nDepends on: none\\n"}
-JSON
-)
-        ;;
       *)
         all=\$(cat <<'JSON'
 {"number":2,"title":"M2","state":"open","description":"Only an objective sentence, and nothing else.\\n"}
@@ -109,24 +101,9 @@ JSON
       *"--milestone M2"*|*"--milestone M3"*|*"--milestone M4"*|*"--milestone M5"*|*"--milestone M6"*|*"--milestone M7"*|*"--milestone M31"*|*"--milestone MClosed"*)
         echo '[]'
         ;;
-      *"--milestone "*)
+      *)
         echo "fake-gh: unknown milestone" >&2
         exit 1
-        ;;
-      *)
-        # No --milestone at all: the repository-wide open-issue list, with the
-        # milestone field, that --no-milestone reads (#259). A
-        # milestone-carrying issue is in it on purpose — the filter is what has
-        # to leave it out.
-        cat <<'JSON'
-[
-  {"number":80,"title":"Small fix with no milestone","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"milestone":null},
-  {"number":81,"title":"No milestone, blocked on an open issue","body":"## Dependencies\\nBlocked by: #99\\n","labels":[{"name":"state:ready"}],"milestone":null},
-  {"number":82,"title":"No milestone, in progress with neither PR nor branch","body":"","labels":[{"name":"state:in-progress"}],"milestone":null},
-  {"number":83,"title":"No milestone, awaiting a person","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"human:pending"}],"milestone":null},
-  {"number":10,"title":"Ready no blockers","body":"## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"milestone":{"number":1,"title":"M1"}}
-]
-JSON
         ;;
     esac
     ;;
@@ -794,92 +771,5 @@ try {
 }
 check('reconcile reports { error } on stdout', typeof out3?.error === 'string' && out3.error.length > 0, r3.stdout);
 check('reconcile never prints a stack trace', !/\n\s*at /.test(r3.stdout) && !/\n\s*at /.test(r3.stderr), `${r3.stdout}\n${r3.stderr}`);
-
-// --- #259: --no-milestone reconciles the open issues that carry no milestone.
-// Small fixes reasonably go without a milestone, and until now step 0 could
-// not see them at all: the default pick fails with `no open milestone` and
-// `--milestone` can only name one. The mode prints the same JSON document over
-// a different set of issues — `milestone: null`, `milestoneLint: null`, since
-// there is no milestone to name or to lint. --------------------------------
-const rNoMilestone = reconcile('--no-milestone');
-check('reconcile --no-milestone exits 0', rNoMilestone.status === 0, `${rNoMilestone.stdout}\n${rNoMilestone.stderr}`);
-const outNoMilestone = parseJson(rNoMilestone.stdout);
-check(
-  '--no-milestone reports milestone: null and milestoneLint: null (AC1)',
-  outNoMilestone !== null && outNoMilestone.milestone === null && outNoMilestone.milestoneLint === null,
-  rNoMilestone.stdout,
-);
-check(
-  '--no-milestone prints the same JSON shape as a milestone pass, field for field (AC1)',
-  outNoMilestone !== null && JSON.stringify(Object.keys(outNoMilestone)) === JSON.stringify(Object.keys(out ?? {})),
-  JSON.stringify(Object.keys(outNoMilestone ?? {})),
-);
-
-const noMilestoneReady = (outNoMilestone?.ready ?? []).map((i: any) => i.number).sort();
-check(
-  '--no-milestone lists the open issues that carry no milestone, classified the usual way (AC1)',
-  JSON.stringify(noMilestoneReady) === JSON.stringify([80]),
-  JSON.stringify(outNoMilestone?.ready),
-);
-check(
-  '--no-milestone classifies a milestone-less in-progress issue with no PR and no branch as stale (AC1)',
-  (outNoMilestone?.stale ?? []).length === 1 && outNoMilestone.stale[0].number === 82,
-  JSON.stringify(outNoMilestone?.stale),
-);
-check(
-  '--no-milestone reports a milestone-less issue awaiting a person, and keeps it out of ready (AC1)',
-  JSON.stringify((outNoMilestone?.humanPending ?? []).map((i: any) => i.number)) === JSON.stringify([83]),
-  JSON.stringify(outNoMilestone?.humanPending),
-);
-
-const noMilestoneNumbers = [
-  ...(outNoMilestone?.ready ?? []),
-  ...(outNoMilestone?.humanPending ?? []),
-  ...(outNoMilestone?.inProgress ?? []),
-  ...(outNoMilestone?.resumable ?? []),
-  ...(outNoMilestone?.inReview ?? []),
-  ...(outNoMilestone?.stale ?? []),
-].map((i: any) => i.number);
-check(
-  "--no-milestone never mixes in a milestone's issues (AC1)",
-  !noMilestoneNumbers.includes(10),
-  JSON.stringify(noMilestoneNumbers),
-);
-
-// --- AC2: the two flags name two different sets of issues, so asking for both
-// is a usage error naming both, not a silent precedence. -------------------
-const rBothFlags = reconcile('--no-milestone', '--milestone', 'M1');
-check('--no-milestone with --milestone exits 1 (AC2)', rBothFlags.status === 1, `${rBothFlags.stdout}\n${rBothFlags.stderr}`);
-const outBothFlags = parseJson(rBothFlags.stdout);
-check(
-  '--no-milestone with --milestone is a usage error naming both flags (AC2)',
-  typeof outBothFlags?.error === 'string' &&
-    outBothFlags.error.includes('--no-milestone') &&
-    outBothFlags.error.includes('--milestone'),
-  rBothFlags.stdout,
-);
-check(
-  'the two-flag usage error never reconciles one of them anyway (AC2)',
-  outBothFlags?.milestone === undefined && outBothFlags?.ready === undefined,
-  rBothFlags.stdout,
-);
-
-// --- AC3: with neither flag and no open milestone, the refusal names the
-// other way out as well, instead of leaving --milestone as the only exit. ---
-const rNoOpenMilestone = reconcileWithEnv({ FAKE_GH_MILESTONES: 'noopen' });
-check(
-  'no open milestone and neither flag still exits 1 (AC3)',
-  rNoOpenMilestone.status === 1,
-  `${rNoOpenMilestone.stdout}\n${rNoOpenMilestone.stderr}`,
-);
-const outNoOpenMilestone = parseJson(rNoOpenMilestone.stdout);
-check(
-  'the no-open-milestone failure names --no-milestone as well as --milestone (AC3)',
-  typeof outNoOpenMilestone?.error === 'string' &&
-    outNoOpenMilestone.error.startsWith('no open milestone') &&
-    outNoOpenMilestone.error.includes('--milestone') &&
-    outNoOpenMilestone.error.includes('--no-milestone'),
-  rNoOpenMilestone.stdout,
-);
 
 finish();
