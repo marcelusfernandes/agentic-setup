@@ -447,4 +447,34 @@ const o4 = run(
 );
 refuses('a `## Dogfood` bullet naming no dated report', o4, 'dogfood');
 
+// --- O5: a stray header `main SHA` still leaves the dogfood question answerable
+// The guard is on the **rows**, which are the only shas the dogfood check
+// reads. A header `main SHA` off `origin/main` is its own refusal and leaves
+// every row readable, so one run names both codes instead of one per run.
+const o5Fixture = fixture();
+const o5Merged = land(o5Fixture.repo, { 'ci/scope-check.mts': '// a mechanism change\n' }, 'feat(ci): change the mechanism (#1)');
+land(
+  o5Fixture.repo,
+  { [EVIDENCE]: closeout('14', o5Fixture.side, [[1, 11, o5Merged]]) },
+  'docs(docs): closeout M14 (#174)',
+);
+const o5 = run(o5Fixture.repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+check(
+  'a stray header main SHA is reported together with the missing dogfood report',
+  missingOf(o5.stdout).includes('evidence:sha') && missingOf(o5.stdout).includes('dogfood'),
+  o5.stdout,
+);
+
+// --- O6: a row sha off origin/main leaves it undeterminable ------------------
+// Nothing can be said about the files of a commit that is not on the branch,
+// so the run refuses on the sha alone rather than guessing.
+const o6Fixture = fixture();
+land(o6Fixture.repo, { [EVIDENCE]: closeout('14', o6Fixture.landed, [[1, 11, o6Fixture.side]]) }, 'docs(docs): closeout M14 (#174)');
+const o6 = run(o6Fixture.repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+check(
+  'a row sha off origin/main refuses on the sha and claims nothing about dogfood',
+  missingOf(o6.stdout).includes('evidence:sha') && !missingOf(o6.stdout).includes('dogfood'),
+  o6.stdout,
+);
+
 finish();

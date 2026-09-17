@@ -404,16 +404,20 @@ if (evidence === null) {
 }
 
 if (closeout && closeout.errors.length === 0) {
+  const strayRows = closeout.rows.filter((r) => !isAncestor(r.sha));
   const strays = [
     ...(isAncestor(closeout.sha) ? [] : [`main SHA ${closeout.sha}`]),
-    ...closeout.rows.filter((r) => !isAncestor(r.sha)).map((r) => `merge commit ${r.sha} for #${r.issue}`),
+    ...strayRows.map((r) => `merge commit ${r.sha} for #${r.issue}`),
   ];
   if (strays.length > 0) refuse('evidence:sha', `${evidence}: ${strays.join(', ')} is not an ancestor of ${MAIN}`);
 
-  // #182: the dogfood refusal. Only when every sha is an ancestor — the diff
-  // of a commit that is not on `origin/main` says nothing about this phase,
-  // and `evidence:sha` has already refused the closeout for it.
-  if (strays.length === 0 && !closeout.dogfood.some((bullet) => DOGFOOD_REPORT_RE.test(bullet))) {
+  // #182: the dogfood refusal. Guarded on the **rows** alone, which are the
+  // only shas it reads: the diff of a commit that is not on `origin/main` says
+  // nothing about this phase, while a stray header `main SHA` leaves every row
+  // readable and so leaves the question determinable. `evidence:sha` has
+  // already refused the closeout either way; this decides only whether one run
+  // can also name the missing report.
+  if (strayRows.length === 0 && !closeout.dogfood.some((bullet) => DOGFOOD_REPORT_RE.test(bullet))) {
     const sensitive = closeout.rows
       .map((row) => ({ issue: row.issue, paths: filesOf(row.sha).filter((f) => matchesAny(f, DOGFOOD_GLOBS)) }))
       .filter((r) => r.paths.length > 0);
