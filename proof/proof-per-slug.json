@@ -1,0 +1,8 @@
+{
+  "tests": [
+    "tests/proof-declarations.test.mts",
+    "tests/negative-control.test.mts",
+    "tests/issue-lint.test.mts"
+  ],
+  "describes": "a branch can declare the files that prove it, the negative control overlays exactly those, and every declaration in proof/ is validated"
+}

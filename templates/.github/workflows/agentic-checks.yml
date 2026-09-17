@@ -14,6 +14,11 @@
 # whole diff is docs/**, .github/**, templates/** or root Markdown; set the
 # repository variable AGENTIC_SKIP_GLOBS (comma-separated globs) to add a
 # path class of your own. It is empty when the variable is unset.
+#
+# A branch may also declare its own proof: when `proof/<slug>.json` exists at
+# head for the branch `<type>/<n>-<slug>` (passed as --branch below), the
+# overlay is exactly the files it names and its optional `command` replaces the
+# detected one. See proof/README.md; the file is optional.
 
 name: agentic-checks
 
@@ -66,4 +71,4 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AGENTIC_SKIP_GLOBS: ${{ vars.AGENTIC_SKIP_GLOBS }}
           # AGENTIC_TEST_CMD: npm test
-        run: node .github/scripts/agentic/negative-control.mts --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: node .github/scripts/agentic/negative-control.mts --base "$BASE_SHA" --head "$HEAD_SHA" --branch "$GITHUB_HEAD_REF"

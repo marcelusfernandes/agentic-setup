@@ -8,7 +8,7 @@
 // that mechanical form of the #3 guard moved to `scope`'s dangling-reference
 // rule at PR time (#51), where a diff exists to check it against.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
@@ -151,6 +151,19 @@ check('a Declaration: path outside proof/ fails', outsideProof.status === 1 && /
 
 const emptyDeclaration = lint(1065, issueBody({ proof: '## Proof\nnpm test covers it.\nDeclaration:\n' }));
 check('an empty Declaration: line fails', emptyDeclaration.status === 1 && /Declaration/.test(emptyDeclaration.out), emptyDeclaration.out);
+
+// The shipped template shows the optional line without arming it: an issue
+// opened from it and left unedited must not fail on a declaration it never
+// made.
+const templateProof = readFileSync(join(ROOT, '.github', 'ISSUE_TEMPLATE', 'task.md'), 'utf8')
+  .split(/^## /m)
+  .find((section) => section.startsWith('Proof'));
+const fromTemplate = lint(1067, issueBody({ proof: `## ${templateProof ?? 'Proof\nMISSING SECTION\n'}` }));
+check(
+  "the shipped task template's ## Proof section carries no armed Declaration: line",
+  fromTemplate.status === 0 && parse(fromTemplate.out)?.ok === true,
+  fromTemplate.out,
+);
 
 // A `Declaration:` line outside the Proof section is not this line: it must
 // not be read, and it must not fail the lint either.
