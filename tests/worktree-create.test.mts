@@ -4,11 +4,16 @@
 // `${AGENTIC_WORKTREE_DIR}/<name>`, `node_modules` linked when the checkout has one, the
 // path printed on stdout. Spawns the real hook against a throwaway git repo, always
 // redirecting AGENTIC_WORKTREE_DIR to a temp directory so a run never touches the real
-// default location (`<tmpdir>/agentic-worktrees`).
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+// default location (`<tmpdir>/agentic-worktrees`). One case reads this repository's own
+// `.gitignore` instead of the hook: the `node_modules` the hook symlinks must stay ignored
+// in both shapes (symlink and directory) for the knob's in-repository settings (#234).
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, cleanup, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
+import { ROOT, check, cleanup, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
 
 const repo = tempRepo();
 commit(repo, { 'a.txt': 'a' }, 'init');
@@ -45,6 +50,53 @@ check('worktree-create exits 0 when the repo has node_modules', r2.status === 0,
 check(
   'worktree-create symlinks node_modules into the new worktree',
   existsSync(join(dir2, 'node_modules')) && lstatSync(join(dir2, 'node_modules')).isSymbolicLink(),
+);
+
+// AC (#234): this repository's own `.gitignore` ignores that `node_modules` in BOTH shapes
+// — the symlink the hook creates and the ordinary directory an install leaves. The worktree
+// normally sits outside the checkout, but `AGENTIC_WORKTREE_DIR` is a knob and Claude Code's
+// own default when this hook is not loaded (`.claude/worktrees/agent-<id>`) is inside it. A
+// pattern ending in `/` matches directories only, and git reports a symlink as a file, so an
+// in-repository worktree would otherwise leave an untracked `node_modules` entry that `git
+// status --porcelain` prints — the exact signal `deadWorktreeWork` in `scripts/reconcile.mts`
+// reads to call a worktree dirty, and one `git add -A` away from being committed as a link.
+//
+// The fixture carries this repository's real `.gitignore`, so the case goes red the moment
+// the rule stops covering either shape.
+const ignoreRepo = tempRepo();
+// Local config beats the user's global one: a machine-level `core.excludesFile` that happens
+// to ignore `node_modules` must not decide this case.
+git(['config', 'core.excludesFile', '/dev/null'], ignoreRepo);
+commit(ignoreRepo, { '.gitignore': readFileSync(join(ROOT, '.gitignore'), 'utf8') }, 'carry the repository .gitignore');
+
+/** `git check-ignore` without throwing: exit 0 means the path is ignored. */
+const checkIgnore = (path: string) =>
+  spawnSync('git', ['check-ignore', '-q', path], { cwd: ignoreRepo, encoding: 'utf8' }).status === 0;
+const porcelain = () => git(['status', '--porcelain'], ignoreRepo);
+
+// The symlink shape: what hooks/worktree-create.mts creates, pointing at a real directory
+// outside the fixture exactly as the hook points at the main checkout's node_modules.
+symlinkSync(worktreeDir, join(ignoreRepo, 'node_modules'), 'dir');
+check(
+  "the repository's .gitignore ignores a node_modules symlink",
+  checkIgnore('node_modules'),
+  'git check-ignore does not claim the symlink — a pattern ending in `/` matches directories only',
+);
+check(
+  'a node_modules symlink leaves the working tree clean for `git status --porcelain`',
+  porcelain() === '',
+  `git status --porcelain printed: ${porcelain()}`,
+);
+
+// The directory shape: an ordinary install, which must stay ignored too.
+unlinkSync(join(ignoreRepo, 'node_modules'));
+mkdirSync(join(ignoreRepo, 'node_modules'), { recursive: true });
+writeFileSync(join(ignoreRepo, 'node_modules', 'marker.txt'), 'x');
+check("the repository's .gitignore ignores a node_modules directory", checkIgnore('node_modules/marker.txt'));
+check(
+  'a node_modules directory leaves the working tree clean for `git status --porcelain`',
+  porcelain() === '',
+  `git status --porcelain printed: ${porcelain()}`,
 );
 
 // AC: the failure mode on a missing repository — fails closed, nothing printed.
