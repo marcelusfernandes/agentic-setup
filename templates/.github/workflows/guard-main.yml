@@ -14,7 +14,20 @@
 # confirmed empty list) is retried the same way; crash policy: if it still
 # errors on the last attempt, the run still fails and opens an issue, but
 # the body says the lookup failed rather than claiming a confirmed direct
-# push.
+# push. The call's stdout and stderr are captured apart, so a warning `gh`
+# prints on an otherwise successful attempt cannot turn a "0 PR(s)" or
+# "N PR(s)" answer into "unexpected response"; stderr is echoed only when
+# the attempt did not produce a clean numeric answer (#207).
+#
+# Crash policy of the failure path: a `gh label create` or `gh issue create`
+# that fails there is reported as a `::warning::` and the step still fails
+# with its `::error::`, so the run is red and says why no `human:pending`
+# issue was opened.
+#
+# This file and `templates/.github/workflows/guard-main.yml` (the copy `init`
+# ships to adopting repositories) are pinned byte-identical by
+# `tests/guard-main.test.mts`, which also runs the step below against a fake
+# `gh`: edit one copy and the test fails until both match again.
 #
 # Declared exception: a commit whose message contains "[allow-push-main]"
 # (bootstrap only).
@@ -48,11 +61,16 @@ jobs:
           attempts=4
           wait_seconds=15
           last="error"
+          stderr_file="$(mktemp)"
+          trap 'rm -f "$stderr_file"' EXIT
           for attempt in $(seq 1 "$attempts"); do
-            if out="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length' 2>&1)"; then
+            if out="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length' 2>"$stderr_file")"; then
               case "$out" in
                 ''|*[!0-9]*)
                   echo "attempt $attempt/$attempts: unexpected response: $out"
+                  if [ -s "$stderr_file" ]; then
+                    echo "attempt $attempt/$attempts: stderr: $(cat "$stderr_file")"
+                  fi
                   last="error"
                   ;;
                 0)
@@ -66,7 +84,7 @@ jobs:
                   ;;
               esac
             else
-              echo "attempt $attempt/$attempts: gh api error: $out"
+              echo "attempt $attempt/$attempts: gh api error: $(cat "$stderr_file")${out:+ (stdout: $out)}"
               last="error"
             fi
             if [ "$attempt" -lt "$attempts" ]; then
@@ -77,13 +95,17 @@ jobs:
           title="Direct push to main without a PR ($ACTOR, ${SHA:0:7})"
           exists="$(gh issue list --repo "$REPO" --search "\"$title\" in:title" --state open --json number --jq 'length')"
           if [ "$exists" = "0" ]; then
-            gh label create human:pending --repo "$REPO" --color f9d0c4 \
-              --description "A human decision is required; affected work is paused" --force
+            if ! gh label create human:pending --repo "$REPO" --color f9d0c4 \
+              --description "A human decision is required; affected work is paused" --force; then
+              echo "::warning::label create failed: human:pending is not in place, so the issue below may carry no label"
+            fi
             if [ "$last" = "empty" ]; then
               body="Commit \`$SHA\` reached \`main\` without a PR (actor: $ACTOR). Check what came in and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
             else
               body="Commit \`$SHA\` reached \`main\` (actor: $ACTOR), but the commit-to-PR lookup failed ($attempts attempts, ${wait_seconds}s apart; the last one errored), so this is not a confirmed direct push. Check by hand and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
             fi
-            gh issue create --repo "$REPO" --title "$title" --label human:pending --body "$body"
+            if ! gh issue create --repo "$REPO" --title "$title" --label human:pending --body "$body"; then
+              echo "::warning::issue create failed: no human:pending issue was opened for $SHA; the run fails below anyway"
+            fi
           fi
           echo "::error::direct push to main without a PR ($SHA)"; exit 1
