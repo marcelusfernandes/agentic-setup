@@ -268,11 +268,11 @@ check('no arguments exits 1', i.status === 1, i.stdout);
 check('no arguments reports { error } with the usage line', /log-decision\.mts/.test(parse(i.stdout)?.error ?? ''), i.stdout);
 
 // --- J: <parent> takes the same #N / N shapes as --ref ----------------------
-const j = log(['#100', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
-check('#100 as <parent> succeeds (exit 0)', j.status === 0, j.stdout);
+const j = log(['#12', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
+check('#12 as <parent> succeeds (exit 0)', j.status === 0, j.stdout);
 const jOut = parse(j.stdout);
-check('#100 as <parent> reports parent: 100 and one line', jOut?.parent === 100 && jOut?.lines === 1, j.stdout);
-check('#100 as <parent> read issue 100', /issues\/100\b/.test(j.log), j.log);
+check('#12 as <parent> reports parent: 12 and one line', jOut?.parent === 12 && jOut?.lines === 1, j.stdout);
+check('#12 as <parent> read issue 12, the # stripped', /issues\/12\b/.test(j.log), j.log);
 
 const jZero = log(['#0', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
 check(
