@@ -56,18 +56,21 @@ git(['checkout', '-q', 'feat/1-x'], repo);
 r = nc(vacuous);
 check('negative-control fails a vacuous test', r.status === 1 && /vacuous/.test(r.out), r.out);
 // A `vacuous` verdict on a brand-new test tree is the costliest one to read
-// wrong: the overlay copies test files only, so a test command that
-// enumerates its test directories still runs the base's own entry point and
-// stays green. The detail names that trap and the two ways out, rather than
-// leaving the next run to rediscover it.
+// wrong: a test command that enumerates its test directories keeps running
+// the base's own list and stays green. The detail names that trap and states
+// the real overlay rule — the entry point is overlaid when a test glob
+// matches it or a declaration's `tests` names it, which is what lets the fix
+// prove itself in the same PR — rather than leaving the next run to
+// rediscover it. The pins below match a stem plus its object, so rewording
+// the sentence is free and dropping the hint is not.
 check(
   'the vacuous detail names the enumerating entry point that hides a new test tree',
-  /entry point/.test(r.out) && /enumerates/.test(r.out) && /discover/.test(r.out),
+  /entry point/.test(r.out) && /enumerat/.test(r.out) && /test director/.test(r.out) && /discover/.test(r.out),
   r.out,
 );
 check(
-  'the vacuous detail says the entry point is never overlaid, so the fix lands on the base or in the declaration',
-  /never overlaid/.test(r.out) && /proof\/<slug>\.json/.test(r.out),
+  'the vacuous detail states when the entry point is overlaid, naming both the test globs and a declaration `tests`',
+  /overlaid only when/.test(r.out) && /AGENTIC_TEST_GLOBS/.test(r.out) && /proof\/<slug>\.json/.test(r.out) && /`tests`/.test(r.out),
   r.out,
 );
 
