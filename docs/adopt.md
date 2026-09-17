@@ -28,7 +28,7 @@ reads, in this order:
 | --- | --- |
 | `gh api repos/{owner}/{repo}` | `defaultBranch`, `autoMerge`, `deleteBranchOnMerge` |
 | `gh api repos/{owner}/{repo}/rules/branches/<defaultBranch>` | `ruleset` (the branch's *effective* rules, flattened and enforcement-aware — the same endpoint `scripts/land.mts` gates on, not the ruleset list) |
-| `gh label list --json name --limit 200` | `labels` |
+| `gh label list --json name --limit 200` | `labels`, `labelsTruncated` — one page, asked for explicitly rather than left at `gh`'s default of 30 |
 | `git rev-parse --git-path hooks` | where `hooks` are looked for — git's answer, not a guess |
 
 Everything else comes off the filesystem under the root: `hooks` and `workflows` by
@@ -53,6 +53,7 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
     "requiredStatusChecks": ["scope", "negative-control"]
   },
   "labels": ["human:decided", "human:pending", "state:ready"],
+  "labelsTruncated": false,
   "hooks": ["pre-push"],
   "workflows": ["agentic-checks.yml", "guard-main.yml", "issue-lint.yml"],
   "autoMerge": true,
@@ -67,7 +68,13 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
 - `defaultBranch` — the repository's default branch, and the branch whose rules are read.
 - `ruleset` — `null` when no rule is in force on that branch, otherwise the flattened
   view above. `null` means *there is none*, never *it could not be read* (see below).
-- `labels` — every label that exists on the repository, sorted.
+- `labels` — the labels that exist on the repository, sorted: one page of at most 200,
+  the limit the read asks for.
+- `labelsTruncated` — `true` when that page came back **full**, so the repository may have
+  labels this read never saw. `gh` reports neither a total nor a cursor, so a full page is
+  the only signal there is, and the field is always present rather than left for a reader
+  to infer from `labels.length`. While it is `true`, `labels:missing` is a guess drawn from
+  a page: a label reported missing may simply be one beyond it.
 - `hooks` — the hooks this setup installs (`pre-push`) that are present **and** carry its
   marker. Someone else's `pre-push` is not ours and is not listed. Where to look is asked
   of git (`git rev-parse --git-path hooks`), the same question `scripts/init.mts` asks
@@ -96,7 +103,7 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 | --- | --- |
 | `ruleset:absent` | no rule at all is in force on the default branch |
 | `ruleset:review-not-required` | a ruleset exists, but `required_approving_review_count` is 0 — the review gate `scripts/land.mts` reads can never be satisfied |
-| `labels:missing` | at least one label of the loop's vocabulary (the `state:`, `type:`, `review:` and `human:` set `scripts/init.mts` seeds) does not exist |
+| `labels:missing` | at least one label of the loop's vocabulary (the `state:`, `type:`, `review:` and `human:` set `scripts/init.mts` seeds) is not on the page the label read returned; read together with `labelsTruncated` |
 | `hooks:not-installed` | the `pre-push` hook is absent or is not ours |
 | `workflows:missing` | at least one of `agentic-checks.yml`, `guard-main.yml`, `issue-lint.yml` is absent |
 | `test-command:none` | no test command was detected and none was overridden — `negative-control` cannot prove anything without one |
@@ -108,8 +115,16 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 (creating that label first if the repository does not have it yet), titled
 `Adoption plan: what this repository is missing`. The body renders the inventory, lists
 exactly the gaps found as checkboxes — one per gap, each saying what adoption would do
-about it — and ends with the raw JSON. Nothing else is written: no adoption record, no
-file, no setting.
+about it — and ends with the raw JSON. Nothing is written to disk: no adoption record, no
+file, no setting. What it does change is on GitHub, and there are two things there: the
+issue itself, and the `human:pending` label when the repository did not already have it.
+Both are named below.
+
+The body carries one warning the JSON carries as a field: when `labelsTruncated` is
+`true`, the `Labels:` line says so and names the limit the read asked for, because the
+checklist right below it lists the labels adoption would create and that list is drawn
+from a page. A person should not tick a box without knowing the list behind it was
+complete.
 
 That is the repository's own pattern. `.github/workflows/guard-main.yml` opens exactly
 such an issue and deduplicates it by title, and the three readers that honour the label
@@ -126,6 +141,15 @@ A second run never opens a second issue. When an open issue with that exact titl
 already exists it refuses — `{ "refused": "…", "reason": "plan-issue:already-open",
 "issue": 7 }`, exit 1 — and makes no `gh issue create` call at all. Close the issue to
 get a new one.
+
+A repository with nothing to plan is refused too. When the report names no gap there is
+no question to ask — the issue would carry an empty checklist, and a person would have to
+open it to find that out — so it prints
+`{ "refused": "…", "reason": "plan-issue:nothing-to-plan", "gaps": [] }` and exits 1. That
+refusal comes *before* the open-issue search and before the label, so such a run makes no
+`gh` call beyond the reads the inventory already did. The list read is `gaps` of the
+report, not of the inventory: a `record:stale` repository is whole and still has something
+to plan.
 
 ## `--record` writes the adoption record
 
@@ -272,6 +296,33 @@ absent, and every other errno — `EACCES` above all — fails closed.
 `error` is always one of the names below, never a tool's wording: `gh`'s own first line
 is reported alongside it in `detail`, so a caller can branch on the name and still show
 the cause.
+
+### What "nothing written" does and does not cover
+
+"Nothing written" above is exact for the filesystem: no run of this script — failing or
+succeeding, on any flag — creates, moves or touches a file other than the one
+`--record` writes. It is **not** a claim that the run had no effect on GitHub, and two
+branches of `--plan-issue` show why:
+
+- **The plan issue itself.** `--plan-issue` is a mutation by design: on success the issue
+  exists, and so does the `human:pending` label when the repository did not already have
+  it. That is the point of the flag, not an exception to the policy.
+- **A `gh issue create` that fails after the label was created.** The label is created
+  first, because the issue cannot carry a label that does not exist. When `gh issue
+  create` then fails, the run stops with `plan-issue:not-created` and the label is left
+  behind — created, and carried by nothing. Nothing on disk changed and no issue was
+  opened, but the repository is not byte-for-byte as the run found it. The same holds for
+  `plan-issue:unreadable` when the issue was created and its number could not be read back
+  from what `gh` printed: there, the issue exists and the script cannot name it. Run
+  `--plan-issue` again — the already-open refusal will point at it.
+
+Every other named error below is either reached before any write is attempted, or is that
+write itself failing — and no second write follows it. `label:human:pending:not-created`
+is the label create that failed, so no issue was opened and no label exists;
+`record:not-written` is `agentic.config.json` failing to be written, and the write is a
+single `writeFileSync`, not a rename, so a file left half-written by the filesystem is
+possible. `--inventory` reports it as `record:unparsable` on the next run rather than
+reading it as "no record"; delete the file and run `--record` again.
 
 | `error` | Cause |
 | --- | --- |
