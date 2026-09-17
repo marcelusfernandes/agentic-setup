@@ -188,6 +188,7 @@ const errored = run('error,error,error,error');
 check('all-error: fails', errored.status === 1, errored.out);
 check('all-error: the body says the lookup failed', /the commit-to-PR lookup failed/.test(errored.body), errored.body || errored.out);
 check('all-error: the body does not claim a confirmed direct push', /not a confirmed direct push/.test(errored.body), errored.body);
+check("all-error: gh's own stderr reaches the log", errored.out.includes('HTTP 502'), errored.out);
 
 // Alternating: the LAST attempt decides which body is written.
 const emptyThenError = run('empty,empty,empty,error');
