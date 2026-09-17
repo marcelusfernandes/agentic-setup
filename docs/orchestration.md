@@ -84,9 +84,13 @@ Two roles:
    a published branch)
 6. milestone's last issue merged → open a `docs: closeout M<n>` issue in that milestone
    from `docs/closeout/TEMPLATE.md` (`type:docs`/`scope:docs`), carrying the decision
-   log's lines; the docs-writer lands it as a `type:docs` PR; only then is the milestone
+   log's lines; the docs-writer lands it as a `type:docs` PR — that PR merges before the
+   milestone closes, never after it (`docs/closeout/README.md`), and the milestone closes
+   against the evidence file, not because its issues closed; only then is the milestone
    empty → `scripts/close-milestone.mts <milestone> --evidence docs/closeout/M<n>.md`
-   closes it, or refuses; only then open the next milestone's parent issue and its
+   closes it, or refuses — the script makes the `state=closed` PATCH itself, and refuses
+   with `evidence:missing` while the closeout is not on `origin/main`; a PATCH typed by
+   hand is never the fallback; only then open the next milestone's parent issue and its
    sub-issues, then keep looping on the new milestone — this is not a stop condition;
    nothing left to dispatch this instant, but the milestone still has open issues →
    check the closed list of stop reasons below before actually stopping
