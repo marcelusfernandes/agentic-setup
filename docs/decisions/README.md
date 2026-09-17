@@ -76,11 +76,13 @@ not a detail of item 8:
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
   [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0018-<slug>.md`. The date lives inside the file, on its
+  the next free number is `0019-<slug>.md`. The date lives inside the file, on its
   `Date:` line.
-- **One exception exists today, recorded in the index rather than hidden.** Item 16 and
-  the dated note under item 13 were written into `../decisions.md` and still live there;
-  relocating them is its own issue.
+- **Two exceptions exist today, recorded in the index rather than hidden.** Items 16 and
+  18, and the dated note under item 13, were written into `../decisions.md` and still
+  live there — each because its issue's `## Files` listed `../decisions.md` and no path
+  in this directory, and an implementer never widens its own globs. Relocating them is
+  its own issue.
 - [`0000-template.md`](0000-template.md) is the shape such a file takes. It is a
   template, not a decision, and holds no number of its own.
 - A PR that adds a decision file adds its line to the index below in the same diff.
@@ -106,3 +108,4 @@ not a detail of item 8:
 | 15 | [One generated adoption record, and `adopt` calls `init`](0015-generated-adoption-record-and-adopt-calls-init.md) | accepted |
 | 16 | [One label dictionary, a union with a per-route marker](../decisions.md#16-2026-09-17-one-label-dictionary-a-union-with-a-per-route-marker) — still in `../decisions.md`, not yet relocated | accepted |
 | 17 | [The decision nudge stays a warning, over five mechanism globs](0017-decision-nudge-strength.md) | accepted |
+| 18 | [One review mode: an isolated agent, a label the orchestrator writes](../decisions.md#18-2026-09-17-one-review-mode--an-isolated-agent-a-label-the-orchestrator-writes) — still in `../decisions.md`, not yet relocated | accepted |

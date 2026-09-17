@@ -304,23 +304,25 @@ Then act on the verdict:
   `hooks/protect-main.mts` denies a hand-typed `gh pr merge` in an agent's Bash tool, with
   or without `--admin` and whether or not a global flag is typed before the subcommand
   (`gh -R owner/repo pr merge`), and no environment variable lifts it. `land.mts` refuses
-  (exit 1, `{ refused, pr, missing, mode }`) unless the PR is `OPEN` and approved:
-  `reviewDecision === 'APPROVED'`, or — only when the orchestrator's own environment has
-  no `AGENTIC_REVIEWER_TOKEN` set — the `review:approved` label *plus* the
-  `<!-- agentic-reviewed-sha: <oid> -->` marker you commented above (once that variable is
-  set, the label is a convenience only; see `docs/decisions.md` item 13). It reads the
-  newest marker on the PR and compares it with the PR's current `headRefOid`, and passes
-  that same oid to the server on `--match-head-commit`, so the merge lands the reviewed
-  commit or nothing. `missing` names what is wrong: `state=<x>` (not `OPEN`),
-  `review:not-approved`, `head:changed` (someone pushed after the review, or no marker
-  records which head was reviewed — write one and review again; a push after the review
-  sends the PR back instead of merging), `gh-pr-comments` (the comments read could not
-  answer, so the reviewed head is unknown and nothing is merged), or `gh-pr-view` (could
-  not even read the PR). `mode` names which review binding ran: `agent` for that
-  label-plus-marker path, `approved` when a server-verified review satisfied approval,
-  `docs` for the `type:docs` exemption, which merges with no review at all and so reads no
-  marker — and `null` on the one refusal that has no mode to name, the PR it could not
-  read at all.
+  (exit 1, `{ refused, pr, missing, mode }`) unless the PR is `OPEN` and approved. You
+  write `review:approved` yourself in both modes, from the reviewer's JSON verdict — it is
+  the record of an agent review, not a stand-in for a token nobody set. By default (mode
+  `agent`) approval *is* that label plus the `<!-- agentic-reviewed-sha: <oid> -->` marker
+  you commented above: it reads the newest marker on the PR and compares it with the PR's
+  current `headRefOid`. In the opt-in `approved` mode — `AGENTIC_REVIEWER_TOKEN` set in the
+  orchestrator's own environment, or a PR GitHub already reports as approved — approval is
+  `reviewDecision === 'APPROVED'` from the server instead and no marker is read
+  (`docs/decisions.md` item 18). Either way it passes the head it read to the server on
+  `--match-head-commit`, so the merge lands the reviewed commit or nothing. `missing` names
+  what is wrong: `state=<x>` (not `OPEN`), `review:not-approved`, `head:changed` (someone
+  pushed after the review, or no marker records which head was reviewed — write one and
+  review again; a push after the review sends the PR back instead of merging),
+  `gh-pr-comments` (the comments read could not answer, so the reviewed head is unknown and
+  nothing is merged), or `gh-pr-view` (could not even read the PR). `mode` names which
+  review binding ran: `agent` for that label-plus-marker path, `approved` when a
+  server-verified review satisfied approval, `docs` for the `type:docs` exemption, which
+  merges with no review at all and so reads no marker — and `null` on the one refusal that
+  has no mode to name, the PR it could not read at all.
 
   On a refusal that clears, it re-reads the base branch's *effective* rules (`gh api
   repos/{owner}/{repo}/rules/branches/<base>`). When they include a

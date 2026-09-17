@@ -234,6 +234,130 @@ check(
   `found ${cardChecks.length}`,
 );
 
+// --- #148: one review mode in the contract, the second identity an opt-in ---
+// The review gate this repository runs is an isolated agent whose JSON verdict the
+// orchestrator turns into `review:approved` plus the `<!-- agentic-reviewed-sha: <oid> -->`
+// marker; the second GitHub identity is the opt-in `approved` mode and nothing promises it
+// by default (`docs/decisions.md` item 18). Three of the five files #148 corrects sit
+// outside the negative control's skipped path classes (`agents/**`, `skills/**`), so the
+// prose they carry gets its consumer here — `authorised: tests/doctrine.test.mts` on
+// #148's `## Files`, logged on #142.
+
+const REVIEWER_CARD = join('agents', 'reviewer.md');
+const ORCHESTRATE_CARD = join('skills', 'orchestrate', 'SKILL.md');
+const ISSUE_AND_PR_CARD = join('skills', 'issue-and-pr', 'SKILL.md');
+const DECISIONS = join('docs', 'decisions.md');
+
+/** The opt-in heading every second-identity instruction must sit under. */
+const OPT_IN_HEADING = '### Opt-in: the `approved` mode';
+
+const reviewerText = readNormalized(REVIEWER_CARD);
+const orchestrateText = readNormalized(ORCHESTRATE_CARD);
+const issueAndPrText = readNormalized(ISSUE_AND_PR_CARD);
+const decisions = readNormalized(DECISIONS);
+
+// AC5 and AC6: the two sentences the issue names by their grep are gone.
+check(
+  '#148 AC5 reviewer.md no longer calls the GitHub review "not optional once the variable is set"',
+  !reviewerText.includes('optional once the variable is set'),
+);
+check(
+  '#148 AC6 orchestrate/SKILL.md no longer calls `review:approved` a convenience',
+  !orchestrateText.includes('the label is a convenience only'),
+);
+
+// AC5: the default mode is the JSON verdict and no GitHub review, and every second-identity
+// instruction left in the card sits under the opt-in heading.
+const reviewerOutput = reviewerText.slice(reviewerText.indexOf('## Output'));
+const optInAt = reviewerOutput.indexOf(OPT_IN_HEADING);
+check(`#148 AC5 reviewer.md marks the second identity with "${OPT_IN_HEADING}"`, optInAt !== -1);
+
+const defaultMode = optInAt === -1 ? '' : reviewerOutput.slice(0, optInAt);
+check(
+  '#148 AC5 reviewer.md says the default mode casts no GitHub review',
+  /casts? no GitHub review/.test(defaultMode),
+  defaultMode.slice(-400),
+);
+check(
+  '#148 AC5 reviewer.md names the label and the reviewed-SHA marker as what the verdict becomes',
+  defaultMode.includes('review:approved') && defaultMode.includes('agentic-reviewed-sha'),
+  defaultMode.slice(-400),
+);
+check(
+  '#148 AC7 every `gh pr review` instruction in reviewer.md sits under the opt-in heading',
+  optInAt !== -1 && !defaultMode.includes('gh pr review'),
+);
+check(
+  '#148 AC7 every `AGENTIC_REVIEWER_TOKEN` mention in reviewer.md sits under the opt-in heading',
+  optInAt !== -1 && !defaultMode.includes('AGENTIC_REVIEWER_TOKEN'),
+);
+
+// AC6: both cards name the orchestrator as the writer of `review:approved` in both modes.
+const landParagraph = span(
+  orchestrateText,
+  '`land.mts` is the only way the orchestrator merges a PR',
+  '`missing` names what is wrong',
+);
+check('#148 AC6 orchestrate/SKILL.md still has a `land.mts` paragraph to read', landParagraph.length > 0);
+check(
+  '#148 AC6 orchestrate/SKILL.md says the orchestrator writes `review:approved` in both modes',
+  landParagraph.includes('review:approved') && /in both modes/.test(landParagraph),
+  landParagraph.slice(-400),
+);
+check(
+  '#148 AC7 orchestrate/SKILL.md marks its `AGENTIC_REVIEWER_TOKEN` paragraph as the opt-in mode',
+  landParagraph.includes('AGENTIC_REVIEWER_TOKEN') && /opt-in `approved` mode/.test(landParagraph),
+  landParagraph.slice(-400),
+);
+
+const labelsParagraph = span(
+  issueAndPrText,
+  '`review:approved` is applied by the orchestrator',
+  '`scope:` and `type:` by whoever writes the issue',
+);
+check('#148 AC6 issue-and-pr/SKILL.md still has a `review:approved` sentence to read', labelsParagraph.length > 0);
+check(
+  '#148 AC6 issue-and-pr/SKILL.md says the orchestrator writes the label in both modes, never as a fallback',
+  /in both modes/.test(labelsParagraph) && /never a fallback/.test(labelsParagraph),
+  labelsParagraph.slice(-400),
+);
+check(
+  '#148 AC7 issue-and-pr/SKILL.md marks its `AGENTIC_REVIEWER_TOKEN` sentence as the opt-in mode',
+  labelsParagraph.includes('AGENTIC_REVIEWER_TOKEN') && /opt-in `approved` mode/.test(labelsParagraph),
+  labelsParagraph.slice(-400),
+);
+
+// AC1-AC3: the register carries the dated item, its opt-in half and the evidence.
+// Item 18 is the last item in the register, so its span runs to the end of the file; a
+// later item 19 would make this a `span(..., '## 19.')` instead.
+const item18At = decisions.indexOf('## 18. 2026-09-17:');
+const item18 = item18At === -1 ? '' : decisions.slice(item18At);
+check('#148 AC1 docs/decisions.md carries a dated 2026-09-17 item 18', item18.length > 0);
+check(
+  '#148 AC1 item 18 states the merge condition: required checks on the reviewed head plus the label and its marker',
+  item18.includes('review:approved') && item18.includes('agentic-reviewed-sha'),
+  item18.slice(0, 400),
+);
+check(
+  '#148 AC2 item 18 describes the opt-in mode by the flag that turns it on',
+  item18.includes('--require-review') && item18.includes('required_approving_review_count'),
+  item18.slice(0, 400),
+);
+check(
+  '#148 AC3 item 18 names the evidence: `protege-main`, 0 of 200 and 0 of 147',
+  item18.includes('protege-main') && item18.includes('0 of 200') && item18.includes('0 of 147'),
+  item18.slice(0, 400),
+);
+
+// AC4: docs/orchestration.md describes the two modes instead of one state to reach.
+check(
+  '#148 AC4 docs/orchestration.md no longer says `land.mts` falls back to trusting the label',
+  !orchestration.includes('falls back to trusting the label'),
+);
+check(
+  '#148 AC4 docs/orchestration.md names the opt-in `approved` mode where it names the token',
+  orchestration.includes('AGENTIC_REVIEWER_TOKEN') && /opt-in `approved` mode/.test(orchestration),
+);
 // --- #209: the closeout file is a required step before a milestone closes -----------
 // Both accounts of step 6 used to name the `state=closed` PATCH without saying that a
 // `docs/closeout/M<n>.md` PR has to merge first, so the ordering only existed in

@@ -7,9 +7,9 @@ what it costs.
 becomes a numbered decision rather than a note, what the three `Status:` values mean
 and who may move an item between them (silence never accepts one), and where a new
 decision lands — items 1 to 13 keep their numbers here, and a decision after them is one
-dated file under `decisions/`. Two pieces of later material are still in this file and
-are not what the rule prescribes: item 16, and the dated note under item 13. The index in
-[`decisions/README.md`](decisions/README.md) says which item lives where.
+dated file under `decisions/`. Three pieces of later material are still in this file and
+are not what the rule prescribes: items 16 and 18, and the dated note under item 13. The
+index in [`decisions/README.md`](decisions/README.md) says which item lives where.
 
 ## 1. Unit of work: a GitHub sub-issue
 
@@ -235,7 +235,9 @@ Bun test leg that was a claim rather than a requirement (§ "Where this comes fr
 named a version, and no test had ever failed under Node and passed under Bun, or the
 reverse). The one genuinely under-built thing the audit named: the reviewer and the
 merging identity shared one token, so `review:approved` was a label the same identity
-that ran `land.mts` could write itself.
+that ran `land.mts` could write itself. **Item 18 supersedes this item's answer to that
+one finding** — what the label was missing was a binding to the commit that was reviewed,
+not a second GitHub identity; everything else in item 13 stands.
 
 *Choice* (the maintainer's, from three options laid out in the audit — (a) keep as is,
 (b) trim to the core, (c) markdown + shell only): **(b), plus the land model of (c)** —
@@ -308,10 +310,12 @@ Where a decision lands, per `docs/decisions/README.md`, is a dated file under
 its own globs. It records what is in force; renumbering it as a dated file is a docs
 change for whoever holds the next decision issue.
 
-*The reviewer-identity gap and its fix* (#66, `agents/reviewer.md`, `scripts/land.mts`):
-before this pass, the same token that ran `land.mts` could also write the
-`review:approved` label, so the review it gated on was not independent of the identity
-doing the merging. Fix, two sides of the same variable read separately: when
+*The reviewer-identity gap and its fix* (#66, `agents/reviewer.md`, `scripts/land.mts`) —
+**superseded by item 18: everything in this paragraph describes the opt-in `approved`
+mode, which no repository gets by default.** Read it as the setup guide for that mode, not
+as the state to reach. Before this pass, the same token that ran `land.mts` could also
+write the `review:approved` label, so the review it gated on was not independent of the
+identity doing the merging. Fix, two sides of the same variable read separately: when
 `AGENTIC_REVIEWER_TOKEN` is set in the reviewer agent's own environment, the reviewer
 authenticates as that separate identity and casts a real `gh pr review
 --approve`/`--request-changes` (`agents/reviewer.md`); when it is set in the
@@ -400,3 +404,72 @@ issues that carry it today, and the 83 closed issues that still carry some `stat
 are cleaned. Both are behaviour, not documentation: the first changes what the Codex loop
 writes, the second rewrites history that is no longer read. Nothing in this item decides
 them, and the veto is to reopen #145.
+
+## 18. 2026-09-17: one review mode — an isolated agent, a label the orchestrator writes
+
+Status: accepted — written OK: the owner's 2026-09-17 decision on #148, specified in #142,
+under the standing M11–M16 delegation recorded on #161.
+
+The review gate is **one isolated, agnostic agent** reading the pull request in a separate
+context and returning only `{verdict, reasons}` (`agents/reviewer.md`). It is not a second
+person and not a second GitHub login. The orchestrator is what turns the verdict into
+state: at step 5 of `skills/orchestrate/SKILL.md` it comments the JSON, applies
+`review:approved` (or `state:qa-failed`, and `state:blocked` + `human:pending` on a second
+rejection) and posts the `<!-- agentic-reviewed-sha: <oid> -->` marker naming the head the
+reviewer actually read. The merge condition is then exactly two things: every required
+status check green on that head, and that label — pinned to the reviewed commit by the
+marker, which `scripts/land.mts` compares with the pull request's current `headRefOid` and
+passes to the server on `--match-head-commit`, refusing with `missing: ['head:changed']`
+when the head moved or no marker exists (#144). Humans act only at `human:pending` gates.
+
+*Why:* this is the gate the loop copies (ADR 0004 item 4 of the reference TypeScript
+project, `lohra-ts`), and a workflow in which a person acts only when necessary does not
+gain a second person. The premise that the absence of `reviewDecision: APPROVED` on this
+repository's merges was a defect was simply wrong, and several issues in M11 and M12 were
+written against it. The evidence: `lohra-ts`'s own ruleset `protege-main` carries
+`required_approving_review_count: 0` with 7 required status checks, and 0 of 200 merged
+pull requests there carry `APPROVED`; the companion project `apollo` is 0 of 147. A
+missing `APPROVED` is what the model being copied looks like, not the gap in it. Item 13
+read the opposite and is amended in place: the sentence naming the shared token as the
+audit's one under-built finding now points here, and its *reviewer-identity gap* paragraph
+is marked as the setup guide for the opt-in mode below.
+
+*Cost accepted, stated plainly:* **the server does not verify the review.** `review:approved`
+is written by the same identity that runs `land.mts`, so nothing at GitHub attests that a
+review happened. What holds the line instead is everything that is not prose: the base
+branch ruleset's required status checks (`scope`, `negative-control`, `test`), which no
+label can satisfy; the reviewed-SHA marker, which makes a push after the review a refusal
+rather than a silent merge; `hooks/protect-main.mts` and the permission deny list, which
+refuse every hand-typed `gh pr merge` including `--admin` (item 14, #154); the
+`hooks/git-pre-push` hook `init` installs and the `guard-main` workflow, which refuse a
+push to `main`. A reviewer agent that approves badly is a real risk; a merge that walks
+past the checks is not.
+
+*The opt-in `approved` mode.* A second identity is available and is nobody's default. It
+turns on when `scripts/init.mts --require-review` is run, or against a base branch whose
+ruleset already requires approving reviews. It needs, in this order: a second login or a
+GitHub App installation with pull-request write; the base branch ruleset's
+`required_approving_review_count` raised to 1 with `dismiss_stale_reviews_on_push`
+(`init --require-review` writes both); and only then the token stored as
+`AGENTIC_REVIEWER_TOKEN` wherever the reviewer and the orchestrator run — the ruleset
+first, because GitHub computes `reviewDecision` only on a branch where a review is
+actually required, so a token set before the rule leaves `reviewDecision` `null` forever.
+In that mode the reviewer also casts a real `gh pr review --approve`/`--request-changes`
+as the separate identity and `land.mts` gates on `reviewDecision === 'APPROVED'` (mode
+`approved`) instead of reading the marker. The orchestrator still writes `review:approved`
+in both modes; in neither is the label a fallback for a missing token.
+
+*What it costs, and why it is not the default:* a repository with a single identity freezes
+at its first merge. With `required_approving_review_count: 1` and no second login, nobody
+can cast the review GitHub now requires, and every pull request refuses with no way to
+satisfy it. `scripts/init.mts` therefore resets the count to 0 on every `--rules` run and
+warns when `--require-review` is used with no `AGENTIC_REVIEWER_TOKEN` in the environment
+(#143, `skills/init/SKILL.md`).
+
+Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
+under `decisions/`. This item lives here for the same reason item 16 and the 2026-09-17
+note under item 13 do: #148's `## Files` lists `docs/decisions.md` and no path under
+`decisions/`, and an implementer never widens its own globs. Its index row is in
+[`decisions/README.md`](decisions/README.md) all the same, under the orchestrator's
+`authorised:` grant on that file; relocating this item and item 16 to dated files is its
+own issue, as it was for items 14 and 15 (#211).
