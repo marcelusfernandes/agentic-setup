@@ -275,7 +275,7 @@ check(`#148 AC5 reviewer.md marks the second identity with "${OPT_IN_HEADING}"`,
 const defaultMode = optInAt === -1 ? '' : reviewerOutput.slice(0, optInAt);
 check(
   '#148 AC5 reviewer.md says the default mode casts no GitHub review',
-  /casts no GitHub review/.test(defaultMode),
+  /casts? no GitHub review/.test(defaultMode),
   defaultMode.slice(-400),
 );
 check(
@@ -296,7 +296,7 @@ check(
 const landParagraph = span(
   orchestrateText,
   '`land.mts` is the only way the orchestrator merges a PR',
-  'It reads the newest marker on the PR',
+  '`missing` names what is wrong',
 );
 check('#148 AC6 orchestrate/SKILL.md still has a `land.mts` paragraph to read', landParagraph.length > 0);
 check(

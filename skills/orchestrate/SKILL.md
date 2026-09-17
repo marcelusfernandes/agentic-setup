@@ -301,13 +301,16 @@ Then act on the verdict:
 
   `land.mts` is the only way the orchestrator merges a PR — never run `gh pr merge` by
   hand for this step. It refuses (exit 1, `{ refused, pr, missing, mode }`) unless the PR
-  is `OPEN` and approved: `reviewDecision === 'APPROVED'`, or — only when the
-  orchestrator's own environment has no `AGENTIC_REVIEWER_TOKEN` set — the
-  `review:approved` label *plus* the `<!-- agentic-reviewed-sha: <oid> -->` marker you
-  commented above (once that variable is set, the label is a convenience only; see
-  `docs/decisions.md` item 13). It reads the newest marker on the PR and compares it with
-  the PR's current `headRefOid`, and passes that same oid to the server on
-  `--match-head-commit`, so the merge lands the reviewed commit or nothing. `missing`
+  is `OPEN` and approved. You write `review:approved` yourself in both modes, from the
+  reviewer's JSON verdict — it is the record of an agent review, not a stand-in for a
+  token nobody set. By default (mode `agent`) approval *is* that label plus the
+  `<!-- agentic-reviewed-sha: <oid> -->` marker you commented above: it reads the newest
+  marker on the PR and compares it with the PR's current `headRefOid`. In the opt-in
+  `approved` mode — `AGENTIC_REVIEWER_TOKEN` set in the orchestrator's own environment, or
+  a PR GitHub already reports as approved — approval is `reviewDecision === 'APPROVED'`
+  from the server instead and no marker is read (`docs/decisions.md` item 17). Either way
+  it passes the head it read to the server on `--match-head-commit`, so the merge lands
+  the reviewed commit or nothing. `missing`
   names what is wrong: `state=<x>` (not `OPEN`), `review:not-approved`, `head:changed`
   (someone pushed after the review, or no marker records which head was reviewed — write
   one and review again; a push after the review sends the PR back instead of merging),
