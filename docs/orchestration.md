@@ -29,10 +29,14 @@ Two roles:
    dispatched; a person decides and flips it to `human:decided` (`humanPending`)
    in-progress with no PR and no remote branch → ready (`stale`)
    in-progress with a remote branch, no PR and no local worktree on it → dispatch as
-   round N+1 from origin/<branch>, no re-claim (`resumable`)
+   round N+1 from origin/<branch>, no re-claim (`resumable`), except an entry with
+   `foreignLock: true` — the other route's `codex/task-<n>` branch, which stays in
+   `inProgress` and is neither resumed nor reviewed nor landed here
    in-review, checks read per PR via `gh pr checks <pr> --json name,bucket` (green when
    every bucket is pass/skipping, red on any fail/cancel, else pending), and an approved
-   review → merge (`inReview`)
+   review → merge (`inReview`), again except an entry with `foreignLock: true` — the
+   Codex route labels its own tasks `state:in-review`, so that pull request is theirs to
+   review and merge
    local worktree with no remote branch → delete (`orphanWorktrees`)
    local worktree locked by a pid that no longer exists → save uncommitted/unpushed work
    first (see the card), then unlock, remove --force, then treat its issue as `resumable`
@@ -74,7 +78,9 @@ Two roles:
    the now-orphaned worktree is picked up by `orphanWorktrees` on a later pass. After
    `land.mts` reports `{ queued }`/`{ merged }`, poll `reconcile.mts` (a fixed pause
    between reads, not a tight loop) until the issue drops out of `inReview`/`inProgress`/
-   `resumable` entirely, then loop back to 1
+   `resumable` entirely, then loop back to 1 — and never poll an issue you did not land:
+   an entry with `foreignLock: true` drops out when the other coordinator merges it, so
+   waiting on it is waiting on work this route does not own
    `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `checks:required`,
    or `gh-pr-view`) → read it and decide between waiting and sending the PR back; never a
    retry with `--admin`
