@@ -6,8 +6,10 @@ what it costs.
 [`decisions/README.md`](decisions/README.md) is the rule this register runs by: what
 becomes a numbered decision rather than a note, what the three `Status:` values mean
 and who may move an item between them (silence never accepts one), and where a new
-decision lands — items 1 to 13 keep their numbers here, everything after them is one
-dated file under `decisions/`.
+decision lands — items 1 to 13 keep their numbers here, and a decision after them is one
+dated file under `decisions/`. Two pieces of later material are still in this file and
+are not what the rule prescribes: item 16, and the dated note under item 13. The index in
+[`decisions/README.md`](decisions/README.md) says which item lives where.
 
 ## 1. Unit of work: a GitHub sub-issue
 
@@ -329,95 +331,6 @@ header names this trap). Init also turns on `allow_auto_merge` and
 `delete_branch_on_merge` on the repository itself, so `--auto` has something to enable
 and a merged branch does not need a person, or `claim.mts`'s stale-ref handling alone, to
 go away.
-
-## 14. 2026-09-17: a hand-typed `gh pr merge` is denied, not discouraged
-
-Status: accepted — written OK: issue #154 (the owner's specification of this change), under the standing M11–M16 delegation recorded on #161.
-
-"`land.mts` is the only way the orchestrator merges a pull request, never `gh pr merge`
-by hand" was written in bold in two contracts (`skills/orchestrate/SKILL.md`, `AGENTS.md`)
-and enforced nowhere: `hooks/protect-main.mts` denied a `gh pr merge` segment only when it
-also carried `--admin`, and the deny list matched only `Bash(gh pr merge *--admin*)`. A
-plain `gh pr merge 42 --squash` typed into a session went straight to the server. Both now
-refuse every `gh pr merge` segment, and the hook's refusal names `node scripts/land.mts
-<pr>` as the way to merge and says `--admin` is no remedy.
-
-*Why:* 58 merges had gone through this repository and not one of them was a merge the
-server verified against the evidence `land.mts` gates on; the prohibition that was supposed
-to guarantee it was prose the model reads under load and the agent's own tooling never
-checked. A rule stated in bold twice and enforced zero times is a rule the loop does not
-have. This costs nothing to enforce, because `scripts/land.mts` spawns `gh` from inside
-Node: the hook and the deny list see only the session's Bash command string, which reads
-`node scripts/land.mts <pr>` — the one path that stays open.
-
-*Cost accepted:* a genuine manual merge leaves the session. There is no valve and none will
-be added — `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to `main` for bootstrap and does not
-touch this — so an operator who must merge by hand does it in their own terminal or in the
-GitHub UI, where the ruleset (the layer that must not be bypassed) still applies. The hook's
-crash policy stays ALLOW, per invariant 3: it is a round-trip saver, not the gate.
-
-## 15. 2026-09-17: one generated adoption record, and `adopt` calls `init`
-
-Status: accepted
-
-The two questions M13 could not start without (#161, `human:decided`). The owner
-delegated the open questions of M11–M16 to the orchestrator on 2026-09-17 — "you know
-where we want to get to; the reference projects are the options to choose from when in
-doubt" — keeping the veto by reopening the issue. Both answers are recorded verbatim in
-that issue's decision comment, and that comment is the explicit written OK this item's
-`accepted` status rests on ([`decisions/README.md`](decisions/README.md), "Silence never
-accepts").
-
-**1. An adoption record may exist, generated only.** One file, `agentic.config.json`, at
-the adopted repository's root, written and rewritten only by `adopt`, never by hand.
-Detection still runs on every read: the record pins what detection got wrong and nothing
-else, and `adopt --inventory` reports every field where the record and `ci/lib/detect.mts`
-now disagree, so the file cannot quietly outlive the repository it describes.
-
-Invariant 4 (`AGENTS.md:44-45`, `CLAUDE.md:42-43`) gains exactly one sentence, which #163
-copies verbatim into both contract files in the same pull request as the code:
-
-> Detection remains the default, and the record is its output, not its replacement.
-
-It arrives beside a clause that stops being true the day `adopt` writes a file, so
-invariant 4 reads, in full, after #163:
-
-> 4. **Detection is a default, never a contract.** New stacks go in `ci/lib/detect.mts`
->    with an env override path; the only file is `agentic.config.json`, written by
->    `adopt` and never by hand. Detection remains the default, and the record is its
->    output, not its replacement.
-
-*Why:* the generated workflows (#165), the hooks (#166), the proof runner (#164) and
-`doctor` (#168) all need the same answers, and each of them detecting them again is how
-two readers of one fact drift apart. The alternative on the table — those values written
-as environment variables into every generated workflow and nothing on disk — leaves no
-single place to read from and no place to check against, and duplication kept in step by
-hand is what this repository has already paid for twice: `scripts/init.mts:31` and the
-Codex route's `.agents/skills/autonomous-loop/scripts/github.mts:152` still hold two label
-dictionaries that a comment, not a check, keeps identical (#145 is the fix). The reference
-implementations the owner pointed at all keep the proof harness's configuration in the
-repository that runs it, for the same reason.
-
-*Cost accepted:* one more file to keep in step with `ci/lib/detect.mts`, and someone will
-eventually hand-edit it. The tooling therefore expects that rather than trusting the file:
-`adopt` refuses to overwrite a record whose `generatedBy` is not this tool, `--record
---force` rewrites it and reports every field that changed, and `doctor` says a record was
-hand-edited instead of reading it as gospel.
-
-**2. `adopt` calls `init`.** One installer. `scripts/init.mts` keeps doing what it already
-does (`:142-222`) and `adopt` wraps the inventory, the record, the generated checks and the
-adoption pull request around it — including the "next, by hand" list at
-`scripts/init.mts:324-337`, which is exactly the part `adopt` exists to automate.
-
-*Why:* both alternatives cost more. Retiring `init` needs a migration for everyone already
-installed and a milestone larger than this one; letting the two coexist means two
-installers kept in step by hand, the same shape as the two label dictionaries above.
-
-*Cost accepted, and the scope consequence:* `scripts/init.mts` and its tests are in scope
-for M13. The milestone's draft kept that path out of every sub-issue's `## Files` until
-this answer existed; from #163 onwards an issue may list it, sequenced after #143 and #145,
-which also touch it. #163 itself still does not — its own acceptance criteria say so, and
-the `adopt` → `init` call is a separate issue in this milestone.
 
 ## 16. 2026-09-17: one label dictionary, a union with a per-route marker
 
