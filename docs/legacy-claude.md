@@ -1,4 +1,4 @@
-# Legacy Claude Code plugin
+# Claude Code plugin
 
 The original Claude workflow remains available during and after the Codex migration. It
 is a separate, opt-in installation route, with its own strict issue contract, labels
