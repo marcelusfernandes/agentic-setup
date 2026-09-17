@@ -6,6 +6,12 @@
 //   node scripts/create-subissue.mts <parent> --title <t> --body-file <path> \
 //     [--label <l>]...
 //
+// `<parent>` is an issue number written as decimal digits and nothing else
+// (`/^\d+$/`, greater than zero), the way `scripts/claim.mts` and
+// `ci/issue-lint.mts` read one: `1e2`, `0x10`, `12.5`, `+12` and ` 12 ` are
+// usage errors, not issue 100, 16 or 12. `--title` and `--body-file` are
+// required; `--label` repeats.
+//
 // This replaces the three-line snippet the planner used to copy by hand
 // (`docs/workflow.md`, `skills/issue-and-pr/SKILL.md`, "Write sub-issues"):
 // GitHub's sub-issue API wants the issue **id**, not the number, so the
@@ -20,10 +26,20 @@
 // readability) run before `gh` is called at all; the parent is then read
 // once, and only an open parent that carries a milestone is written under.
 // A `gh` call that fails for any reason other than a 404 on the parent — a
-// network error, a rate limit, a token problem — is reported as
-// `{ error }` and exits 1 without creating anything; it is never reported
-// as a refusal, because it is not a verdict on the sub-issue. A response
-// that does not parse is treated the same way.
+// network error, a rate limit, a token problem, or `gh` not being on `PATH`
+// at all, whose spawn error carries its own message rather than the bare
+// string `gh failed` — is reported as `{ error }` and exits 1 without
+// creating anything; it is never reported as a refusal, because it is not a
+// verdict on the sub-issue. A response that does not parse is treated the
+// same way.
+//
+// A 404 on the parent is split, because GitHub answers 404 and not 403 for a
+// repository the token cannot see: the repository itself is then read once
+// (`gh api repos/{owner}/{repo}`), and only when *that* succeeds is the
+// parent reported as missing (`{ refused, missing: ['parent:state'] }`). A
+// repository this token cannot read is a token problem, so it is an
+// `{ error }` naming gh's own message — never a verdict that the parent was
+// deleted.
 //
 // Past the creation there is no undo: if the id lookup or the link POST
 // then fails, the issue exists and is reported as `{ error, issue }` (exit
@@ -39,7 +55,8 @@
 // applying it last is what makes the gate real.
 //
 // Exit 1 with `{ refused, parent, missing }` when the parent does not
-// exist or is closed (`parent:state`), the parent carries no milestone
+// exist in a repository this token can read, or is closed (`parent:state`),
+// the parent carries no milestone
 // (`parent:milestone`), the title does not match
 // `^(feat|fix|…)\([a-z]+\): .+` — the same set `scripts/claim.mts` derives a
 // branch type from (`scripts/lib/issues.mts`, BRANCH_TYPES) — (`title:format`),
@@ -70,14 +87,22 @@ function fail(shape: Record<string, unknown>): never {
   out(shape, 1);
 }
 
-type Run = { status: number; stdout: string; stderr: string };
+type Run = { status: number; stdout: string; stderr: string; spawnError: string | null };
 const gh = (args: string[]): Run => {
   const r = spawnSync('gh', args, { encoding: 'utf8' });
-  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  return {
+    status: r.status ?? 1,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    // `gh` not on PATH (ENOENT) is the one failure an operator fixes in a
+    // second; it never reaches stdout or stderr, so it is carried here.
+    spawnError: r.error ? `could not run gh: ${r.error.message}` : null,
+  };
 };
 
-/** The first line of whatever `gh` said, so an error is one line of JSON. */
-const why = (r: Run): string => (r.stderr || r.stdout || 'gh failed').trim().split('\n')[0] ?? 'gh failed';
+/** The first line of whatever `gh` said — or why it could not run — so an error is one line of JSON. */
+const why = (r: Run): string =>
+  (r.spawnError || r.stderr || r.stdout || 'gh failed').trim().split('\n')[0] ?? 'gh failed';
 
 /** JSON.parse that answers null instead of throwing, so every caller fails closed the same way. */
 function safeParse<T>(text: string): T | null {
@@ -114,7 +139,13 @@ function parseArgs(argv: string[]): Args | null {
     positional.push(a);
   }
   if (positional.length !== 1) return null;
-  const parent = Number(positional[0]);
+  // Decimal digits and nothing else, as `scripts/claim.mts` and
+  // `ci/issue-lint.mts` read an issue number: `Number()` alone would turn
+  // `1e2` into 100 and `0x10` into 16, so a typo that refuses one step of the
+  // loop would silently address a different parent here.
+  const raw = positional[0] ?? '';
+  if (!/^\d+$/.test(raw)) return null;
+  const parent = Number(raw);
   if (!Number.isInteger(parent) || parent <= 0) return null;
   return { parent, title, bodyFile, labels };
 }
@@ -147,6 +178,15 @@ if (missing.length) {
 const parentRead = gh(['api', `repos/{owner}/{repo}/issues/${args.parent}`]);
 if (parentRead.status !== 0) {
   if (!isNotFound(parentRead)) fail({ error: why(parentRead) });
+  // GitHub answers 404, not 403, for a repository the token cannot see, so a
+  // 404 on the issue alone does not say the issue is gone. The repository
+  // itself is read once to tell the two apart: readable means the parent
+  // really is missing (a refusal, a verdict on the sub-issue), anything else
+  // is a token or transport problem and is reported as `{ error }`.
+  const repoProbe = gh(['api', 'repos/{owner}/{repo}']);
+  if (repoProbe.status !== 0) {
+    fail({ error: `cannot tell issue #${args.parent} from an unreadable repository: ${why(repoProbe)}` });
+  }
   fail({
     refused: `issue #${args.parent} does not exist.`,
     parent: args.parent,
