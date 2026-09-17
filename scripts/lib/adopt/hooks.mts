@@ -53,9 +53,9 @@ import type { AdoptionRecord } from './record.mts';
 /**
  * The text a hook of this setup carries, and the whole ownership test.
  * `scripts/lib/adopt/inventory.mts` keeps the same literal, unexported, as
- * `HOOK_MARKER`, and `scripts/init.mts:373` tests for it with the same regex;
- * both files are outside this change's globs, so the literal is restated here
- * rather than shared. The three must move together.
+ * `HOOK_MARKER`, and the `git pre-push` section of `scripts/init.mts` tests for
+ * it with the same regex; both files are outside this change's globs, so the
+ * literal is restated here rather than shared. The three must move together.
  */
 export const MARKER = 'agentic-setup';
 
@@ -89,8 +89,8 @@ export const SETTINGS_TEMPLATE = join('templates', 'claude-settings.json');
  * Every deny rule this installer has ever seeded, keyed by the wording it was
  * written as and answering with the wording it is written as today (#204,
  * #242). A rule this map knows is replaced, not kept beside its successor.
- * `scripts/init.mts:336` holds the same table, unexported and outside this
- * change's globs; the two must move together.
+ * `scripts/init.mts` holds the same table under the same name, unexported and
+ * outside this change's globs; the two must move together.
  */
 export const SUPERSEDED_DENY_RULES: Record<string, string> = {
   'Bash(gh pr merge *--admin*)': 'Bash(gh pr merge *)',
@@ -299,7 +299,10 @@ function planGitHook(root: string, hooksDir: string, shipped: Shipped, recorded:
 
 /** The settings file of the adopted repository, parsed, or a named refusal. */
 function readSettings(path: string): Record<string, unknown> | null {
-  const text = readTarget(path, 'hooks:settings-unparsable');
+  // A file that exists and cannot be read is `hooks:unreadable`, not
+  // `hooks:settings-unparsable`: the reason is the contract, and "could not be
+  // read" and "is not JSON" are different answers.
+  const text = readTarget(path, 'hooks:unreadable');
   if (text === null) return null;
   let parsed: unknown;
   try {

@@ -557,7 +557,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `repository:unreadable` | the repository read failed, or answered without a default branch or without the two merge settings |
 | `ruleset:unreadable` | the branch rules read failed or was not a list |
 | `labels:unreadable` | the label list read failed or was not a list |
-| `hooks:unreadable` | `git rev-parse --git-path hooks` could not answer, or a hook file exists and could not be read |
+| `hooks:unreadable` | `git rev-parse --git-path hooks` could not answer, or a hook file or `.claude/settings.json` exists and could not be read |
 | `workflows:unreadable` | `.github/workflows` exists and could not be listed |
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read back from what `gh` printed |
 | `plan-issue:not-created` | `gh issue create` failed; its first line, when it had one, is in `detail` |
@@ -579,7 +579,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:source-missing` | a file this repository ships (`hooks/git-pre-push`, `hooks/hooks.json`, `templates/claude-settings.json`) is not there; `field` names it |
 | `hooks:source-unreadable` | one of those exists and could not be read, or is not the shape the installer needs; `field` names it |
 | `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
-| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` exists and is not one JSON object; the deny list is never merged into a file this tool could not read |
+| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object; the deny list is never merged into a file this tool could not understand |
 | `hooks:not-written` | a hook file or the settings file could not be written |
 
 The `record:*` and `workflows:*` names carry a `field` alongside `error` whenever the
