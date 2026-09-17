@@ -67,6 +67,7 @@ and hooks. It also includes the repository license; no symlinks or source-root i
 ```sh
 npm run sync:codex-plugin
 npm run check:codex-plugin
+node scripts/sync-codex-plugin.mts --bump patch   # or minor, or major
 npm test
 npm run check
 ```
@@ -74,9 +75,20 @@ npm run check
 The check and default tests reject snapshot drift, missing files and unexpected payloads.
 Sync refuses unsafe symlinks and unexpected files rather than deleting them. Edit the
 maintained source, synchronize the snapshot, and include both in the same PR. For a
-published update, choose a new semantic version in the plugin manifest so consumers do
-not retain an old cache. Local-development cachebusting/reinstallation should use the
-Plugin Creator update helpers, not edits to users' marketplace registrations.
+published update, `--bump patch|minor|major` synchronizes the snapshot and rewrites the
+manifest's `version` in the same run, so consumers do not retain an old cache and the new
+number comes from the script that publishes it rather than from remembering to type one.
+It prints its result as one JSON object:
+
+```json
+{"bump":"minor","version":{"from":"0.3.3","to":"0.4.0"},"files":1}
+```
+
+It refuses a manifest whose `version` is missing or is not `x.y.z` before writing
+anything, rather than inventing a starting version, and it is mutually exclusive with
+`--check`: the read-only gate never writes a version, and without `--bump` the version
+is not read at all. Local-development cachebusting/reinstallation should use the Plugin
+Creator update helpers, not edits to users' marketplace registrations.
 
 Automated tests validate packaging and relocated real scripts without requiring Codex
 on CI. Native CLI installation and skill discovery are a separate smoke test; they do

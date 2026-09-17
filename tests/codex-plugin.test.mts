@@ -139,4 +139,89 @@ check('packaged runner reaches its sibling helper outside the source checkout',
   runnerRun.status === 0 && JSON.parse(runnerRun.stdout).status === 'complete' &&
     !/codex-must-not-run/.test(runnerRun.stderr), runnerRun.stderr);
 
+
+// --- the published version is bumped by the script that publishes it (#262) ---
+// `--bump` is the only path that reads or rewrites the manifest version; plain
+// sync and `--check` never look at it, so the packaging gate keeps its meaning.
+const MANIFEST = 'plugins/agentic-setup/.codex-plugin/plugin.json';
+
+type BumpResult = { bump?: string; version?: { from?: string; to?: string }; files?: number };
+
+/** Rewrites the fixture manifest's version field in place and returns the new bytes. */
+function pinVersion(repo: string, version: string): string {
+  const path = join(repo, MANIFEST);
+  const text = readFileSync(path, 'utf8').replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`);
+  writeFileSync(path, text);
+  return text;
+}
+
+/** Reads the fixture manifest's version field, or null when it has none. */
+function versionOf(repo: string): string | null {
+  const parsed = JSON.parse(readFileSync(join(repo, MANIFEST), 'utf8')) as { version?: unknown };
+  return typeof parsed.version === 'string' ? parsed.version : null;
+}
+
+for (const [level, expected] of [['patch', '1.2.4'], ['minor', '1.3.0'], ['major', '2.0.0']]) {
+  const bumpRepo = fixture();
+  const before = pinVersion(bumpRepo, '1.2.3');
+  result = sync(bumpRepo, '--bump', level);
+  let reported: BumpResult = {};
+  try { reported = JSON.parse(result.stdout) as BumpResult; } catch { reported = {}; }
+  check(`--bump ${level} rewrites the published version to ${expected}`,
+    result.status === 0 && versionOf(bumpRepo) === expected, `${result.stdout}${result.stderr}`);
+  check(`--bump ${level} reports the old and new version in its JSON result`,
+    reported.version?.from === '1.2.3' && reported.version?.to === expected,
+    `${result.stdout}${result.stderr}`);
+  const packaged = join(bumpRepo, 'plugins/agentic-setup/skills/autonomous-loop/SKILL.md');
+  check(`--bump ${level} still synchronizes the snapshot`,
+    existsSync(packaged) && readFileSync(packaged)
+      .equals(readFileSync(join(bumpRepo, '.agents/skills/autonomous-loop/SKILL.md'))));
+  check(`--bump ${level} changes the version field and nothing else in the manifest`,
+    readFileSync(join(bumpRepo, MANIFEST), 'utf8') === before.replace('1.2.3', expected));
+}
+
+const unchangedRepo = fixture();
+pinVersion(unchangedRepo, '1.2.3');
+result = sync(unchangedRepo);
+check('sync without --bump leaves the published version alone',
+  result.status === 0 && versionOf(unchangedRepo) === '1.2.3' &&
+    /Codex plugin snapshot synchronized/.test(result.stdout), `${result.stdout}${result.stderr}`);
+check('--check without --bump leaves the published version alone',
+  sync(unchangedRepo, '--check').status === 0 && versionOf(unchangedRepo) === '1.2.3');
+
+const rejectedRepo = fixture();
+pinVersion(rejectedRepo, '1.2.3');
+result = sync(rejectedRepo, '--bump', 'patchy');
+check('an unrecognised --bump value is a usage error naming the three accepted ones',
+  result.status === 1 && /patch/.test(result.stderr) && /minor/.test(result.stderr) &&
+    /major/.test(result.stderr), `${result.stdout}${result.stderr}`);
+check('an unrecognised --bump value rewrites nothing', versionOf(rejectedRepo) === '1.2.3');
+result = sync(rejectedRepo, '--bump');
+check('--bump without a value is a usage error naming the three accepted ones',
+  result.status === 1 && /patch/.test(result.stderr) && /minor/.test(result.stderr) &&
+    /major/.test(result.stderr), `${result.stdout}${result.stderr}`);
+result = sync(rejectedRepo, '--check', '--bump', 'patch');
+check('--check refuses to bump: the read-only gate never writes a version',
+  result.status === 1 && versionOf(rejectedRepo) === '1.2.3', `${result.stdout}${result.stderr}`);
+
+for (const [name, broken] of [['not x.y.z', '1.2'], ['missing', null]] as Array<[string, string | null]>) {
+  const malformedRepo = fixture();
+  if (broken === null) {
+    const stripped = readFileSync(join(malformedRepo, MANIFEST), 'utf8')
+      .replace(/^\s*"version"\s*:\s*"[^"]*",\n/m, '');
+    writeFileSync(join(malformedRepo, MANIFEST), stripped);
+  } else {
+    pinVersion(malformedRepo, broken);
+  }
+  const bytes = readFileSync(join(malformedRepo, MANIFEST), 'utf8');
+  result = sync(malformedRepo, '--bump', 'patch');
+  check(`a manifest version that is ${name} is refused with a named failure`,
+    result.status === 1 && /plugin manifest version/.test(result.stderr),
+    `${result.stdout}${result.stderr}`);
+  check(`the ${name} version refusal happens before anything is written`,
+    !existsSync(join(malformedRepo, 'plugins/agentic-setup/LICENSE')) &&
+      readFileSync(join(malformedRepo, MANIFEST), 'utf8') === bytes);
+}
+
+
 finish();
