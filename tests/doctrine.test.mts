@@ -6,7 +6,7 @@
 // consumer. Pure-read (CLAUDE.md invariant 6 exempts catalogue reads: no script is
 // spawned here, only the filesystem).
 //
-// Two notes on the comparison:
+// Notes on the comparison:
 //  - Markdown wraps these files at ~90 columns, so both sides are compared with
 //    whitespace collapsed to single spaces. Identical modulo line breaks, otherwise
 //    character for character.
