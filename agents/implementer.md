@@ -13,10 +13,17 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
 1. Read the whole issue (the orchestrator put it in your prompt): context, acceptance
    criteria, proof, the **globs** you may touch, dependencies.
 2. Prove the worktree (skill `safe-worktree`): secrets arrived, base is right (`git fetch`;
-   the prerequisite's symbol exists), writes work (a throwaway edit).
+   the prerequisite's symbol exists), writes work (a throwaway edit). The worktree may be
+   born detached or on a fresh branch of its own, so `git checkout -B <branch>
+   origin/<branch>` onto the lock branch the orchestrator created is the expected first
+   step. That is reaching a branch that already exists, not creating one —
+   `skills/issue-and-pr`'s "never creates or renames one" still holds (measured:
+   `docs/dogfood/2026-09-10.md`, L12).
 3. Read everything the issue links. Find the project's check and test commands — detected
    by `ci/lib/detect.mts` (Makefile first, else the first stack marker found; see its
-   header for the full list and order), or what `CLAUDE.md` says.
+   header for the full list and order), or what `CLAUDE.md` says. Need the format of an
+   agent or a card? The reference to copy is this repository's own `agents/*.md`; no
+   public code search is owed for it (measured: `docs/dogfood/2026-09-10.md`, L16).
 
 ## Cycle
 4. Write the failing test. Commit `test(red): <what it covers>` — the convention that
@@ -35,7 +42,14 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    or a fence — test summary, globs touched). Label `state:in-review` and nothing else —
    the orchestrator copies the issue's `type:` and `scope:` labels onto the PR at its
    step 4 (`skills/orchestrate/SKILL.md`). An agent that labels its own work could buy
-   its own exemptions.
+   its own exemptions. That is about the PR's own labels; the issue moves with it, in the
+   same breath: `gh issue edit <n> --add-label state:in-review --remove-label
+   state:in-progress`. That is what keeps the issue out of `reconcile`'s stale list — a PR
+   in review over an issue still on `state:in-progress` is listed in neither bucket
+   (measured: `docs/dogfood/2026-09-10.md`, L14). And once the body exists it is
+   **appended to**, never rewritten: `## Files` and any `authorised:` line in it belong to
+   the orchestrator, and `gh pr edit --body-file` with a freshly composed body drops them.
+   Read the current body first and add to it (measured: `docs/dogfood/2026-09-10.md`, L21).
 8. Stop — and expect the stop to be gated. `hooks/stop-gate.mts` fires on `SubagentStop`
    and runs the project's check command, then its test command (detected by
    `ci/lib/detect.mts`; a `proof/<slug>.json` `command` replaces the detected test
