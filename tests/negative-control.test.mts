@@ -55,6 +55,21 @@ const vacuous = commit(repo, { 'lib.mts': 'export const v = 3;\n', 'tests/check.
 git(['checkout', '-q', 'feat/1-x'], repo);
 r = nc(vacuous);
 check('negative-control fails a vacuous test', r.status === 1 && /vacuous/.test(r.out), r.out);
+// A `vacuous` verdict on a brand-new test tree is the costliest one to read
+// wrong: the overlay copies test files only, so a test command that
+// enumerates its test directories still runs the base's own entry point and
+// stays green. The detail names that trap and the two ways out, rather than
+// leaving the next run to rediscover it.
+check(
+  'the vacuous detail names the enumerating entry point that hides a new test tree',
+  /entry point/.test(r.out) && /enumerates/.test(r.out) && /discover/.test(r.out),
+  r.out,
+);
+check(
+  'the vacuous detail says the entry point is never overlaid, so the fix lands on the base or in the declaration',
+  /never overlaid/.test(r.out) && /proof\/<slug>\.json/.test(r.out),
+  r.out,
+);
 
 r = nc(noTestsHead);
 check('negative-control fails when no test file changed', r.status === 1 && /no-tests/.test(r.out), r.out);
@@ -200,5 +215,33 @@ check(
 );
 
 check('negative-control leaves no worktree behind in the declaration repos', !/negative-control-/.test(git(['worktree', 'list'], cmdRepo)));
+
+// --- a stack `ci/lib/detect.mts` does not detect ---------------------------
+// No Makefile, no package.json, no stack marker at all: the run is
+// `cannot-run` before any worktree is made. The detail names the escape a
+// repository with an undetected stack actually has — a `Makefile` with a
+// `test:` target, which the detector reads before every other marker.
+const undetectedRepo = tempRepo();
+const undetectedBase = commit(undetectedRepo, {
+  'lib.mts': 'export const v = 1;\n',
+  'tests/check.mts': 'process.exit(0);\n',
+}, 'chore: base with no detectable test command');
+git(['checkout', '-q', '-b', 'feat/13-undetected'], undetectedRepo);
+const undetectedHead = commit(undetectedRepo, {
+  'lib.mts': 'export const v = 2;\n',
+  'tests/check.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+}, 'feat: v2');
+
+r = ci('negative-control.mts', ['--base', undetectedBase, '--head', undetectedHead], { cwd: undetectedRepo });
+check(
+  'a stack with no detected test command is cannot-run',
+  r.status === 1 && /cannot-run/.test(r.out),
+  r.out,
+);
+check(
+  'the cannot-run detail names the `Makefile` with a `test:` target as the escape',
+  /Makefile/.test(r.out) && /`test:` target/.test(r.out) && /ci\/lib\/detect\.mts/.test(r.out),
+  r.out,
+);
 
 finish();
