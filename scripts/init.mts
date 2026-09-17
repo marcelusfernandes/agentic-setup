@@ -3,7 +3,7 @@
 // root; idempotent; never overwrites a file you edited unless --force.
 //
 //   node scripts/init.mts [--milestone "<title>"] [--no-gh] [--force] [--dry-run]
-//                         [--rules] [--ruleset-name <name>]
+//                         [--rules] [--ruleset-name <name>] [--require-review]
 //
 // --dry-run prints the same report a real run would, changes nothing on disk
 // or on GitHub. Every filesystem write is routed through the write() gate
@@ -19,19 +19,27 @@
 // --rules updates the branch ruleset that already governs the repository's
 // default branch — the one whose conditions name it, whatever it is called
 // (#143: this repository's own is named "main") — or creates one named
-// "agentic-setup" when nothing governs it. It requires a pull request with
-// one approving review, stale approvals dismissed, and the checks the merge
-// model depends on (docs/decisions.md item 9(a)), and carries every rule,
-// parameter and bypass actor it does not manage over from the ruleset it
-// found. `--ruleset-name <name>` picks the ruleset by name instead. A 403
-// (rulesets are not available on a private repository on the free plan) is
-// reported plainly instead of gh's raw error. Without --rules, no rulesets
-// call is made at all.
+// "agentic-setup" when nothing governs it. It requires a pull request,
+// squash as the only merge method and the checks the merge model depends on
+// (docs/decisions.md item 9(a)), and carries every rule, parameter and
+// bypass actor it does not manage over from the ruleset it found.
+// `--ruleset-name <name>` picks the ruleset by name instead. A 403 (rulesets
+// are not available on a private repository on the free plan) is reported
+// plainly instead of gh's raw error. Without --rules, no rulesets call is
+// made at all.
 //
-// Running --rules turns on a review requirement that the merging identity
-// cannot satisfy by itself: on a repository with a single identity every
-// merge is frozen until the second one exists (scripts/land.mts's header
-// and docs/decisions.md item 13 name the trap).
+// --rules leaves the review gate where it found it: the pull_request rule it
+// writes keeps required_approving_review_count at 0 and carries the fetched
+// dismiss_stale_reviews_on_push / require_last_push_approval through, so
+// --rules on its own is safe to run at any time.
+//
+// --require-review is the explicit opt-in that raises those three (count 1,
+// stale approvals dismissed, last push approved). Run it only once a second
+// reviewing identity exists: the identity that merges cannot approve its own
+// pull request, so on a repository with a single identity every merge is
+// frozen until the second one exists (scripts/land.mts's header and
+// docs/decisions.md item 13 name the trap). The report warns about exactly
+// that whenever AGENTIC_REVIEWER_TOKEN is unset in the environment.
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -80,6 +88,7 @@ const milestoneIdx = process.argv.indexOf('--milestone');
 const milestone = milestoneIdx !== -1 ? process.argv[milestoneIdx + 1] : null;
 const rulesetNameIdx = process.argv.indexOf('--ruleset-name');
 const rulesetNameOverride = rulesetNameIdx !== -1 ? (process.argv[rulesetNameIdx + 1] ?? null) : null;
+const requireReview = flags.has('--require-review');
 const force = flags.has('--force');
 const useGh = !flags.has('--no-gh');
 const dryRun = flags.has('--dry-run');
@@ -181,24 +190,38 @@ function governsDefaultBranch(ruleset: Ruleset, defaultBranch: string): boolean 
  * inside the managed rules, every parameter the installer does not set
  * itself — the installer's own fields win, the rest survive (that is how
  * this repository's `require_extra_approval_for_unattributed_changes`
- * survives an update). Only the fields listed here are sent: a detail fetch
+ * survives an update). `requireReview` is the `--require-review` opt-in; see
+ * the `pull_request` rule below. Only the fields listed here are sent: a detail fetch
  * also carries `node_id`, `source`, `_links` and timestamps, which the API
  * refuses in a request body.
  */
-function buildRulesetPayload(existing: Ruleset | null, defaultBranch: string, testCheck: string, newName: string): Record<string, unknown> {
+function buildRulesetPayload(
+  existing: Ruleset | null,
+  defaultBranch: string,
+  testCheck: string,
+  newName: string,
+  requireReview: boolean,
+): Record<string, unknown> {
   const fetched = existing?.rules ?? [];
   const parametersOf = (type: string): Record<string, unknown> => fetched.find((r) => r.type === type)?.parameters ?? {};
+  const pullRequest = parametersOf('pull_request');
+  const fetchedFlag = (key: string): boolean => pullRequest[key] === true;
   const managed: Rule[] = [
     {
       type: 'pull_request',
       parameters: {
-        ...parametersOf('pull_request'),
-        // land.mts and the Codex route both refuse to queue an automatic
-        // merge unless the server itself requires a review and dismisses
-        // stale approvals (.agents/skills/autonomous-loop/scripts/github.mts).
-        required_approving_review_count: 1,
-        dismiss_stale_reviews_on_push: true,
-        require_last_push_approval: true,
+        ...pullRequest,
+        // The default leaves the review gate exactly where this repository's
+        // own review model needs it (#143): the reviewer is an isolated agent
+        // whose verdict becomes the `review:approved` label, with no second
+        // GitHub identity to click Approve, so requiring one approving review
+        // by default would freeze every merge. The count is therefore 0 and
+        // the two stale-approval fields keep whatever the fetched ruleset
+        // carried; --require-review is the explicit opt-in that raises all
+        // three, for a repository that does have a second reviewing identity.
+        required_approving_review_count: requireReview ? 1 : 0,
+        dismiss_stale_reviews_on_push: requireReview || fetchedFlag('dismiss_stale_reviews_on_push'),
+        require_last_push_approval: requireReview || fetchedFlag('require_last_push_approval'),
         allowed_merge_methods: ['squash'],
       },
     },
@@ -375,8 +398,9 @@ if (useGh) {
     // 6. branch ruleset (--rules only): updates the ruleset that already
     // governs the default branch — found by its conditions, never by its
     // name (#143) — or creates one named "agentic-setup" when none does.
-    // It requires a pull request with one approving review and stale
-    // approvals dismissed, plus the three checks the merge model depends on
+    // It requires a pull request, with the review gate left where it found
+    // it unless --require-review raises it (buildRulesetPayload above), plus
+    // the three checks the merge model depends on
     // (docs/decisions.md item 9(a)): scope, negative-control, and this
     // repository's own test workflow's job (detectTestCheckName above); an
     // update keeps every rule, parameter and bypass actor the installer
@@ -389,6 +413,14 @@ if (useGh) {
     // docs/decisions.md item 9(a)) is reported plainly instead of gh's raw
     // error either way.
     if (flags.has('--rules')) {
+      // The freeze this flag can cause is worth a line in the report even
+      // when the ruleset call itself then fails: a repository whose agents
+      // have no second identity (no AGENTIC_REVIEWER_TOKEN anywhere) cannot
+      // produce the approving review this flag makes mandatory, so every
+      // merge blocks (scripts/land.mts's header, docs/decisions.md item 13).
+      if (requireReview && !process.env.AGENTIC_REVIEWER_TOKEN) {
+        say('  ! --require-review: AGENTIC_REVIEWER_TOKEN is unset — a single identity cannot approve its own pull request, so every merge freezes until a second reviewing identity exists');
+      }
       const reportRulesetError = (err: string): void => {
         say(/403/.test(err) ? '  ! ruleset: not available on this plan for a private repository' : `  ! ruleset: ${err.split('\n')[0]}`);
       };
@@ -415,7 +447,11 @@ if (useGh) {
         const endpoint = existing ? `repos/{owner}/{repo}/rulesets/${existing.id}` : 'repos/{owner}/{repo}/rulesets';
         const method = existing ? 'PUT' : 'POST';
         const outcome = existing ? '  = ruleset updated' : '  + ruleset created';
-        const payload = JSON.stringify(buildRulesetPayload(existing, defaultBranch, detectTestCheckName(root), rulesetNameOverride ?? DEFAULT_RULESET_NAME), null, 2);
+        const payload = JSON.stringify(
+          buildRulesetPayload(existing, defaultBranch, detectTestCheckName(root), rulesetNameOverride ?? DEFAULT_RULESET_NAME, requireReview),
+          null,
+          2,
+        );
 
         if (dryRun) {
           say(outcome);
@@ -437,22 +473,25 @@ next, by hand:
   - review \`git status\` and open the bootstrap PR
   - run \`node scripts/init.mts --rules\` to update the branch ruleset that already governs
     your default branch, whatever it is called (\`--ruleset-name <name>\` picks another one
-    by name), or to create one when none does: a pull request with one approving review,
-    stale approvals dismissed and the last push approved, squash as the only merge method,
-    scope, negative-control and your test workflow's checks required, and force-push and
-    deletion blocked; rules, parameters and bypass actors it does not manage are kept. It
-    reports "not available on this plan for a private repository" when your plan does not
-    allow rulesets — make those three checks required by hand there instead, and keep the
-    pre-push hook as the fallback
-  - wait before running --rules: the review it requires cannot be given by the identity
-    that merges, so on a repository with a single identity every merge is frozen until the
-    second identity below exists — create that identity first
+    by name), or to create one when none does: a pull request required, squash as the only
+    merge method, scope, negative-control and your test workflow's checks required, and
+    force-push and deletion blocked; rules, parameters and bypass actors it does not manage
+    are kept. It leaves the review gate alone — required_approving_review_count stays 0 and
+    the fetched dismiss_stale_reviews_on_push / require_last_push_approval are carried
+    through — so \`--rules\` on its own is safe to run at any time. It reports "not available
+    on this plan for a private repository" when your plan does not allow rulesets — make
+    those three checks required by hand there instead, and keep the pre-push hook as the
+    fallback
   - add scope: labels for your repository; set AGENTIC_TEST_CMD in agentic-checks.yml if needed
   - name the invariants in CLAUDE.md — the reviewer checks what it names
-  - for a review gate the merging identity cannot satisfy itself: create a machine user or
-    a GitHub App installation with pull-request write, then run \`--rules\` (it sets the
-    ruleset's required_approving_review_count to 1 for you), and only then store that
-    identity's token as AGENTIC_REVIEWER_TOKEN wherever the orchestrator and reviewer run
-    (never in this repository). The order is the point: GitHub computes a PR's
-    reviewDecision only where a review is actually required, so a token set before the
-    rule exists leaves it null forever and land.mts refuses every PR`);
+  - for a review gate the merging identity cannot satisfy itself: create a machine user or a
+    GitHub App installation with pull-request write, then run \`--rules --require-review\`
+    (it raises the ruleset's required_approving_review_count to 1, dismisses stale approvals
+    and requires the last push approved), and only then store that identity's token as
+    AGENTIC_REVIEWER_TOKEN wherever the orchestrator and reviewer run (never in this
+    repository). Run \`--require-review\` only after that second identity exists: a
+    repository with a single identity cannot produce the approving review it makes
+    mandatory, so every merge is frozen until that identity is there. The order of the last
+    two steps is the point too: GitHub computes a PR's reviewDecision only where a review is
+    actually required, so a token set before the rule exists leaves it null forever and
+    land.mts refuses every PR`);

@@ -27,12 +27,16 @@ skips labels, milestone and the ruleset (offline, or no `gh` auth); `--force` ov
 files you edited before (it never overwrites silently); `--rules` updates (or creates) the
 branch ruleset over the default branch (see step 7 below) — omit it to leave rulesets
 untouched entirely; `--ruleset-name <name>` picks the ruleset to update by name instead of
-by what it governs.
+by what it governs; `--require-review` raises the ruleset's review gate (only meaningful
+together with `--rules`).
 
-**`--rules` requires an approving review, so run it only after the second identity of
-step 7's by-hand block exists.** On a repository with a single identity the merging
-identity cannot approve its own PR, and every merge is frozen until that identity is
-there.
+`--rules` on its own leaves the review gate where it found it — it writes
+`required_approving_review_count: 0` and carries the fetched stale-approval fields through
+— so it is safe to run at any time. **`--require-review` is the opt-in that makes one
+approving review mandatory: run it only after the second identity of the by-hand block
+below exists.** On a repository with a single identity the merging identity cannot approve
+its own PR, so every merge is frozen until that identity is there; the report warns about
+exactly that whenever `AGENTIC_REVIEWER_TOKEN` is unset in the environment.
 
 The script is idempotent. It:
 
@@ -60,13 +64,21 @@ The script is idempotent. It:
    never created over. Only when nothing matches is a ruleset created (POST), named
    `agentic-setup` (or `--ruleset-name`'s value) on `refs/heads/<default branch>`.
 
-   What it writes: a `pull_request` rule with `required_approving_review_count: 1`,
-   `dismiss_stale_reviews_on_push: true`, `require_last_push_approval: true` and
-   `allowed_merge_methods: ['squash']` — the shape `land.mts` and the Codex route need
-   before they will queue an automatic merge; `required_status_checks` for `scope`,
-   `negative-control` and this repository's own test workflow's job (the sole job of the
-   sole workflow file this plugin does not own; defaults to `test` when that is not
-   unambiguous); and `non_fast_forward` and `deletion` to block force-push and deletion.
+   What it writes: a `pull_request` rule with `allowed_merge_methods: ['squash']`;
+   `required_status_checks` for `scope`, `negative-control` and this repository's own test
+   workflow's job (the sole job of the sole workflow file this plugin does not own;
+   defaults to `test` when that is not unambiguous); and `non_fast_forward` and `deletion`
+   to block force-push and deletion.
+
+   What it writes for the review gate: by default nothing new —
+   `required_approving_review_count: 0`, with `dismiss_stale_reviews_on_push` and
+   `require_last_push_approval` left at the values the fetched ruleset carried (`false`
+   when there was no ruleset to fetch), and `require_extra_approval_for_unattributed_changes`
+   carried over like any other unmanaged parameter. **With `--require-review`** those three
+   become `1`, `true` and `true` — the shape `land.mts` and the Codex route need before they
+   will queue an automatic merge, and the shape that freezes every merge on a repository
+   with a single identity. `--rules` raises them no other way; there is nothing left for you
+   to edit by hand.
 
    What it keeps: a PUT replaces the whole ruleset, so everything the installer does not
    manage is carried over from the ruleset it found — its name and conditions, its
@@ -98,15 +110,16 @@ Then, by hand — the script cannot do these:
   or a GitHub App installation with pull-request write, and store its token as
   `AGENTIC_REVIEWER_TOKEN` wherever the orchestrator and reviewer run (never in this
   repository — `init` never writes it anywhere). This identity is the one thing `--rules`
-  cannot do for you. **Order matters:** create the identity, *then* run `--rules` (it sets
-  the base branch ruleset's `required_approving_review_count` to 1 for you), *then* set the
-  token. GitHub
+  cannot do for you. **Order matters:** run `--rules` (safe at any time, review gate off),
+  *then* create the identity, *then* run `--rules --require-review` (it raises the base
+  branch ruleset's `required_approving_review_count` to 1, dismisses stale approvals and
+  requires the last push approved), *then* set the token. GitHub
   only computes a PR's `reviewDecision` on a branch where a review is actually required;
   set the token before that rule exists and `reviewDecision` stays `null` forever, so
   every PR refuses in `land.mts` with no way to satisfy it (`scripts/land.mts`'s header
-  names this trap). Running `--rules` before the identity exists is the other half of the
-  same trap: the rule is then required and nobody can satisfy it, so every merge is frozen
-  until the identity is created. Without the token, `land.mts` falls back to trusting the
+  names this trap). **Run `--require-review` only after that second identity exists**: the
+  rule is otherwise required and nobody can satisfy it, so every merge is frozen until the
+  identity is created. Without the token, `land.mts` falls back to trusting the
   `review:approved` label — the same identity that runs `land.mts` can write that label
   itself, so this is meant as a bootstrap state, not a destination (`docs/decisions.md`
   item 13).
