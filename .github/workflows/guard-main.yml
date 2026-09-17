@@ -7,6 +7,15 @@
 # looks. The label is created first (idempotently) so a repository that
 # never re-ran `init` after the label split does not fail here instead.
 #
+# The commit -> PR lookup retries up to 4 times, 15 seconds apart (about 45s
+# of tolerance): right after a squash merge the association can still be
+# unindexed, so a single call risks a false `human:pending` issue for a
+# commit that did come from a PR (#80). A `gh api` error (as opposed to a
+# confirmed empty list) is retried the same way; crash policy: if it still
+# errors on the last attempt, the run still fails and opens an issue, but
+# the body says the lookup failed rather than claiming a confirmed direct
+# push.
+#
 # Declared exception: a commit whose message contains "[allow-push-main]"
 # (bootstrap only).
 
@@ -35,14 +44,46 @@ jobs:
         run: |
           set -euo pipefail
           case "$MSG" in *"[allow-push-main]"*) echo "bootstrap declared; ok"; exit 0;; esac
-          n="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length')"
-          if [ "$n" -gt 0 ]; then echo "commit $SHA belongs to $n PR(s); ok"; exit 0; fi
+
+          attempts=4
+          wait_seconds=15
+          last="error"
+          for attempt in $(seq 1 "$attempts"); do
+            if out="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length' 2>&1)"; then
+              case "$out" in
+                ''|*[!0-9]*)
+                  echo "attempt $attempt/$attempts: unexpected response: $out"
+                  last="error"
+                  ;;
+                0)
+                  echo "attempt $attempt/$attempts: 0 PR(s)"
+                  last="empty"
+                  ;;
+                *)
+                  echo "attempt $attempt/$attempts: $out PR(s)"
+                  echo "commit $SHA belongs to $out PR(s); ok"
+                  exit 0
+                  ;;
+              esac
+            else
+              echo "attempt $attempt/$attempts: gh api error: $out"
+              last="error"
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep "$wait_seconds"
+            fi
+          done
+
           title="Direct push to main without a PR ($ACTOR, ${SHA:0:7})"
           exists="$(gh issue list --repo "$REPO" --search "\"$title\" in:title" --state open --json number --jq 'length')"
           if [ "$exists" = "0" ]; then
             gh label create human:pending --repo "$REPO" --color f9d0c4 \
               --description "A human decision is required; affected work is paused" --force
-            gh issue create --repo "$REPO" --title "$title" --label human:pending \
-              --body "Commit \`$SHA\` reached \`main\` without a PR (actor: $ACTOR). Check what came in and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
+            if [ "$last" = "empty" ]; then
+              body="Commit \`$SHA\` reached \`main\` without a PR (actor: $ACTOR). Check what came in and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
+            else
+              body="Commit \`$SHA\` reached \`main\` (actor: $ACTOR), but the commit-to-PR lookup failed ($attempts attempts, ${wait_seconds}s apart; the last one errored), so this is not a confirmed direct push. Check by hand and revert through a PR if needed. See docs/decisions.md §9 of the agentic-setup plugin."
+            fi
+            gh issue create --repo "$REPO" --title "$title" --label human:pending --body "$body"
           fi
           echo "::error::direct push to main without a PR ($SHA)"; exit 1

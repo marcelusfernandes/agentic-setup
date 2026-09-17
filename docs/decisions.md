@@ -3,7 +3,15 @@
 The reasoning behind the loop, condensed. Each item is a decision, its reason, and
 what it costs.
 
+[`decisions/README.md`](decisions/README.md) is the rule this register runs by: what
+becomes a numbered decision rather than a note, what the three `Status:` values mean
+and who may move an item between them (silence never accepts one), and where a new
+decision lands — items 1 to 13 keep their numbers here, everything after them is one
+dated file under `decisions/`.
+
 ## 1. Unit of work: a GitHub sub-issue
+
+Status: accepted
 
 Child of the milestone's parent issue. Declares **file globs**, dependencies
 (`Blocked by #N`), verifiable acceptance criteria and its proof. The orchestrator, as
@@ -14,11 +22,15 @@ issue is the only channel that survives context loss.
 
 ## 2. Claiming: the remote branch is the lock
 
+Status: accepted
+
 The orchestrator pushes `<type>/<n>-<slug>` from `origin/main`; the push of a new ref
 fails if it exists. Then it assigns and flips the label. With one orchestrator this is
 belt and braces; with two, the ref is what holds.
 
 ## 3. Isolation: one worktree per issue
+
+Status: accepted
 
 `isolation: worktree` on the implementer. A worktree is born with tracked files only,
 so whatever is gitignored and needed (env files) is copied in by a versioned include
@@ -28,6 +40,8 @@ with `main` are resolved with `merge origin/main` — rebase there would need a
 force-push, which is denied everywhere.
 
 ## 4. Merge without a human
+
+Status: accepted
 
 PR to `main` with `Closes`/`Fixes`/`Resolves #N` (several issues may be linked; the diff
 must stay inside the union of their globs; a keyword inside backticks or a fence is
@@ -41,10 +55,14 @@ blocking and on the negative control being verified by CI, not by the agent.
 
 ## 5. Parallelism
 
+Status: accepted
+
 Up to four issues in flight, with non-intersecting globs. Schema or contract changes
 are their own issues, opened first; features that need them are born blocked.
 
 ## 6. PR classes
+
+Status: accepted
 
 - `feature` / `bug`: checks + reviewer.
 - `db` / schema (or your equivalent serialised class): same, one at a time.
@@ -55,12 +73,16 @@ are their own issues, opened first; features that need them are born blocked.
 
 ## 7. Restart
 
+Status: accepted
+
 On start, the orchestrator reconciles from GitHub, not memory: `in-progress` with no
 PR and no remote branch goes back to `ready`; `in-review` with green CI and an
 approved review is merged; an orphan worktree is deleted. A pass that finds nothing to
 do posts what is blocked on the parent issue.
 
 ## 8. Explicit human points
+
+Status: accepted
 
 Approving these decisions (explicit OK; silence does not approve); secrets and
 variables; the main-protection choice below; anything that needs hardware or accounts
@@ -73,6 +95,8 @@ that needed a person stays traceable from its labels. A bare `human` from before
 split is read as pending. Earlier items above keep their original wording.
 
 ## 9. Single trunk, and how `main` is protected
+
+Status: accepted
 
 `main` is the only trunk. Protection has three layers; use as many as your plan allows.
 
@@ -91,10 +115,15 @@ split is read as pending. Earlier items above keep their original wording.
   plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
   `clean`, `stash`, and — since item 14 — any `gh pr merge`, not just `--admin`). Covers
   what goes through Claude Code; does not cover a push from elsewhere.
-- **(c) Detection:** the `guard-main` action. On a push to `main` that belongs to no PR
-  it opens an issue labelled `human:pending` and fails the run, so the history turns red and
-  someone looks. The escape hatch is a commit message containing `[allow-push-main]`,
-  for bootstrap only.
+- **(c) Detection:** the `guard-main` action. The commit → PR lookup retries up to 4
+  times, 15 seconds apart (about 45s of tolerance): right after a squash merge the
+  association can still be unindexed, and a single call risks a false `human:pending`
+  issue for a commit that did come from a PR (#80). A `gh api` error is retried the same
+  way as an empty result. Once the retries run out without finding a PR, it opens an
+  issue labelled `human:pending` and fails the run, so the history turns red and someone
+  looks; if the lookup itself was still erroring on the last attempt, the issue says the
+  lookup failed rather than claiming a confirmed direct push. The escape hatch is a
+  commit message containing `[allow-push-main]`, for bootstrap only.
 
 The merge gate itself is (a) when it exists: `scripts/land.mts` queues `gh pr merge
 --squash --auto` once the base branch's ruleset has a `required_status_checks` rule, and
@@ -106,12 +135,16 @@ that judgment is `land.mts`'s alone (items 13 and 14).
 
 ## 10. Negative control is the load-bearing check
 
+Status: accepted
+
 Every feature PR carries a `test(red):` commit. CI checks out the PR's base, applies
 only the test files from the diff, runs the test command and requires a failure. A PR
 whose tests pass without its change has proven nothing; this job is what makes "merge
 without a human" honest rather than hopeful.
 
 ## 11. Every mutating orchestrator step is a script with a refusal path
+
+Status: accepted
 
 Every orchestrator step that mutates GitHub — locking an issue, dispatching one, merging a
 PR — is a script that reads live state and refuses rather than guessing, not a prose
@@ -146,6 +179,8 @@ file and its own refusal shapes to keep in sync with the skills that call it.
 
 ## 12. Issue-time entry-point warnings are advisory, not a gate (superseded — see item 13)
 
+Status: superseded by item 13
+
 `ci/issue-lint.mts`'s AC4 used to warn when a tracked file outside an issue's `## Files`
 named a path the issue's globs cover — the check #3's shape needed (item 11 above). But
 the same `git grep` fired on every reference, not only the ones a diff would break: at
@@ -177,6 +212,8 @@ numbers); the mechanical form of the #3 gap moved to PR time instead, where a di
 exists to tell a rename from an in-place edit (item 13).
 
 ## 13. The 2026-09-06 audit: trim to the core, and a separate reviewer identity
+
+Status: accepted
 
 *Trigger:* the maintainer asked for an independent, sceptical audit of overengineering —
 an opus agent with no history on this project, reading the code (not just the docs).
@@ -265,6 +302,8 @@ go away.
 
 ## 14. 2026-09-17: a hand-typed `gh pr merge` is denied, not discouraged
 
+Status: proposed
+
 "`land.mts` is the only way the orchestrator merges a pull request, never `gh pr merge`
 by hand" was written in bold in two contracts (`skills/orchestrate/SKILL.md`, `AGENTS.md`)
 and enforced nowhere: `hooks/protect-main.mts` denied a `gh pr merge` segment only when it
@@ -286,3 +325,66 @@ be added — `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to `main` for bootstrap 
 touch this — so an operator who must merge by hand does it in their own terminal or in the
 GitHub UI, where the ruleset (the layer that must not be bypassed) still applies. The hook's
 crash policy stays ALLOW, per invariant 3: it is a round-trip saver, not the gate.
+
+## 15. 2026-09-17: one generated adoption record, and `adopt` calls `init`
+
+Status: accepted
+
+The two questions M13 could not start without (#161, `human:decided`). The owner
+delegated the open questions of M11–M16 to the orchestrator on 2026-09-17 — "you know
+where we want to get to; the reference projects are the options to choose from when in
+doubt" — keeping the veto by reopening the issue. Both answers are recorded verbatim in
+that issue's decision comment, and that comment is the explicit written OK this item's
+`accepted` status rests on ([`decisions/README.md`](decisions/README.md), "Silence never
+accepts").
+
+**1. An adoption record may exist, generated only.** One file, `agentic.config.json`, at
+the adopted repository's root, written and rewritten only by `adopt`, never by hand.
+Detection still runs on every read: the record pins what detection got wrong and nothing
+else, and `adopt --inventory` reports every field where the record and `ci/lib/detect.mts`
+now disagree, so the file cannot quietly outlive the repository it describes.
+
+Invariant 4 (`AGENTS.md:44-45`, `CLAUDE.md:42-43`) gains exactly one sentence, which #163
+copies verbatim into both contract files in the same pull request as the code:
+
+> Detection remains the default, and the record is its output, not its replacement.
+
+It arrives beside a clause that stops being true the day `adopt` writes a file, so
+invariant 4 reads, in full, after #163:
+
+> 4. **Detection is a default, never a contract.** New stacks go in `ci/lib/detect.mts`
+>    with an env override path; the only file is `agentic.config.json`, written by
+>    `adopt` and never by hand. Detection remains the default, and the record is its
+>    output, not its replacement.
+
+*Why:* the generated workflows (#165), the hooks (#166), the proof runner (#164) and
+`doctor` (#168) all need the same answers, and each of them detecting them again is how
+two readers of one fact drift apart. The alternative on the table — those values written
+as environment variables into every generated workflow and nothing on disk — leaves no
+single place to read from and no place to check against, and duplication kept in step by
+hand is what this repository has already paid for twice: `scripts/init.mts:31` and the
+Codex route's `.agents/skills/autonomous-loop/scripts/github.mts:152` still hold two label
+dictionaries that a comment, not a check, keeps identical (#145 is the fix). The reference
+implementations the owner pointed at all keep the proof harness's configuration in the
+repository that runs it, for the same reason.
+
+*Cost accepted:* one more file to keep in step with `ci/lib/detect.mts`, and someone will
+eventually hand-edit it. The tooling therefore expects that rather than trusting the file:
+`adopt` refuses to overwrite a record whose `generatedBy` is not this tool, `--record
+--force` rewrites it and reports every field that changed, and `doctor` says a record was
+hand-edited instead of reading it as gospel.
+
+**2. `adopt` calls `init`.** One installer. `scripts/init.mts` keeps doing what it already
+does (`:142-222`) and `adopt` wraps the inventory, the record, the generated checks and the
+adoption pull request around it — including the "next, by hand" list at
+`scripts/init.mts:324-337`, which is exactly the part `adopt` exists to automate.
+
+*Why:* both alternatives cost more. Retiring `init` needs a migration for everyone already
+installed and a milestone larger than this one; letting the two coexist means two
+installers kept in step by hand, the same shape as the two label dictionaries above.
+
+*Cost accepted, and the scope consequence:* `scripts/init.mts` and its tests are in scope
+for M13. The milestone's draft kept that path out of every sub-issue's `## Files` until
+this answer existed; from #163 onwards an issue may list it, sequenced after #143 and #145,
+which also touch it. #163 itself still does not — its own acceptance criteria say so, and
+the `adopt` → `init` call is a separate issue in this milestone.
