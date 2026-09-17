@@ -3,7 +3,8 @@
 // sections present, the optional `Declaration:` line of `## Proof` naming a
 // `proof/<slug>.json` path, globs that parse and match something (or are
 // `new`), globs disjoint from the issues already in flight in the same
-// milestone, and every `Blocked by: #N` number in the issue actually
+// milestone, a `Blocked by:` graph with no cycle in it, and every
+// `Blocked by: #N` number in the issue actually
 // exists. It never
 // reads a diff — the mechanical form of the #3 guard (a rename that drops a
 // path without updating the file that referenced it) moved to PR time,
@@ -32,7 +33,13 @@
 // Output: JSON `{ issue, ok, failures, globs, sequenced }` on stdout by
 // default — no `warnings` key any more. `globs`/`sequenced` are additive to
 // the four keys the contract names, reporting AC2's `new` status and AC3's
-// blocked-by exception. `failures` entries are either a plain string or,
+// blocked-by exception. That exception is transitive (#258): the milestone's
+// open issues form a `Blocked by:` graph, and an overlap is `sequenced` when
+// either issue reaches the other through it, at any depth and in either
+// direction, so a chain A -> B -> C needs no restated predecessor. A shared
+// blocker orders nothing — the edges are followed in their own direction —
+// and a cycle in that graph is a failure naming the issues in it, never a
+// hang. `failures` entries are either a plain string or,
 // for AC3 (glob overlap), the object shape the issue's acceptance criteria
 // name. --markdown prints a Markdown rendering instead (for the workflow's
 // issue comment), starting with the `<!-- agentic-issue-lint -->` marker
@@ -191,7 +198,10 @@ if (declaration !== null && !PROOF_DECLARATION_PATH.test(declaration)) {
 
 const selfBlockedBy = blockedBy(body);
 if (sec['Dependencies'] && selfBlockedBy === null) {
-  failures.push('## Dependencies has no "Blocked by:" line');
+  // The message quotes both accepted forms (#258): a writer who reads only
+  // "has no Blocked by: line" cannot tell that an issue with no dependency
+  // still needs the line, and removes the section instead of completing it.
+  failures.push('## Dependencies has no "Blocked by:" line — write "Blocked by: #N" (one or more, comma-separated) or "Blocked by: none"');
 }
 
 // --- AC2: each glob parses and matches something (tracked, or new) --------
@@ -289,6 +299,63 @@ function newPathsOverlap(a: string, b: string): boolean {
   return a === b || a.startsWith(b) || b.startsWith(a);
 }
 
+// --- the `Blocked by:` graph, and its transitive closure (#258) -----------
+// An edge `n -> m` reads "n is blocked by m". The graph spans this issue and
+// every other open issue of the milestone — deliberately not only the ones
+// in flight: an intermediate issue of a chain may carry any label, or no
+// `## Files` at all, and still be what orders the two ends. Built once, read
+// by the overlap check below.
+const blockedByGraph = new Map<number, number[]>();
+blockedByGraph.set(issueNumber, selfBlockedBy ?? []);
+for (const other of others) blockedByGraph.set(other.number, blockedBy(other.body) ?? []);
+
+/**
+ * Whether `from` reaches `to` by following `Blocked by:` edges, at any
+ * depth. A visited set bounds the walk, so a cycle terminates here instead
+ * of recurring; the cycle itself is reported separately, below.
+ */
+function reaches(from: number, to: number): boolean {
+  const seen = new Set<number>([from]);
+  const queue = [...(blockedByGraph.get(from) ?? [])];
+  while (queue.length > 0) {
+    const n = queue.pop();
+    if (n === undefined) break;
+    if (n === to) return true;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    queue.push(...(blockedByGraph.get(n) ?? []));
+  }
+  return false;
+}
+
+/**
+ * The first cycle reachable from `start`, as the issues in it with the
+ * closing one repeated at the end (`[A, B, A]`), or `null` when there is
+ * none. Depth first over an explicit path, so the first back edge ends the
+ * walk; `done` keeps an already-cleared subtree from being walked twice.
+ */
+function findCycle(start: number): number[] | null {
+  const done = new Set<number>();
+  function walk(n: number, path: number[]): number[] | null {
+    const at = path.indexOf(n);
+    if (at !== -1) return [...path.slice(at), n];
+    if (done.has(n)) return null;
+    const next = [...path, n];
+    for (const m of blockedByGraph.get(n) ?? []) {
+      const found = walk(m, next);
+      if (found !== null) return found;
+    }
+    done.add(n);
+    return null;
+  }
+  return walk(start, []);
+}
+
+const blockedByCycle = findCycle(issueNumber);
+if (blockedByCycle !== null) {
+  failures.push(`"Blocked by:" forms a cycle: ${blockedByCycle.map((n) => `#${n}`).join(' -> ')} — no order exists, so neither issue can be dispatched`);
+}
+
 // --- AC3: disjointness against issues in flight in the same milestone -----
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, issueGlobs));
 const selfNewPaths = newLiteralPaths(issueGlobs);
@@ -323,8 +390,11 @@ for (const other of others) {
   ];
   const overlapFiles = [...new Set([...overlapTrackedFiles, ...overlapNewPaths, ...overlapNewPrefixes])];
   if (overlapFiles.length === 0) continue;
-  const otherBlockedBy = blockedBy(other.body) ?? [];
-  const isSequenced = (selfBlockedBy ?? []).includes(other.number) || otherBlockedBy.includes(issueNumber);
+  // Sequenced when either issue reaches the other through the closure, in
+  // either direction — a chain A -> B -> C orders A and C without C being
+  // restated in A's `Blocked by:` line (#258). A shared blocker is not an
+  // order: the edges are followed in their own direction only.
+  const isSequenced = reaches(issueNumber, other.number) || reaches(other.number, issueNumber);
   if (isSequenced) sequenced.push({ issue: other.number, files: overlapFiles });
   else failures.push({ issue: other.number, files: overlapFiles });
 }
