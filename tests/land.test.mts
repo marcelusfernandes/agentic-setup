@@ -39,11 +39,16 @@
 //     appears in its argv log.
 //   * case AE: the base falls back to `[]` when the rules endpoint cannot be
 //     read and silently lands in mode `agent`.
-//   * every `--wait` case (AG-AL) and every `--timeout` case (AM): neither
-//     flag exists on the base, whose argv check refuses any flag that is not
-//     `--require-review` — so each of those runs prints `{ error: usage }`
-//     and exits 1 there, and the assertions on `{ merged }`, `{ queued,
-//     timeout }` and the poll counts fail as assertions, not as a crash.
+//   * every `--wait` case (AG-AL): neither flag exists on the base, whose
+//     argv check refuses any flag that is not `--require-review`, so each of
+//     those runs prints `{ error: usage }` and exits 1 there and every
+//     assertion on `{ merged }`, `{ queued, timeout }`, `{ error }` and the
+//     poll counts fails as an assertion, not as a crash.
+//   * case AM is the exception, and it is stated rather than claimed: its
+//     four rejections already hold on the base, where every flag but
+//     `--require-review` is unknown and `--timeout` is one of them. What
+//     fails there is the last assertion of the group — that the usage line
+//     names the two flags — because the base's usage line names neither.
 //
 // Cases M and O remain the negative control for #78, and P-T for #144: the
 // base named no commit on either merge call before those landed.
@@ -506,7 +511,11 @@ check('an unknown flag is a usage error, not a mode', af.status === 1 && typeof 
 const stateReads = (log: string, pr: number): number =>
   log.trim().split('\n').filter((l) => l === `pr view ${pr} --json state`).length;
 
-// AG: a queued pull request that GitHub merges while land is watching.
+// AG: a queued pull request that GitHub merges while land is watching. The
+// third poll falls inside a 1-second budget as long as each fake-`gh` spawn
+// answers within ~250ms (the budget left when that poll starts is 500ms minus
+// the two spawns before it) — a wide margin for a shell script that greps one
+// small log, and the reason the budget is not made shorter.
 const ag = land(40, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '1']);
 check('--wait on a queue that becomes MERGED exits 0', ag.status === 0, `${ag.stdout}\n${ag.stderr}`);
 const agOut = parse(ag.stdout);
