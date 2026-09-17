@@ -6,6 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
 import { fileGrowth, findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
+// #177's `decisionNudge` comes in through the namespace, not the named
+// import above: a named import of an export the base checkout does not have
+// kills this whole file at load time, which reads as a structural red
+// ("does not provide an export named") rather than an assertion — exactly
+// what `ci/negative-control.mts` warns about. Through the namespace the
+// base fails on the assertion instead.
+import * as scopeLib from '../ci/lib/scope.mts';
 
 const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
 cleanup(() => rmSync(dir, { recursive: true, force: true }));
@@ -478,6 +485,91 @@ check(
 check(
   'fileGrowth: @generated on the first line exempts a file that would otherwise violate',
   fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: true }]).length === 0,
+);
+
+// #177: the decision nudge. A PR that changes a mechanism file (a hook, a
+// CI check, a script, a skill card, a workflow) without recording a
+// decision in the same diff is named in a `warning:` line — and the check
+// still exits 0, because a required check cannot make that judgement from
+// file names alone (the decision on #180). The issue globs below have to
+// cover the sensitive files, or the glob check would fail the run before
+// the nudge is ever visible.
+const nudgeIssue = file(
+  'issue-nudge.md',
+  '## Files\n- `hooks/**`, `ci/**`, `scripts/**`, `skills/**`, `.github/**`, `docs/**`\n',
+);
+const nudgeSensitive = [
+  'hooks/protect-main.mts',
+  'ci/scope-check.mts',
+  'scripts/land.mts',
+  'skills/issue-and-pr/SKILL.md',
+  '.github/workflows/ci.yml',
+];
+const filesHookOnly = file('files-nudge-hook.txt', 'hooks/protect-main.mts\n');
+const filesHookPlusDecision = file('files-nudge-decision.txt', 'hooks/protect-main.mts\ndocs/decisions/0001-nudge-strength.md\n');
+const filesDocsOnly = file('files-nudge-docs.txt', 'docs/workflow.md\n');
+const filesAllSensitive = file('files-nudge-all.txt', `${nudgeSensitive.join('\n')}\n`);
+
+const rNudge = scope(filesHookOnly, nudgeIssue, prPlain);
+check(
+  'scope warns and still exits 0 on a mechanism file with no decision record in the diff',
+  rNudge.status === 0 &&
+    /warning:/.test(rNudge.out) &&
+    JSON.stringify(scopeJson(rNudge.out).decisionNudge) === JSON.stringify(['hooks/protect-main.mts']),
+  rNudge.out,
+);
+
+const rNudgeDecided = scope(filesHookPlusDecision, nudgeIssue, prPlain);
+check(
+  'scope does not warn when the same diff also touches docs/decisions/',
+  rNudgeDecided.status === 0 &&
+    !/warning:/.test(rNudgeDecided.out) &&
+    !('decisionNudge' in scopeJson(rNudgeDecided.out)) &&
+    !('warning' in scopeJson(rNudgeDecided.out)),
+  rNudgeDecided.out,
+);
+
+const rNudgeDocs = scope(filesDocsOnly, nudgeIssue, prPlain);
+check(
+  'scope does not warn for a diff touching only docs/',
+  rNudgeDocs.status === 0 && !/warning:/.test(rNudgeDocs.out) && !('decisionNudge' in scopeJson(rNudgeDocs.out)),
+  rNudgeDocs.out,
+);
+
+const rNudgeAll = scope(filesAllSensitive, nudgeIssue, prPlain);
+check(
+  'the warning names every sensitive path it found',
+  rNudgeAll.status === 0 && nudgeSensitive.every((p) => String(scopeJson(rNudgeAll.out).warning ?? '').includes(p)),
+  rNudgeAll.out,
+);
+
+// Direct unit cases for the pure decisionNudge, which invariant 6 allows
+// for `ci/lib/` — including the boundary the owner drew on #180:
+// `tests/**` and `templates/**` are deliberately not sensitive.
+const decisionNudge = scopeLib.decisionNudge as ((files: string[]) => string[]) | undefined;
+check('ci/lib/scope.mts exports decisionNudge', typeof decisionNudge === 'function');
+check(
+  'decisionNudge returns every sensitive path, in diff order',
+  decisionNudge !== undefined &&
+    JSON.stringify(decisionNudge(['docs/workflow.md', ...nudgeSensitive])) === JSON.stringify(nudgeSensitive),
+  decisionNudge ? JSON.stringify(decisionNudge(['docs/workflow.md', ...nudgeSensitive])) : 'not exported',
+);
+check(
+  'decisionNudge returns nothing when the diff touches docs/decisions.md',
+  decisionNudge !== undefined && decisionNudge(['ci/scope-check.mts', 'docs/decisions.md']).length === 0,
+);
+check(
+  'decisionNudge returns nothing when the diff touches a file under docs/decisions/',
+  decisionNudge !== undefined && decisionNudge(['ci/scope-check.mts', 'docs/decisions/0001-x.md']).length === 0,
+);
+check(
+  'decisionNudge does not treat tests/** or templates/** as sensitive',
+  decisionNudge !== undefined && decisionNudge(['tests/scope.test.mts', 'templates/issue.md']).length === 0,
+  decisionNudge ? JSON.stringify(decisionNudge(['tests/scope.test.mts', 'templates/issue.md'])) : 'not exported',
+);
+check(
+  'decisionNudge treats only SKILL.md under skills/, not every file there',
+  decisionNudge !== undefined && decisionNudge(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md']).length === 0,
 );
 
 finish();
