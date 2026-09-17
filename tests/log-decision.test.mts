@@ -14,14 +14,15 @@
 // whose body starts with the marker, or no output at all) instead of
 // running jq.
 //
-// Negative control: on the base (before this PR) scripts/log-decision.mts
-// does not exist, so every run below prints nothing on stdout and each case
-// fails on its own JSON assertion ("no refusal JSON", "no success JSON") —
-// a runtime red, not a structural one. That is why the failure detail
-// passed to check() is the child's *stdout* only: the child's
-// ERR_MODULE_NOT_FOUND on stderr stays in a captured variable and never
-// reaches the suite's output, where `ci/negative-control.mts:52-56` would
-// read it as a structural red (skill `safe-worktree` §B7).
+// Negative control: scripts/log-decision.mts exists on the base, so the red
+// is an assertion red — cases J, K and L below assert on shapes the base
+// script does not produce (`#12` as `<parent>` is a usage error there, a
+// pull request as `<parent>` is accepted, and a TMPDIR that cannot be
+// written to crashes the process instead of reporting `{ error }`). The
+// failure detail passed to check() is the child's *stdout* only, so a stack
+// trace on the child's stderr never reaches the suite's output, where
+// `ci/negative-control.mts:52-56` would read it as a structural red (skill
+// `safe-worktree` §B7).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +35,9 @@ const LINE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z \| \S+ \| #\d+ \| \S/;
 // --- a fake `gh` on PATH ----------------------------------------------------
 // Fixture issue numbers: 101 is closed, 404 does not exist (gh's own 404
 // wording on stderr), 500 fails for a reason that is not a 404 at all
-// (the { error } case), every other number is an open issue.
+// (the { error } case), 600 is an open pull request — the `issues/<n>`
+// endpoint answers for one, with the `pull_request` key an issue never
+// carries — and every other number is an open issue.
 const FAKE_GH_IMPL = String.raw`
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -77,6 +80,13 @@ if (method === 'GET' && issue) {
     die('gh: Not Found (HTTP 404)');
   }
   if (n === 500) die('gh: HTTP 403: API rate limit exceeded for installation');
+  if (n === 600) {
+    out(JSON.stringify({
+      number: n,
+      state: 'open',
+      pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/600' },
+    }));
+  }
   out(JSON.stringify({ number: n, state: n === 101 ? 'closed' : 'open' }));
 }
 
@@ -131,7 +141,7 @@ function stateDir(): string {
 
 type Comment = { id: number; body: string };
 
-function log(args: string[], dir: string = stateDir()) {
+function log(args: string[], dir: string = stateDir(), env: Record<string, string> = {}) {
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'log-decision.mts'), ...args], {
     encoding: 'utf8',
     cwd: repo,
@@ -141,6 +151,7 @@ function log(args: string[], dir: string = stateDir()) {
       FAKE_GH_STATE_DIR: dir,
       FAKE_GH_NODE: RUNTIME,
       FAKE_GH_JS,
+      ...env,
     },
   });
   const argvLog = existsSync(join(dir, 'gh-argv.log')) ? readFileSync(join(dir, 'gh-argv.log'), 'utf8') : '';
@@ -255,5 +266,67 @@ check('gh failure wrote nothing', noWrite(h.log) && h.comments.length === 0, h.l
 const i = log([]);
 check('no arguments exits 1', i.status === 1, i.stdout);
 check('no arguments reports { error } with the usage line', /log-decision\.mts/.test(parse(i.stdout)?.error ?? ''), i.stdout);
+
+// --- J: <parent> takes the same #N / N shapes as --ref ----------------------
+const j = log(['#12', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
+check('#12 as <parent> succeeds (exit 0)', j.status === 0, j.stdout);
+const jOut = parse(j.stdout);
+check('#12 as <parent> reports parent: 12 and one line', jOut?.parent === 12 && jOut?.lines === 1, j.stdout);
+check('#12 as <parent> read issue 12, the # stripped', /issues\/12\b/.test(j.log), j.log);
+
+const jZero = log(['#0', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
+check(
+  '#0 as <parent> exits 1 with the usage line',
+  jZero.status === 1 && /log-decision\.mts/.test(parse(jZero.stdout)?.error ?? ''),
+  jZero.stdout,
+);
+check('#0 as <parent> never called gh at all', jZero.log.trim() === '', jZero.log);
+
+// --- K: <parent> naming a pull request is refused as parent:type ------------
+// `repos/{owner}/{repo}/issues/<n>` answers for a pull request too; the log
+// lives on the milestone's parent *issue*, so a PR number is a refusal, not
+// a comment on a pull request.
+const k = log(['600', '--kind', 'grant', '--ref', '#151', 'granted a glob']);
+check('a pull request as <parent> refuses (exit 1)', k.status === 1, k.stdout);
+const kOut = parse(k.stdout);
+check(
+  'a pull request as <parent> reports { refused, parent, missing: [parent:type] }',
+  typeof kOut?.refused === 'string' && kOut?.parent === 600 && (kOut?.missing ?? []).includes('parent:type'),
+  k.stdout,
+);
+check('a pull request as <parent> wrote nothing', noWrite(k.log) && k.comments.length === 0, k.log);
+check('a pull request as <parent> never read the comments', !/issues\/600\/comments/.test(k.log), k.log);
+
+// --- L: a TMPDIR the staging directory cannot be made in is an { error } ----
+// mkdtempSync is the one filesystem call the script used to make outside a
+// try/catch: a TMPDIR it cannot write to has to be reported like every other
+// write failure instead of crashing the process. A mode does not stop root,
+// so the case is skipped there (tests/adopt-inventory.test.mts takes the same
+// way out).
+const IS_ROOT = process.getuid?.() === 0;
+if (IS_ROOT) {
+  check('read-only TMPDIR case skipped (running as root, which a mode cannot stop)', true);
+} else {
+  const readOnly = mkdtempSync(join(tmpdir(), 'agentic-decision-ro-'));
+  cleanup(() => {
+    try {
+      chmodSync(readOnly, 0o700);
+    } catch {
+      /* already restored */
+    }
+    rmSync(readOnly, { recursive: true, force: true });
+  });
+  chmodSync(readOnly, 0o500);
+  const l = log(['100', '--kind', 'grant', '--ref', '#151', 'granted a glob'], stateDir(), { TMPDIR: readOnly });
+  chmodSync(readOnly, 0o700);
+  check('a read-only TMPDIR exits 1', l.status === 1, l.stdout);
+  const lOut = parse(l.stdout);
+  check(
+    'a read-only TMPDIR reports { error }, never a crash or a refusal',
+    typeof lOut?.error === 'string' && lOut?.refused === undefined,
+    l.stdout,
+  );
+  check('a read-only TMPDIR wrote nothing', noWrite(l.log) && l.comments.length === 0, l.log);
+}
 
 finish();

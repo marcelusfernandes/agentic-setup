@@ -230,10 +230,13 @@ comment on the parent issue, found by the `<!-- agentic-decision-log -->` marker
 second call appends to that same comment instead of posting another. `--kind` is one of
 `grant`, `extra-round`, `human-pending` and nothing else. It **fails closed**: exit 1 with
 `{ refused, parent, missing }` when the parent issue does not exist or is closed
-(`parent:state`), the kind is outside that set (`kind:unknown`), `--ref` is not an issue
-or PR number (`ref:format`) or the text is empty (`text:empty`) — nothing written in any
-of those cases; exit 1 with `{ error }` when `gh` itself could not answer, which is not a
-verdict on the decision, so read it and retry rather than dropping the line. Exit 0 →
+(`parent:state`), the number is a pull request and not an issue (`parent:type` — the
+issues endpoint answers for a PR too, and the log lives on the parent issue), the kind is
+outside that set (`kind:unknown`), `--ref` is not an issue or PR number (`ref:format`) or
+the text is empty (`text:empty`) — nothing written in any of those cases; exit 1 with
+`{ error }` when `gh` itself could not answer or the comment body could not be staged on
+disk, neither of which is a verdict on the decision, so read it and retry rather than
+dropping the line. Exit 0 →
 `{ parent, comment, lines }`. The other two call sites are step 5 (an extra round) and
 "Escalate to a person" (`human:pending`).
 

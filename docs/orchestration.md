@@ -114,15 +114,20 @@ a purely mechanical rejection the one extra round it earns, and applying `human:
 `scripts/log-decision.mts <parent> --kind grant|extra-round|human-pending --ref <#N>
 "<line>"` appends one dated line — `<UTC ISO-8601> | <kind> | <ref> | <text>` — to a single
 comment on the milestone's **parent** issue, found by its `<!-- agentic-decision-log -->`
-marker, so the whole phase's decisions accumulate in one place instead of scattering. The
-log is a comment and not a tracked file on purpose: GitHub is the durable state here
+marker, so the whole phase's decisions accumulate in one place instead of scattering.
+`<parent>` and `--ref` are the same shape of value and are read the same way: `#12` and
+`12` are both accepted, `#0` and anything else is not. The log is a comment and not a
+tracked file on purpose: GitHub is the durable state here
 (`docs/decisions.md` item 7) and the orchestrator cannot push to `main`, so a tracked log
 would need a PR per line.
 
 It fails closed. Exit 1 with `{ refused, parent, missing }` — `parent:state` (the parent
-issue does not exist or is closed), `kind:unknown`, `ref:format`, `text:empty` — and
-nothing is written; exit 1 with `{ error }` when `gh` itself could not answer, which is a
-failure to record the decision, not a verdict on it. Exit 0 → `{ parent, comment, lines }`.
+issue does not exist or is closed), `parent:type` (the number is a pull request and not an
+issue: `repos/{owner}/{repo}/issues/<n>` answers for a PR too, and the log lives on the
+parent issue), `kind:unknown`, `ref:format`, `text:empty` — and nothing is written; exit 1
+with `{ error }` when `gh` itself could not answer, or when the comment body could not be
+staged on disk (the temporary directory or the file in it), which is a failure to record
+the decision, not a verdict on it. Exit 0 → `{ parent, comment, lines }`.
 `skills/orchestrate/SKILL.md` carries the three call sites: step 3 (the grant), step 5 (the
 extra round) and "Escalate to a person" (`human:pending`).
 
