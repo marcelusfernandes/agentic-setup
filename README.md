@@ -66,7 +66,7 @@ CLI with plugin support.
    sub-issues, and the task issues themselves from `.github/ISSUE_TEMPLATE/task.md`
    (Context, Goal, Acceptance criteria, Proof, Files, Dependencies). The `issue-lint`
    workflow `init` installs checks that contract before an issue is dispatched, and an
-   issue's `Files` globs are exactly what the `scope` check enforces on its PR.
+   issue's `Files` globs are what the `scope` check enforces on its PR.
 4. **Run it.** `/agentic-setup:orchestrate` runs the orchestrator's loop across every open
    milestone — reconcile, dispatch ready issues to implementers in worktrees, review,
    merge, continue — to completion, not one pass, stopping only for the closed list of
@@ -185,7 +185,8 @@ is not a hard token/spending cap. Logs may contain sensitive task/tool content.
 ## What `init` writes into your repository
 
 Only the Claude route's `init` changes a repository; the Codex plugin writes nothing into
-it, and the project-local Codex installer writes only the skill directory named above.
+it, and the project-local Codex installer writes only the skill directory named above plus
+an `AGENTS.md` when there is none.
 `init` is idempotent, and `--dry-run` shows the whole report before anything happens. It:
 
 - copies the GitHub templates into `.github/` — the issue and PR templates,
