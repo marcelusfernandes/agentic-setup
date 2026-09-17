@@ -33,10 +33,19 @@ already-required `test` check, not a new check name. It reads every
 `docs/closeout/M<n>.md` and fails when:
 
 - the file does not parse against the format below;
-- the `main SHA` or any row's merge commit is not reachable from `main`
-  (`git merge-base --is-ancestor <sha> main`), or is not a commit in the
+- the `main SHA` or any row's merge commit is not reachable from the main ref
+  (`git merge-base --is-ancestor <sha> <ref>`), or is not a commit in the
   repository at all;
+- the rows are not in ascending issue order;
 - a listed issue is not closed.
+
+That main ref is resolved, not assumed. The pin takes the first of
+`origin/main`, then `main`, then `HEAD` that resolves to a commit in the
+checkout it is reading, and refuses when none of the three does. `HEAD` is the
+last resort, for a checkout that has neither `origin/main` nor `main` — a clone
+that fetched only the branch under test, or a worktree whose branch was renamed
+— where the alternative is to skip the ancestry check entirely; on a checkout of
+the branch under test that is the right thing to prove reachability against.
 
 Ancestry needs history, which is why `.github/workflows/test.yml` checks out with
 `fetch-depth: 0`; a shallow checkout fails the pin rather than passing quietly.
@@ -44,7 +53,10 @@ The issue-closed check needs credentials the `test` job does not have
 (`contents: read`, no token), so against the real tree it runs only when `gh` is
 authenticated and leaves a note on stderr when it is not — its refusal path is
 covered by a controlled `gh` fixture in the test. A tree with no closeout file
-yet passes with a note.
+yet passes with a note. One case inside the test is allowed to skip itself: the
+shallow-checkout case needs `git clone --depth 1` to work in the environment
+running the suite, and where it does not it prints a note on stderr instead of
+failing — the environment could not run that case, which is not the pin passing.
 
 ## Format
 
@@ -85,10 +97,12 @@ The rules the parser applies, in order:
 - `## Issues`, `## Left out` and `## Dogfood` each appear exactly once, in that
   order.
 - The `## Issues` table header is `| issue | title | PR | merge commit |`,
-  followed by a delimiter row, then one row per issue. A row is
+  followed by a delimiter row, then one row per issue, in issue order. A row is
   `| #N | title | #PR | <40-character sha> |`: an issue number, a non-empty
   title, a PR number and the full squash commit. An issue that closed without a
   PR did not ship — it belongs in `## Left out`, not in the table.
+- Issue numbers are strictly ascending down the table, so the same issue never
+  appears twice and two rows out of order are named in the failure.
 - `## Left out` and `## Dogfood` each carry at least one bullet. Nothing to say
   is written out, not omitted: `- None — every issue shipped.` and
   `- None needed — <why>`.
