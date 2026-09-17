@@ -27,7 +27,7 @@ reads, in this order:
 | --- | --- |
 | `gh api repos/{owner}/{repo}` | `defaultBranch`, `autoMerge`, `deleteBranchOnMerge` |
 | `gh api repos/{owner}/{repo}/rules/branches/<defaultBranch>` | `ruleset` (the branch's *effective* rules, flattened and enforcement-aware — the same endpoint `scripts/land.mts` gates on, not the ruleset list) |
-| `gh label list --json name --limit 200` | `labels` |
+| `gh label list --json name --limit 200` | `labels`, `labelsTruncated` — one page, asked for explicitly rather than left at `gh`'s default of 30 |
 | `git rev-parse --git-path hooks` | where `hooks` are looked for — git's answer, not a guess |
 
 Everything else comes off the filesystem under the root: `hooks` and `workflows` by
@@ -52,6 +52,7 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
     "requiredStatusChecks": ["scope", "negative-control"]
   },
   "labels": ["human:decided", "human:pending", "state:ready"],
+  "labelsTruncated": false,
   "hooks": ["pre-push"],
   "workflows": ["agentic-checks.yml", "guard-main.yml", "issue-lint.yml"],
   "autoMerge": true,
@@ -66,7 +67,13 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
 - `defaultBranch` — the repository's default branch, and the branch whose rules are read.
 - `ruleset` — `null` when no rule is in force on that branch, otherwise the flattened
   view above. `null` means *there is none*, never *it could not be read* (see below).
-- `labels` — every label that exists on the repository, sorted.
+- `labels` — the labels that exist on the repository, sorted: one page of at most 200,
+  the limit the read asks for.
+- `labelsTruncated` — `true` when that page came back **full**, so the repository may have
+  labels this read never saw. `gh` reports neither a total nor a cursor, so a full page is
+  the only signal there is, and the field is always present rather than left for a reader
+  to infer from `labels.length`. While it is `true`, `labels:missing` is a guess drawn from
+  a page: a label reported missing may simply be one beyond it.
 - `hooks` — the hooks this setup installs (`pre-push`) that are present **and** carry its
   marker. Someone else's `pre-push` is not ours and is not listed. Where to look is asked
   of git (`git rev-parse --git-path hooks`), the same question `scripts/init.mts` asks
@@ -95,7 +102,7 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 | --- | --- |
 | `ruleset:absent` | no rule at all is in force on the default branch |
 | `ruleset:review-not-required` | a ruleset exists, but `required_approving_review_count` is 0 — the review gate `scripts/land.mts` reads can never be satisfied |
-| `labels:missing` | at least one label of the loop's vocabulary (the `state:`, `type:`, `review:` and `human:` set `scripts/init.mts` seeds) does not exist |
+| `labels:missing` | at least one label of the loop's vocabulary (the `state:`, `type:`, `review:` and `human:` set `scripts/init.mts` seeds) is not on the page the label read returned; read together with `labelsTruncated` |
 | `hooks:not-installed` | the `pre-push` hook is absent or is not ours |
 | `workflows:missing` | at least one of `agentic-checks.yml`, `guard-main.yml`, `issue-lint.yml` is absent |
 | `test-command:none` | no test command was detected and none was overridden — `negative-control` cannot prove anything without one |
@@ -111,6 +118,12 @@ about it — and ends with the raw JSON. Nothing is written to disk: no adoption
 file, no setting. What it does change is on GitHub, and there are two things there: the
 issue itself, and the `human:pending` label when the repository did not already have it.
 Both are named below.
+
+The body carries one warning the JSON carries as a field: when `labelsTruncated` is
+`true`, the `Labels:` line says so and names the limit the read asked for, because the
+checklist right below it lists the labels adoption would create and that list is drawn
+from a page. A person should not tick a box without knowing the list behind it was
+complete.
 
 That is the repository's own pattern. `.github/workflows/guard-main.yml` opens exactly
 such an issue and deduplicates it by title, and the three readers that honour the label
