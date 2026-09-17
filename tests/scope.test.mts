@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Cases for ci/scope-check.mts: the PR diff must stay inside the issue's
-// `## Files` globs, unless the PR body grants extra files with `authorised:`.
+// `## Files` globs, unless an `authorised:` line in the **linked issue's**
+// `## Files` grants extra files. A grant in the pull-request body is
+// ignored and reported as such (#155): the implementer writes that body.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +29,18 @@ const issueBare = file('issue-bare.md', '## Files\n- src/**\n');
 const prPlain = file('pr-plain.md', 'Closes #1\n\n## Files\nGlobs touched (must match the issue).\n');
 const prGrant = file('pr-grant.md', 'Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n- authorised: `src/lib/b.ts` — see issue comment\n');
 const prNoClose = file('pr-noclose.md', '## What changed\nstuff\n');
+// #155: the grant travels on the issue. Written on bare (non-bullet) lines
+// on purpose — `parseIssueGlobs` reads bullets only, so a bare line is a
+// glob the *authorised* parser alone can find, which is what makes the
+// "grant in the issue" cases below discriminate.
+const issueLibGrant = file(
+  'issue-lib-grant.md',
+  '## Files\n- `lib/**`, `docs/*.md`\nauthorised: `src/a.ts`\n  (orchestrator: needed for AC3)\nauthorised: `src/lib/b.ts` — see issue comment\n',
+);
+const issueLibGrantBullet = file(
+  'issue-lib-grant-bullet.md',
+  '## Files\n- `lib/**`, `docs/*.md`\n- authorised: src/a.ts\n  (orchestrator: needed for AC3)\n- authorised: src/lib/b.ts — see issue comment\n',
+);
 const scope = (f: string, i: string | null, p: string) => ci('scope-check.mts', ['--files-file', f, ...(i ? ['--issue-body-file', i] : []), '--pr-body-file', p]);
 // The script's stdout is the JSON block (indented, so its top-level closing
 // `}` is the first line that is exactly `}`) followed by the job summary
@@ -41,10 +55,69 @@ const scopeJson = (out: string): any => {
 check('scope passes inside the issue globs', scope(files, issueSrc, prPlain).status === 0);
 check('scope passes with bare (unquoted) globs', scope(files, issueBare, prPlain).status === 0);
 check('scope fails outside the issue globs', scope(files, issueLib, prPlain).status === 1);
-check('scope passes when the PR grants the files with authorised:', scope(files, issueLib, prGrant).status === 0);
 check('scope fails without Closes #N', scope(files, null, prNoClose).status === 1);
 const r = scope(files, issueLib, prPlain);
 check('scope names the violations', /src\/a\.ts/.test(r.out) && /src\/lib\/b\.ts/.test(r.out), r.out);
+
+// #155: an `authorised:` grant counts only in the body of an issue the PR
+// closes. The implementer writes the PR body, so a grant there would be a
+// self-grant: it is ignored, and the check says so instead of silently
+// passing the file.
+const IGNORED_PR_GRANT = "An authorised: line in the pull-request body grants nothing — the grant is read from the linked issue's ## Files.";
+
+const rPrOnlyGrant = scope(files, issueLib, prGrant);
+check(
+  'scope fails when the only authorised: grant is in the pull-request body',
+  rPrOnlyGrant.status === 1,
+  rPrOnlyGrant.out,
+);
+check(
+  'scope reports the pull-request grant as ignored, with the reason',
+  rPrOnlyGrant.out.includes(IGNORED_PR_GRANT) &&
+    JSON.stringify(scopeJson(rPrOnlyGrant.out).ignoredPrGrants) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']),
+  rPrOnlyGrant.out,
+);
+
+const rIssueGrant = scope(files, issueLibGrant, prPlain);
+check(
+  'scope passes the same diff when the authorised: grant is in the linked issue',
+  rIssueGrant.status === 0,
+  rIssueGrant.out,
+);
+check(
+  'scope attributes the issue grant in the summary and prints no ignored-grant line',
+  /Authorised by #1: [^\n]*`src\/a\.ts`[^\n]*`src\/lib\/b\.ts`/.test(rIssueGrant.out) && !rIssueGrant.out.includes(IGNORED_PR_GRANT),
+  rIssueGrant.out,
+);
+check(
+  'scope reads the issue grant with the same strictness: bullet or bare, backticked glob wins, trailing prose ignored',
+  scope(files, issueLibGrantBullet, prPlain).status === 0,
+  scope(files, issueLibGrantBullet, prPlain).out,
+);
+
+// AC3: both `--issue-body-file` and `--pr-body-file` given — only the
+// issue's grant applies, and the pull request's is named as ignored.
+const issueLibGrantA = file('issue-lib-grant-a.md', '## Files\n- `lib/**`\nauthorised: `src/a.ts`\n  (orchestrator: only this one counts)\n');
+const prGrantB = file('pr-grant-b.md', 'Closes #1\n\n## Files\n- authorised: `src/lib/b.ts`\n  (implementer: this must not count)\n');
+const rBothBodies = scope(files, issueLibGrantA, prGrantB);
+check(
+  'scope with both bodies applies only the issue grant and names the pull request one as ignored',
+  rBothBodies.status === 1 &&
+    JSON.stringify(scopeJson(rBothBodies.out).violations) === JSON.stringify(['src/lib/b.ts']) &&
+    JSON.stringify(scopeJson(rBothBodies.out).ignoredPrGrants) === JSON.stringify(['src/lib/b.ts']) &&
+    scopeJson(rBothBodies.out).globs.includes('src/a.ts'),
+  rBothBodies.out,
+);
+
+// A stale grant left in a pull-request body is reported even when the
+// check passes on the issue's globs alone — it did nothing, and silence
+// would read as acceptance.
+const rPassingWithStaleGrant = scope(files, issueSrc, prGrant);
+check(
+  'scope reports an ignored pull-request grant even when the check passes',
+  rPassingWithStaleGrant.status === 0 && rPassingWithStaleGrant.out.includes(IGNORED_PR_GRANT),
+  rPassingWithStaleGrant.out,
+);
 
 // AC1: parseLinkedIssues accepts Closes/Fixes/Resolves and their forms,
 // in order, deduplicated, and ignores a bare #N with no keyword before it.
@@ -152,6 +225,10 @@ const danglingHead = git(['rev-parse', 'HEAD'], danglingRepo);
 
 const issueTestsOnly = file('issue-tests-only.md', '## Files\n- `tests/**`\n');
 const issueTestsAndWorkflow = file('issue-tests-and-workflow.md', '## Files\n- `tests/**`, `.github/workflows/**`\n');
+const issueTestsAuthorised = file(
+  'issue-tests-authorised.md',
+  '## Files\n- `tests/**`\nauthorised: `.github/workflows/test.yml`\n  (orchestrator: needed for the rename)\n',
+);
 const prClosesOnly = file('pr-closes-only.md', 'Closes #1\n\n## Files\nGlobs touched.\n');
 const prClosesAuthorised = file(
   'pr-closes-authorised.md',
@@ -193,11 +270,20 @@ check(
   rWorkflowInGlobs.out,
 );
 
-const rAuthorised = scopeReal(issueTestsOnly, prClosesAuthorised);
+const rAuthorised = scopeReal(issueTestsAuthorised, prClosesOnly);
 check(
-  'scope passes the same rename when the PR authorises the referencing workflow file',
+  'scope passes the same rename when the linked issue authorises the referencing workflow file',
   rAuthorised.status === 0,
   rAuthorised.out,
+);
+
+// #155: the dangling-reference check reads the issue's grants too — a
+// grant for the same file in the pull-request body does not clear it.
+const rAuthorisedInPr = scopeReal(issueTestsOnly, prClosesAuthorised);
+check(
+  'scope still fails the rename when the workflow file is authorised only in the pull-request body',
+  rAuthorisedInPr.status === 1 && rAuthorisedInPr.out.includes(IGNORED_PR_GRANT),
+  rAuthorisedInPr.out,
 );
 
 // #89: `checkScope` can pass (every changed file sits inside the linked
@@ -285,22 +371,22 @@ check(
   rMisplaced.out,
 );
 check(
-  'scope summary explains that an authorised: line outside ## Files does not count',
-  /An authorised: line outside ## Files does not count — move it into that section\./.test(rMisplaced.out) &&
+  'scope summary explains that an authorised: line outside ## Files is not parsed at all',
+  /An authorised: line outside ## Files is not parsed at all — and a grant in the pull-request body grants nothing either\./.test(rMisplaced.out) &&
     /authorised: `src\/a\.ts`/.test(rMisplaced.out),
   rMisplaced.out,
 );
 
-const rGrantOk = scope(files, issueLib, prGrant);
+const rGrantOk = scope(files, issueLibGrant, prPlain);
 check(
-  'scope JSON has no misplacedAuthorised key when the grant is inside ## Files and the check passes',
+  'scope JSON has no misplacedAuthorised key when the issue grants the files and the check passes',
   (() => {
     const json = scopeJson(rGrantOk.out);
     return json.ok === true && !('misplacedAuthorised' in json);
   })(),
   rGrantOk.out,
 );
-check('scope prints no misplacedAuthorised text when the grant is inside ## Files and the check passes', !/misplacedAuthorised/.test(rGrantOk.out), rGrantOk.out);
+check('scope prints no misplacedAuthorised text when the issue grants the files and the check passes', !/misplacedAuthorised/.test(rGrantOk.out), rGrantOk.out);
 
 const rPlainPass = scope(files, issueSrc, prPlain);
 check(

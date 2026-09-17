@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 // scope — the PR's diff must sit inside the union of the `## Files` globs
-// of every issue it closes, plus whatever an `authorised:` line in the PR
-// body grants. A PR links an issue with Closes/Fixes/Resolves (or their
-// close/closed, fix/fixed, resolve/resolved forms), and may link several.
+// of every issue it closes, plus whatever an `authorised:` line in one of
+// those **issue** bodies grants. A PR links an issue with
+// Closes/Fixes/Resolves (or their close/closed, fix/fixed,
+// resolve/resolved forms), and may link several.
+//
+// The grant lives on the issue because the orchestrator writes the issue at
+// dispatch while the implementer writes the PR body: a grant read from the
+// PR is a self-grant, and one line added to its own description would carry
+// a diff outside the issue's globs past this check (#155). A grant found in
+// the PR body is parsed anyway, and reported as ignored with the reason,
+// so it fails loudly rather than silently.
 //
 // It also fails a PR that deletes or renames a tracked path still named by
 // another tracked file outside the diff (#51) — the #3 shape: a path drops
@@ -11,7 +19,8 @@
 // issue-lint.mts's header); decidable here, where the diff is known. A
 // dangling reference is not a failure when the referencing file sits inside
 // the linked issue's globs (the PR is expected to touch it, or the reviewer
-// sees it in the diff) or is granted by an `authorised:` line.
+// sees it in the diff) or is granted by an `authorised:` line in one of
+// those issue bodies.
 //
 // It also names, as a `warning:` that never changes the exit code, every
 // mechanism file the diff changes when the same diff records no decision
@@ -146,7 +155,7 @@ type DanglingRef = { removed: string; referencedBy: string };
 
 /** A hit is dangling unless it sits inside the diff itself (git grep runs
  * over the whole tree, then this drops what the diff already covers) or is
- * covered by the linked issue's globs / an `authorised:` grant. */
+ * covered by the linked issue's globs / one of its `authorised:` grants. */
 function danglingReferences(removed: string[], diffFiles: string[], globs: string[]): DanglingRef[] {
   const inDiff = new Set(diffFiles);
   const out: DanglingRef[] = [];
@@ -198,15 +207,20 @@ if (issueBodyFiles.length > 0) {
 const linkedGlobs = collectLinkedGlobs(linked);
 const issueGlobs = linkedGlobs.flatMap((g) => g.globs);
 if (issueGlobs.length === 0) fail('the linked issue(s) declare no globs under `## Files`.');
-const authorisedGlobs = parseAuthorisedGlobs(prBody);
+const authorisedGlobs = linkedGlobs.flatMap((g) => g.authorised);
+// Parsed, never applied: a grant in the PR body is the self-grant #155
+// closed. Reported whether or not the check passes — a stale grant that
+// did nothing should not read as accepted.
+const ignoredPrGrants = parseAuthorisedGlobs(prBody);
 const result = checkScope({ files, issueGlobs, authorisedGlobs });
 const dangling = danglingReferences(removed, files, [...issueGlobs, ...authorisedGlobs]);
 const growth = baseRef && headRef ? fileGrowth(growthEntries(baseRef, headRef, files)) : [];
 const ok = result.ok && dangling.length === 0 && growth.length === 0;
-// A grant written outside ## Files never reaches parseAuthorisedGlobs, so
-// it silently doesn't count; only worth surfacing once the glob check
-// itself fails on something it might have covered — dangling references
-// and file growth are unrelated to authorised: grants.
+// A grant written outside ## Files never reaches parseAuthorisedGlobs at
+// all, so it is not even among the ignored grants above; only worth
+// surfacing once the glob check itself fails on something it might have
+// covered — dangling references and file growth are unrelated to
+// authorised: grants.
 const misplacedAuthorised = result.ok ? [] : findMisplacedAuthorisedLines(prBody);
 // A nudge, not a verdict: computed whatever the checks above decided, and
 // never folded into `ok`. See lib/scope.mts's decisionNudge for why this
@@ -229,11 +243,17 @@ if (!result.ok) {
   firstLine = `**FAILED** — ${dangling.length} dangling reference(s) and ${growth.length} file(s) new or grown past ${FILE_LINE_LIMIT} lines; every changed file is inside the linked issues' globs.`;
 }
 
+const IGNORED_PR_GRANT_REASON =
+  "An authorised: line in the pull-request body grants nothing — the grant is read from the linked issue's ## Files.";
+const MISPLACED_REASON =
+  'An authorised: line outside ## Files is not parsed at all — and a grant in the pull-request body grants nothing either.';
+
 console.log(JSON.stringify({
   ...result,
   ok,
   danglingReferences: dangling,
   growth,
+  ...(ignoredPrGrants.length ? { ignoredPrGrants } : {}),
   ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}),
   ...(decisionWarning ? { decisionNudge: nudged, warning: decisionWarning } : {}),
 }, null, 2));
@@ -245,14 +265,23 @@ appendSummary(
     ...(result.ok ? [] : result.violations.map((f) => `- \`${f}\``)),
     ...(misplacedAuthorised.length
       ? [
-          'An authorised: line outside ## Files does not count — move it into that section.',
+          MISPLACED_REASON,
           ...misplacedAuthorised.map((l) => `- \`${l}\``),
+        ]
+      : []),
+    ...(ignoredPrGrants.length
+      ? [
+          '',
+          IGNORED_PR_GRANT_REASON,
+          ...ignoredPrGrants.map((g) => `- ignored: \`${g}\``),
         ]
       : []),
     '',
     'Globs by linked issue:',
     ...linkedGlobs.map(({ issue, globs }) => `- #${issue ?? '?'}: ${globs.length ? globs.map((g) => `\`${g}\``).join(', ') : '(none)'}`),
-    ...(authorisedGlobs.length ? ['', `Authorised by the PR: ${authorisedGlobs.map((g) => `\`${g}\``).join(', ')}`] : []),
+    ...linkedGlobs
+      .filter(({ authorised }) => authorised.length)
+      .flatMap(({ issue, authorised }) => ['', `Authorised by #${issue ?? '?'}: ${authorised.map((g) => `\`${g}\``).join(', ')}`]),
     ...(dangling.length
       ? [
           '',
