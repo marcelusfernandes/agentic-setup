@@ -128,6 +128,9 @@ function newStateDir(): string {
 type Run = { status: number | null; stdout: string; stderr: string; log: string; stateDir: string };
 
 function adopt(args: string[], cwd: string, env: Record<string, string> = {}, stateDir = newStateDir()): Run {
+  // The argv log is per-run even when the state directory is shared (the
+  // two --plan-issue runs share one, so the second sees the first's issue).
+  writeFileSync(join(stateDir, 'gh-argv.log'), '');
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'adopt.mts'), ...args], {
     cwd,
     encoding: 'utf8',
