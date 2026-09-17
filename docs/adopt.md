@@ -123,6 +123,10 @@ the second is true would remove a protection it never saw. The same rule governs
 filesystem: only `ENOENT` (the file or directory genuinely is not there) reads as
 absent, and every other errno — `EACCES` above all — fails closed.
 
+`error` is always one of the names below, never a tool's wording: `gh`'s own first line
+is reported alongside it in `detail`, so a caller can branch on the name and still show
+the cause.
+
 | `error` | Cause |
 | --- | --- |
 | `usage: node scripts/adopt.mts --inventory \| --plan-issue` | neither flag, or both |
@@ -133,9 +137,8 @@ absent, and every other errno — `EACCES` above all — fails closed.
 | `hooks:unreadable` | `git rev-parse --git-path hooks` could not answer, or a hook file exists and could not be read |
 | `workflows:unreadable` | `.github/workflows` exists and could not be listed |
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read back from what `gh` printed |
-| `plan-issue:not-created` | `gh issue create` failed and said nothing of its own |
+| `plan-issue:not-created` | `gh issue create` failed; its first line, when it had one, is in `detail` |
 | `label:human:pending:not-created` | the label does not exist and could not be created |
-| *(gh's own first line)* | `gh issue create` failed with a message of its own |
 
 ## What this is not
 

@@ -54,8 +54,13 @@ const PENDING_LABEL = 'human:pending';
 const PENDING_COLOR = 'f9d0c4';
 const PENDING_DESCRIPTION = 'A human decision is required; affected work is paused';
 
-function fail(reason: string): never {
-  console.log(JSON.stringify({ error: reason }));
+/**
+ * The one way out on a failure: a *named* reason in `error`, so a caller can
+ * branch on it, with the underlying tool's own message in `detail` when
+ * there is one. gh's wording is not a contract and must never be the name.
+ */
+function fail(reason: string, detail?: string): never {
+  console.log(JSON.stringify(detail ? { error: reason, detail } : { error: reason }));
   process.exit(1);
 }
 
@@ -193,7 +198,7 @@ if (!inventory.labels.includes(PENDING_LABEL)) {
 }
 
 const created = gh(['issue', 'create', '--title', PLAN_ISSUE_TITLE, '--label', PENDING_LABEL, '--body', renderPlan(inventory)]);
-if (created.status !== 0) fail((created.stderr || created.stdout || 'plan-issue:not-created').trim().split('\n')[0]);
+if (created.status !== 0) fail('plan-issue:not-created', (created.stderr || created.stdout || '').trim().split('\n')[0] || undefined);
 const url = created.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
 const number = Number(url.match(/\/(\d+)\s*$/)?.[1]);
 if (!Number.isInteger(number)) fail('plan-issue:unreadable');

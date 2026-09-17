@@ -466,8 +466,8 @@ check(
 const iCreate = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'issue-create' });
 const iCreateOut = parse(iCreate.stdout);
 check(
-  "plan-issue: a failed issue create exits 1 with { error } carrying gh's own message",
-  iCreate.status === 1 && typeof iCreateOut?.error === 'string' && /could not create the issue/.test(iCreateOut.error),
+  "plan-issue: a failed issue create exits 1 with a stable { error } and gh's own message in { detail }",
+  iCreate.status === 1 && iCreateOut?.error === 'plan-issue:not-created' && /could not create the issue/.test(iCreateOut?.detail ?? ''),
   `${iCreate.stdout}\n${iCreate.stderr}`,
 );
 check('plan-issue: a failed issue create tried exactly once, never twice', created(iCreate.log) === 1, iCreate.log);
