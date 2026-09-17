@@ -2,6 +2,7 @@
 // Cases for ci/lib/detect.mts: detectCommands is a pure function (CLAUDE.md
 // invariant 6), so these import it directly and point it at temp
 // directories holding only the marker files for one stack.
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -190,5 +191,55 @@ check(
   c.test === 'custom test' && c.source === 'override',
   JSON.stringify(c),
 );
+
+// --- The detected command, actually run (known limitation of #256) ---------
+// CPython 3.11 dropped namespace-package recursion from `unittest discover`,
+// so the command the criterion names collects nothing on the very layout this
+// detector exists for. These two cases run it instead of describing it. python3
+// is not a dependency of this repository, so an absent (or pre-3.11)
+// interpreter is a skip and never a failure, the way the shellcheck cases in
+// tests/adopt.test.mts skip.
+const PY_CASE = [
+  'import unittest',
+  '',
+  '',
+  'class EngineTest(unittest.TestCase):',
+  '    def test_ok(self):',
+  '        self.assertEqual(1, 1)',
+  '',
+].join('\n');
+
+const version = spawnSync('python3', ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], { encoding: 'utf8' });
+const [major = 0, minor = 0] = (version.stdout ?? '').trim().split('.').map(Number);
+const recursesIntoNamespacePackages = version.status !== 0 || major < 3 || (major === 3 && minor < 11);
+
+if (recursesIntoNamespacePackages) {
+  check(
+    `the detected python command is not run here (python3 ${version.status === 0 ? `${major}.${minor}` : 'absent'}: needs >= 3.11)`,
+    true,
+  );
+} else {
+  repo = tempRepo();
+  commit(repo, { 'engine/test_engine.py': PY_CASE }, 'tests one directory down, no __init__.py');
+  c = detectCommands(repo, {});
+  let run = spawnSync(String(c.test), [], { cwd: repo, shell: true, encoding: 'utf8' });
+  let out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  check(
+    'the detected command collects nothing when the test package has no __init__.py',
+    c.test === 'python3 -m unittest discover' && run.status === 5 && /Ran 0 tests/.test(out) && /NO TESTS RAN/.test(out),
+    `${c.test} -> exit ${run.status}\n${out}`,
+  );
+
+  // The same tree with an __init__.py runs the test, which is what makes the
+  // case above a limitation of the command and not of the detection.
+  writeFileSync(join(repo, 'engine', '__init__.py'), '');
+  run = spawnSync(String(c.test), [], { cwd: repo, shell: true, encoding: 'utf8' });
+  out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  check(
+    'the same tree with an __init__.py runs the test the detector found',
+    run.status === 0 && /Ran 1 test\b/.test(out) && /\bOK\b/.test(out),
+    `${c.test} -> exit ${run.status}\n${out}`,
+  );
+}
 
 finish();

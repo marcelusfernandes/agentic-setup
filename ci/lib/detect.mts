@@ -100,6 +100,20 @@ function trackedPythonFiles(root: string): string[] {
 // markers cannot see (scripts plus `engine/test_engine.py` behind its own
 // runner). `python3 -m unittest discover` is the stdlib runner, so it needs
 // nothing installed; `check` stays null because no linter is implied.
+//
+// KNOWN LIMITATION — the command, not the detector. CPython 3.11 dropped
+// namespace-package recursion from `unittest discover`: it descends into a
+// subdirectory only when that directory holds an `__init__.py`. So on the very
+// layout this detector exists for — tests one directory down, no `__init__.py`
+// — the command runs, collects nothing, prints `NO TESTS RAN` and exits 5.
+// `ci/negative-control.mts` reads that as a baseline failing its own tests
+// (`inconclusive`), and the adopter is handed a command that finds none of
+// their tests. Detecting the stack is still the improvement the criterion
+// asked for, and the two cases at the end of `tests/detect.test.mts` run the
+// command and pin both halves of this behaviour rather than describing it.
+// Which command a marker-less Python tree should really get — `pytest`, a
+// discovered start directory, something else — is a follow-up, recorded in the
+// orchestrator note of 2026-09-17 on issue #256; do not substitute it here.
 function fromPythonTestTree(root: string): Commands | null {
   const files = trackedPythonFiles(root);
   const isTestTree = files.some((path) => {
