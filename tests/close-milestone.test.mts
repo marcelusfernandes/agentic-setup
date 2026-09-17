@@ -160,7 +160,13 @@ function land(repo: string, files: Record<string, string>, message: string): str
 }
 
 /** A filled closeout document over the given rows. */
-function closeout(phase: string, sha: string, rows: Array<[number, number, string]>, leftOut = '- None — every issue shipped.'): string {
+function closeout(
+  phase: string,
+  sha: string,
+  rows: Array<[number, number, string]>,
+  leftOut = '- None — every issue shipped.',
+  dogfood = '- None needed — no report was required.',
+): string {
   const table = rows.map(([issue, pr, rowSha]) => `| #${issue} | feat(x): a thing | #${pr} | ${rowSha} |`).join('\n');
   return `# Closeout M${phase} — ${TITLE}
 
@@ -179,7 +185,7 @@ ${leftOut}
 
 ## Dogfood
 
-- None needed — no report was required.
+${dogfood}
 `;
 }
 
@@ -392,5 +398,53 @@ check('no arguments never called gh at all', n.log.trim() === '', n.log);
 
 const n2 = close(goodRepo().repo, ['not-a-number', '--evidence', EVIDENCE], stateDir());
 check('a milestone that is not a number reports { error }', typeof parse(n2.stdout)?.error === 'string', n2.stdout);
+
+// --- O: the dogfood refusal (#182) ------------------------------------------
+// The binding half of the dogfood nudge. `scope` only warns per PR, because a
+// required check cannot judge from a file name whether a run was owed; the
+// phase close can, because by then the whole phase is visible. A milestone
+// that merged a PR touching `hooks/`, `ci/`, `scripts/` or a
+// `skills/**/SKILL.md` does not close while its `## Dogfood` section names no
+// `docs/dogfood/<date>.md`.
+//
+// The rows of `## Issues` carry the squash commit of each merged PR, so the
+// files of a phase are `git diff --name-only <sha>^1 <sha>` over those rows —
+// the same local git the sha ancestry checks already run against.
+
+/** A fixture whose one merged PR changed a mechanism file. */
+function sensitiveRepo(dogfood?: string): Fixture {
+  const f = fixture();
+  const merged = land(f.repo, { 'ci/scope-check.mts': '// a mechanism change\n' }, 'feat(ci): change the mechanism (#1)');
+  land(f.repo, { [EVIDENCE]: closeout('14', merged, [[1, 11, merged]], undefined, dogfood) }, 'docs(docs): closeout M14 (#174)');
+  return { ...f, landed: merged };
+}
+
+const o = run(sensitiveRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+refuses('a phase that changed the mechanism and names no dogfood report', o, 'dogfood');
+check(
+  'the dogfood refusal names the mechanism file and the issue that carried it',
+  /ci\/scope-check\.mts/.test(parse(o.stdout)?.refused ?? '') && /#1\b/.test(parse(o.stdout)?.refused ?? ''),
+  o.stdout,
+);
+
+// --- O2: the same phase closes once the closeout names a report -------------
+const o2 = run(
+  sensitiveRepo('- `docs/dogfood/2026-09-17.md` — one pass against a disposable repository.').repo,
+  [String(MILESTONE), '--evidence', EVIDENCE],
+);
+check('a phase that names a dated dogfood report closes', o2.status === 0, o2.stdout);
+check('a phase that names a dated dogfood report is not refused on dogfood', !missingOf(o2.stdout).includes('dogfood'), o2.stdout);
+
+// --- O3: a phase that touched nothing sensitive closes without a report -----
+const o3 = run(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+check('a phase with no mechanism change closes without a dogfood report', o3.status === 0, o3.stdout);
+check('a phase with no mechanism change is not refused on dogfood', !missingOf(o3.stdout).includes('dogfood'), o3.stdout);
+
+// --- O4: `docs/dogfood/` without a dated report is not a report -------------
+const o4 = run(
+  sensitiveRepo('- None needed — see `docs/dogfood/README.md` for the format.').repo,
+  [String(MILESTONE), '--evidence', EVIDENCE],
+);
+refuses('a `## Dogfood` bullet naming no dated report', o4, 'dogfood');
 
 finish();
