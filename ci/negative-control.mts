@@ -14,9 +14,18 @@
 //                a missing export, a syntax error) and no `test(red):` commit
 //                in base..head touches any of the overlaid test files
 //   vacuous      the baseline was green and the overlaid run also passed — the
-//                tests prove nothing
+//                tests prove nothing. Its detail names the usual cause, an
+//                entry point that enumerates its test directories: a
+//                brand-new test tree is invisible to it on the base, so the
+//                verdict is about the entry point, not the tests. The entry
+//                point is overlaid only when a test glob matches its path or
+//                a declaration's `tests` names it — the same two routes that
+//                let the fix prove itself in the PR that makes it
 //   no-tests     the diff adds or changes no test files
-//   cannot-run   the test command could not be found or detected
+//   cannot-run   the test command could not be found or detected. When
+//                nothing was detected, the detail names the escape a
+//                repository has whatever its stack: a `Makefile` with a
+//                `test:` target, which ci/lib/detect.mts reads first
 //   inconclusive the baseline itself failed, before the overlay — a base that
 //                cannot run its own tests makes the negative control unable
 //                to discriminate anything
@@ -210,7 +219,7 @@ if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, 
 
 const commands = detectCommands(root);
 const testCommand = declaration?.command ?? commands.test;
-if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow, or name the command in `proof/<slug>.json`.');
+if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow, name the command in `proof/<slug>.json`, or give the repository a `Makefile` with a `test:` target — `ci/lib/detect.mts` reads a Makefile before every other stack marker, so that target is the written escape for a stack it cannot detect.');
 
 type RunResult = { status: number | null; crashed: boolean; output: string };
 
@@ -295,7 +304,10 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
       return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
     }
     if (overlaid.status === 0) {
-      return { outcome: 'vacuous', detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change.` };
+      return {
+        outcome: 'vacuous',
+        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs.`,
+      };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
     const structural = STRUCTURAL_SIGNATURE.test(overlaid.output);
