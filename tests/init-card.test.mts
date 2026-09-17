@@ -114,8 +114,8 @@ check(
   note,
 );
 check(
-  'the note ties that green check to the repository\'s own test workflow job, which step 7 may have named otherwise',
-  /own test workflow's job/i.test(note),
+  'the note ties that green check to the repository\'s own test workflow job, as step 7 found it named',
+  /your own test workflow/i.test(note) && /step 7/i.test(note),
   note,
 );
 check(

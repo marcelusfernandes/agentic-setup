@@ -114,12 +114,14 @@ Then, by hand — the script cannot do these:
   issue: with no `Closes #N` in the body there is no issue whose `## Files` it could read
   the globs from. `negative-control` fails it as `no-tests`, because what the installer
   wrote are not test files and they do not all sit in a skipped path class. The third
-  required check is your own test workflow's job — `test` unless step 7 named it after
-  something else — and that one is expected green. Both reds are correct on that one pull
-  request: nothing is wrong with the install, so do not debug it over them. If you have
-  already run `--rules`, those two are required on the default branch and this pull request
-  cannot merge on its own — merge it under one of the ruleset's `bypass_actors`, or leave
-  `--rules` for after it is in, since it is safe to run at any time. The reds stop at the
+  required check is the job of your own test workflow, whatever step 7 found it called
+  (`test` when it could not tell), and that one is expected green. Both reds are correct on
+  that one pull request: nothing is wrong with the install, so do not debug it over them.
+  Cleanest is to omit `--rules` on the bootstrap run, merge this pull request, and run
+  `init --rules` after — it is safe at any time. If you have already run it, those two are
+  required on the default branch and this pull request cannot merge on its own: add
+  yourself to the ruleset's `bypass_actors` (or disable the ruleset) until it is in, then
+  re-run `--rules`, which carries `bypass_actors` over. The reds stop at the
   first ordinary issue-linked pull request, the one that carries a `Closes #N` in its body
   and test files in its diff: `scope` then has an issue to read globs from, and
   `negative-control` has tests to overlay on the base.
