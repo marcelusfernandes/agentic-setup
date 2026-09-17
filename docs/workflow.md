@@ -19,6 +19,13 @@ written in English; the language you talk to the agents in is your business.
   commit *log* for one thing only — when that red is
   *structural* (a missing module or export, a syntax error), a `test(red):` commit in
   `base..head` touching one of those test files is what makes it acceptable (#135).
+  The convention has a second mechanical consumer before the PR exists: the `SubagentStop`
+  gate (`hooks/stop-gate.mts`) runs the detected check and test commands when an
+  implementer tries to stop and blocks the stop while either is red, and a **last** commit
+  whose subject starts with `test(red):` is exempt — that red is what the commit is for.
+  The gate caps at three consecutive blocks per branch and never runs on `main`/`master`;
+  `docs/orchestration.md` has the row, and item 13 of `docs/decisions.md` the 2026-09-17
+  note on why it is the one client-side check that earns an exception (#137).
 
 ## Milestones
 

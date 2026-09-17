@@ -279,6 +279,33 @@ required CI check — and client-side only where no server-side rule can exist f
 free-plan private repository has no ruleset; nothing server-side stops a local `git push
 --force` before it leaves the machine).
 
+*Note, 2026-09-17 (#137): the `SubagentStop` gate is an exception to that rule, admitted
+by the rule's own second clause.* `hooks/stop-gate.mts` is back — registered on
+`SubagentStop` this time, and on `Stop` where the trunk rule makes it a no-op — running
+the detected check and test commands in the implementer's worktree and blocking the stop
+while either is red. It does not duplicate a server-side rule, because **no server-side
+rule can run the project's tests in the agent's worktree before the PR exists**: the
+`test` check needs a pushed branch and a pull request, which is precisely the round trip
+this saves. The 2026-09-06 cut above was not a finding that gating a stop is wrong — the
+82-line `stop-gate.mts` in the table was registered on `Stop` alone and therefore never
+fired for an implementer at all (M3), so what the audit measured was dead code, not a
+duplicated check.
+
+Four bounds are what make it a gate and not a second CI, and they are the terms of the
+exception: `main`/`master` is never gated; a last commit whose subject starts with
+`test(red):` is exempt; a project with no detected test command is let through with a note
+(detection is a default, never a contract — item 4 of `AGENTS.md`); and three consecutive
+blocks on the same branch is the cap, after which the stop goes through and CI is the gate
+again. Crash policy ALLOW covers the rest: a command that times out or cannot be spawned,
+a counter that cannot be written, an unreadable payload — each one lets the stop through
+with a note, because a gate that cannot judge must not hold the agent.
+
+Where a decision lands, per `docs/decisions/README.md`, is a dated file under
+`docs/decisions/`. This note lives here instead because #137's `## Files` lists
+`docs/decisions.md` and no path under `docs/decisions/`, and an implementer never widens
+its own globs. It records what is in force; renumbering it as a dated file is a docs
+change for whoever holds the next decision issue.
+
 *The reviewer-identity gap and its fix* (#66, `agents/reviewer.md`, `scripts/land.mts`):
 before this pass, the same token that ran `land.mts` could also write the
 `review:approved` label, so the review it gated on was not independent of the identity

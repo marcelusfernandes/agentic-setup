@@ -36,7 +36,20 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    the orchestrator copies the issue's `type:` and `scope:` labels onto the PR at its
    step 4 (`skills/orchestrate/SKILL.md`). An agent that labels its own work could buy
    its own exemptions.
-8. Stop. Do not wait on CI, do not poll the PR, do not merge — the orchestrator is the one
+8. Stop — and expect the stop to be gated. `hooks/stop-gate.mts` fires on `SubagentStop`
+   in your worktree and runs the project's check command, then its test command (detected
+   by `ci/lib/detect.mts`; a `proof/<slug>.json` `command` replaces the detected test
+   command). While either is red the stop is blocked and you get
+   `[agentic-setup/stop-gate] the <check|test> command <cmd> is red in <worktree>`, the
+   block number, and the last lines of the failing output: read those lines, fix the
+   cause, and try to stop again. It does not run on `main`/`master`, and it does not run
+   when your last commit is a `test(red):` — that red is the point of the commit, so
+   commit the red test *before* you stop rather than working around the gate. Three
+   consecutive blocks on the same branch is the cap: the fourth stop goes through with the
+   suite unproven, and when that happens say so in the PR body — the reviewer and CI are
+   what is left. Never disable it (`AGENTIC_STOP_GATE=1` marks the gate's own child
+   processes; setting it yourself to get past a block is working around your own proof).
+   Do not wait on CI, do not poll the PR, do not merge — the orchestrator is the one
    that watches the checks, launches the reviewer, comments its verdict, applies the
    labels and polls until the merge lands (`skills/orchestrate/SKILL.md` steps 4-5). If CI
    or the reviewer sends it back, fix in the same worktree and update the PR.
