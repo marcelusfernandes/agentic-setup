@@ -2,28 +2,41 @@
 // first step is the one nothing did before: look at the repository and say
 // what is there, before writing a single byte into someone else's tree.
 //
-// `takeInventory(root, gh)` is pure in the sense that matters here: every
-// effect it can have goes through the `gh` runner handed to it, and it only
-// ever asks that runner for reads (`api repos/{owner}/{repo}`, the default
-// branch's effective rules, `label list`). Everything else comes off the
+// `takeInventory(root, gh, git)` is pure in the sense that matters here:
+// every effect it can have goes through the two command runners handed to
+// it, and it only ever asks them for reads — `gh api repos/{owner}/{repo}`,
+// the default branch's effective rules, `gh label list`, and
+// `git rev-parse --git-path hooks`. Everything else comes off the
 // filesystem under `root`. The check and test commands, the stack and the
 // detection source come from `ci/lib/detect.mts` unchanged — this file adds
 // no detector and knows nothing about stacks.
+//
+// Where the hooks live is git's answer, not a guess: `core.hooksPath` moves
+// them (husky, lefthook, a shared team directory) and a worktree's `.git`
+// is a file, so `git rev-parse --git-path hooks` is the only thing that
+// knows. This is the same question `scripts/init.mts` asks before it
+// installs the hook, so the two cannot disagree about which file is ours.
 //
 // **Crash policy: fail closed.** A read that cannot answer returns
 // `{ error: <named reason> }` and the caller exits non-zero; no field is
 // ever reported as absent because the read failed. "No ruleset" and "the
 // ruleset could not be read" are different answers and this file never
-// conflates them.
+// conflates them — and neither is "no hook installed" the same as "git
+// could not say where hooks live", nor "no workflows directory" the same as
+// "the workflows directory could not be listed". Only ENOENT — the file or
+// directory genuinely is not there — reads as absent; every other errno
+// (EACCES above all) fails closed.
 //
 // Node built-ins only.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { detectCommands } from '../../../ci/lib/detect.mts';
 
-export type GhResult = { status: number; stdout: string; stderr: string };
+export type CommandResult = { status: number; stdout: string; stderr: string };
 /** Runs `gh` with the given argv and reports what it printed. */
-export type GhRunner = (args: string[]) => GhResult;
+export type GhRunner = (args: string[]) => CommandResult;
+/** Runs `git` with the given argv, inside the repository, and reports what it printed. */
+export type GitRunner = (args: string[]) => CommandResult;
 
 /** The workflows `scripts/init.mts` copies from `templates/.github/workflows`. */
 export const OWNED_WORKFLOWS = ['agentic-checks.yml', 'guard-main.yml', 'issue-lint.yml'];
@@ -53,13 +66,13 @@ export const SEEDED_LABELS = [
 ];
 
 /** The git hooks `scripts/init.mts` installs into the adopting repository. */
-export const OWNED_HOOKS = ['pre-push'];
+const OWNED_HOOKS = ['pre-push'];
 
 /** The marker every hook this setup installs carries in its text. */
 const HOOK_MARKER = 'agentic-setup';
 
 /** Every gap this inventory can name. A gap is a fact, not a judgement. */
-export const GAP_NAMES = [
+const GAP_NAMES = [
   'ruleset:absent',
   'ruleset:review-not-required',
   'labels:missing',
@@ -106,7 +119,7 @@ type Read<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /** One `gh` read, parsed as JSON; any failure becomes the named reason. */
 function readJson<T>(gh: GhRunner, args: string[], reason: string): Read<T> {
-  let result: GhResult;
+  let result: CommandResult;
   try {
     result = gh(args);
   } catch {
@@ -120,48 +133,52 @@ function readJson<T>(gh: GhRunner, args: string[], reason: string): Read<T> {
   }
 }
 
+/** True only for "it genuinely is not there"; every other errno fails closed. */
+const isMissing = (err: unknown): boolean => (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+
 /**
- * The hooks directory git would actually run: `<root>/.git/hooks` for an
- * ordinary clone, and the *common* directory's hooks for a worktree, whose
- * `.git` is a file pointing at `…/.git/worktrees/<name>` (which has a
- * `commondir` file and no hooks of its own).
+ * The directory git would actually run hooks from. Asked of git rather than
+ * assembled from `<root>/.git`, exactly as `scripts/init.mts` asks it:
+ * `core.hooksPath` redirects it, and in a worktree `.git` is a file whose
+ * hooks live in the common directory. The answer may be relative to the
+ * repository root, so it is resolved against it.
  */
-function gitHooksDir(root: string): string {
-  const dotGit = join(root, '.git');
+function gitHooksDir(root: string, git: GitRunner): Read<string> {
+  let result: CommandResult;
   try {
-    if (statSync(dotGit).isDirectory()) return join(dotGit, 'hooks');
-    const pointer = readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)$/m);
-    if (!pointer) return join(dotGit, 'hooks');
-    const gitDir = resolve(root, pointer[1].trim());
-    const commonFile = join(gitDir, 'commondir');
-    const common = existsSync(commonFile) ? resolve(gitDir, readFileSync(commonFile, 'utf8').trim()) : gitDir;
-    return join(common, 'hooks');
+    result = git(['rev-parse', '--git-path', 'hooks']);
   } catch {
-    return join(dotGit, 'hooks');
+    return { ok: false, error: 'hooks:unreadable' };
   }
+  const path = result.stdout.trim();
+  if (result.status !== 0 || path.length === 0) return { ok: false, error: 'hooks:unreadable' };
+  return { ok: true, value: resolve(root, path) };
 }
 
-/** The names of this setup's hooks that are installed and recognisably ours. */
-function installedHooks(root: string): string[] {
-  const dir = gitHooksDir(root);
-  return OWNED_HOOKS.filter((name) => {
+/**
+ * The names of this setup's hooks that are installed at that directory and
+ * are recognisably ours (someone else's `pre-push` is not).
+ */
+function installedHooks(dir: string): Read<string[]> {
+  const found: string[] = [];
+  for (const name of OWNED_HOOKS) {
     try {
-      return readFileSync(join(dir, name), 'utf8').includes(HOOK_MARKER);
-    } catch {
-      return false;
+      if (readFileSync(join(dir, name), 'utf8').includes(HOOK_MARKER)) found.push(name);
+    } catch (err) {
+      if (!isMissing(err)) return { ok: false, error: 'hooks:unreadable' };
     }
-  });
+  }
+  return { ok: true, value: found };
 }
 
-/** Every workflow file present in `.github/workflows`, sorted. */
-function workflowFiles(root: string): string[] {
+/** Every workflow file present in `.github/workflows`, sorted; not only ours. */
+function workflowFiles(root: string): Read<string[]> {
   const dir = join(root, '.github', 'workflows');
   try {
-    return readdirSync(dir)
-      .filter((name) => /\.ya?ml$/.test(name))
-      .sort();
-  } catch {
-    return [];
+    return { ok: true, value: readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)).sort() };
+  } catch (err) {
+    if (isMissing(err)) return { ok: true, value: [] };
+    return { ok: false, error: 'workflows:unreadable' };
   }
 }
 
@@ -183,7 +200,7 @@ function toRuleset(rules: BranchRule[]): Ruleset | null {
 }
 
 /** The gaps a report implies. Order is the order of GAP_NAMES. */
-export function findGaps(report: Omit<Inventory, 'gaps'>): Gap[] {
+function findGaps(report: Omit<Inventory, 'gaps'>): Gap[] {
   const gaps: Gap[] = [];
   if (report.ruleset === null) gaps.push('ruleset:absent');
   else if (report.ruleset.requiredApprovingReviewCount < 1) gaps.push('ruleset:review-not-required');
@@ -198,10 +215,10 @@ type RepoView = { default_branch?: unknown; allow_auto_merge?: unknown; delete_b
 
 /**
  * Describes the repository at `root` without changing anything: three `gh`
- * reads plus the filesystem. Returns `{ error }` — never a partial report —
- * when any of those reads cannot answer.
+ * reads, one `git` read and the filesystem. Returns `{ error }` — never a
+ * partial report — when any of those reads cannot answer.
  */
-export function takeInventory(root: string, gh: GhRunner, env: NodeJS.ProcessEnv = process.env): InventoryResult {
+export function takeInventory(root: string, gh: GhRunner, git: GitRunner): InventoryResult {
   const repo = readJson<RepoView>(gh, ['api', 'repos/{owner}/{repo}'], 'repository:unreadable');
   if (!repo.ok) return { error: repo.error };
   // Fail closed on every field of this read, not only the branch name: a
@@ -221,7 +238,15 @@ export function takeInventory(root: string, gh: GhRunner, env: NodeJS.ProcessEnv
   if (!labels.ok) return { error: labels.error };
   if (!Array.isArray(labels.value)) return { error: 'labels:unreadable' };
 
-  const detected = detectCommands(root, env);
+  const hooksDir = gitHooksDir(root, git);
+  if (!hooksDir.ok) return { error: hooksDir.error };
+  const hooks = installedHooks(hooksDir.value);
+  if (!hooks.ok) return { error: hooks.error };
+
+  const workflows = workflowFiles(root);
+  if (!workflows.ok) return { error: workflows.error };
+
+  const detected = detectCommands(root);
   const report = {
     stack: detected.stack,
     test: detected.test,
@@ -230,8 +255,8 @@ export function takeInventory(root: string, gh: GhRunner, env: NodeJS.ProcessEnv
     defaultBranch,
     ruleset: toRuleset(rules.value),
     labels: labels.value.map((l) => String(l?.name ?? '')).filter((name) => name.length > 0).sort(),
-    hooks: installedHooks(root),
-    workflows: workflowFiles(root),
+    hooks: hooks.value,
+    workflows: workflows.value,
     autoMerge,
     deleteBranchOnMerge,
   };

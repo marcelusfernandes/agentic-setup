@@ -39,8 +39,8 @@ import {
   SEEDED_LABELS,
   isFailure,
   takeInventory,
+  type CommandResult,
   type Gap,
-  type GhResult,
   type Inventory,
 } from './lib/adopt/inventory.mts';
 
@@ -59,9 +59,17 @@ function fail(reason: string): never {
   process.exit(1);
 }
 
-function gh(args: string[]): GhResult {
+function gh(args: string[]): CommandResult {
   const r = spawnSync('gh', args, { encoding: 'utf8' });
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+/** `git` inside the repository being described; `cwd` is bound in step 2. */
+function gitIn(cwd: string) {
+  return (args: string[]): CommandResult => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  };
 }
 
 // --- 1. the flags, before anything is read ----------------------------------
@@ -76,7 +84,7 @@ if (top.status !== 0 || !(top.stdout ?? '').trim()) fail('root:not-a-git-reposit
 const root = top.stdout.trim();
 
 // --- 3. the report ----------------------------------------------------------
-const inventory = takeInventory(root, gh);
+const inventory = takeInventory(root, gh, gitIn(root));
 if (isFailure(inventory)) fail(inventory.error);
 
 if (wantInventory) {
