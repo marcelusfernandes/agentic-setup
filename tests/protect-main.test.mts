@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 // Cases for hooks/protect-main.mts: the plain third-layer check — no push to
-// main, no force-push, no `gh pr merge --admin`. Spawns the real hook
-// against a throwaway git repo.
-import { check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
+// main, no force-push, no `gh pr merge` by hand (with or without `--admin`).
+// Spawns the real hook against a throwaway git repo. Also asserts the
+// declarative deny list that ships next to the hook, since the two state the
+// same rule and drift silently otherwise.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROOT, check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
 
 const bash = (command: string, cwd: string, env?: Record<string, string>) =>
   hook('protect-main.mts', { tool_name: 'Bash', tool_input: { command }, cwd }, { cwd, env });
@@ -12,7 +16,7 @@ commit(repo, { 'a.txt': 'a' }, 'init');
 
 // AC1(a): force-push, in any form the hook is asked to catch.
 // AC1(b): a push that targets main/master, or a bare push while on it.
-// AC1 merge: `gh pr merge --admin`.
+// AC1 merge: any `gh pr merge` segment, `--admin` or not.
 const denied = [
   'git push --force origin feat/1-x',
   'git push -f origin feat/1-x',
@@ -24,6 +28,12 @@ const denied = [
   'git push', // bare push while on main
   'cd sub && git push origin main', // a segment after && is still checked
   'gh pr merge --admin 12',
+  'gh pr merge 1 --admin',
+  'gh pr merge 1 --squash',
+  'gh pr merge 1',
+  'gh pr merge 42 --squash --delete-branch',
+  'cd sub && gh pr merge 7 --merge', // a merge after && is still a command segment
+  'echo "x; gh pr merge 1"', // no quote parsing: the `;` splits inside the string too (see the hook header)
   'git push origin main:refs/heads/main', // AC1/AC3: long-form refspec, remote side is protected
   'git push origin HEAD:refs/heads/master',
 ];
@@ -38,8 +48,10 @@ const allowed = [
   'git status',
   'ls -la',
   'AGENTIC_ALLOW_PUSH_MAIN=1 git push origin main', // inline valve
-  'gh pr merge 1', // fail-closed is gone: no --admin, the server decides
-  'gh pr merge 1 --squash',
+  'node scripts/land.mts 1', // the only way to merge: gh is spawned from Node, not from this Bash
+  'node scripts/land.mts 1 --allow-label',
+  'git commit -m "docs: never gh pr merge by hand"', // quoted, not a command segment
+  'gh pr view 1 --json mergeStateStatus', // a neighbouring gh pr subcommand stays allowed
   'git push origin main:refs/heads/feat/x', // AC2/AC3: local side matches, remote side does not
   'git push origin refs/heads/main:feat/x', // AC2: local side is refs/heads/main, remote side does not match
 ];
@@ -71,6 +83,33 @@ check('protect-main allows deleting a work branch', bash('git push origin :feat/
 
 git(['checkout', '-q', '-b', 'feat/1-x'], repo);
 check('protect-main allows bare push from a work branch', bash('git push', repo).status === 0);
+
+// AC1: the refusal names the one way to merge, and says `--admin` is no remedy.
+const plain = bash('gh pr merge 1 --squash', repo);
+check('protect-main names `node scripts/land.mts <pr>` when it refuses a hand-typed merge', /node scripts\/land\.mts <pr>/.test(plain.stderr), plain.stderr);
+check('protect-main says `--admin` is never a remedy', /--admin/.test(plain.stderr) && /never a remedy/.test(plain.stderr), plain.stderr);
+
+const admin = bash('gh pr merge 1 --admin', repo);
+check('protect-main keeps the existing --admin wording', /bypasses the checks/.test(admin.stderr), admin.stderr);
+check('protect-main also names land.mts on the --admin form', /node scripts\/land\.mts <pr>/.test(admin.stderr), admin.stderr);
+
+// AC3: no valve lifts the merge rule — a genuine manual merge leaves the session.
+check(
+  'protect-main denies a hand-typed merge even with the push valve set inline',
+  bash('AGENTIC_ALLOW_PUSH_MAIN=1 gh pr merge 1 --squash', repo).status === 2,
+);
+check(
+  'protect-main denies a hand-typed merge even with the push valve in the environment',
+  bash('gh pr merge 1 --squash', repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 2,
+);
+
+// AC2: the declarative deny list states the same rule, in both copies.
+const settingsRaw = readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8');
+const templateRaw = readFileSync(join(ROOT, 'templates', 'claude-settings.json'), 'utf8');
+const denyList: string[] = JSON.parse(settingsRaw).permissions.deny;
+check('the deny list refuses every `gh pr merge`', denyList.includes('Bash(gh pr merge *)'), settingsRaw);
+check('the deny list no longer refuses only the --admin form', !denyList.some((rule) => rule.includes('gh pr merge') && rule.includes('--admin')), settingsRaw);
+check('.claude/settings.json and templates/claude-settings.json are byte-identical', settingsRaw === templateRaw);
 
 check('protect-main ignores non-Bash tools', hook('protect-main.mts', { tool_name: 'Edit', tool_input: { command: 'git push origin main' } }).status === 0);
 check('protect-main allows on unreadable payload', hook('protect-main.mts', '{not json').status === 0);

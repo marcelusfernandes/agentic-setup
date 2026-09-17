@@ -182,8 +182,23 @@ runs again on `main` after the merge; a conflict goes back to the implementer, w
 `git merge origin/main` on the published branch (rebase only before the first push;
 force-push is denied on every branch).
 
-`protect-main.mts` is a fallback for a machine with no server-side ruleset yet: it denies
-a force-push, a push or delete of `main`/`master`, and `gh pr merge --admin` — never a
-merge without green checks by itself, since the ruleset or `land.mts`'s own gate already
-covers that. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts pushing to `main` for bootstrap only; it
-never lifts deleting `main`/`master`.
+"Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
+command segment starting with `gh pr merge` — with or without `--admin`, with any merge
+flag — and refuses with a message naming `node scripts/land.mts <pr>` as the way to merge;
+the permission deny list in `.claude/settings.json` (and its copy
+`templates/claude-settings.json`, which `init` merges into an adopting repository) says the
+same declaratively as `Bash(gh pr merge *)`. `node scripts/land.mts <pr>` in the same
+session is untouched: `land.mts` spawns `gh` from inside Node, while the hook and the deny
+list only ever see the session's Bash command string, which reads `node scripts/land.mts
+<pr>`.
+
+**No environment variable lifts that rule.** `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to
+`main` for bootstrap only — never deleting `main`/`master`, and never a merge. An operator
+who genuinely has to merge a pull request by hand does it outside the agent session: their
+own terminal, or the GitHub UI. The layer that must not be bypassed is still the ruleset;
+this one is a round-trip saver.
+
+Apart from the merge rule, `protect-main.mts` is a fallback for a machine with no
+server-side ruleset yet: it denies a force-push and a push or delete of `main`/`master`. It
+never gates a merge on green checks by itself — the ruleset, or `land.mts`'s own gate, already
+covers that.

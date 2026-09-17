@@ -113,8 +113,8 @@ Status: accepted
   anything silently: make the same three checks required by hand instead.
 - **(b) On every machine that runs Claude Code:** the plugin's `protect-main.mts` hook
   plus the permission deny list `/agentic-setup:init` writes (force-push, `reset --hard`,
-  `clean`, `stash`, `gh pr merge --admin`). Covers what goes through Claude Code; does
-  not cover a push from elsewhere.
+  `clean`, `stash`, and — since item 14 — any `gh pr merge`, not just `--admin`). Covers
+  what goes through Claude Code; does not cover a push from elsewhere.
 - **(c) Detection:** the `guard-main` action. The commit → PR lookup retries up to 4
   times, 15 seconds apart (about 45s of tolerance): right after a squash merge the
   association can still be unindexed, and a single call risks a false `human:pending`
@@ -129,9 +129,9 @@ The merge gate itself is (a) when it exists: `scripts/land.mts` queues `gh pr me
 --squash --auto` once the base branch's ruleset has a `required_status_checks` rule, and
 falls back to reading `gh pr checks --required` itself only where no such rule is
 present. Keep (b) anyway even with (a) in place — the hook is a fast, cheap round-trip
-saver on the agent's machine (denying an obviously forbidden command, including
-`gh pr merge --admin`, before it ever reaches the server), not a substitute merge gate;
-that judgment is `land.mts`'s alone (item 13).
+saver on the agent's machine (denying an obviously forbidden command, including any
+hand-typed `gh pr merge`, before it ever reaches the server), not a substitute merge gate;
+that judgment is `land.mts`'s alone (items 13 and 14).
 
 ## 10. Negative control is the load-bearing check
 
@@ -299,6 +299,32 @@ header names this trap). Init also turns on `allow_auto_merge` and
 `delete_branch_on_merge` on the repository itself, so `--auto` has something to enable
 and a merged branch does not need a person, or `claim.mts`'s stale-ref handling alone, to
 go away.
+
+## 14. 2026-09-17: a hand-typed `gh pr merge` is denied, not discouraged
+
+Status: proposed
+
+"`land.mts` is the only way the orchestrator merges a pull request, never `gh pr merge`
+by hand" was written in bold in two contracts (`skills/orchestrate/SKILL.md`, `AGENTS.md`)
+and enforced nowhere: `hooks/protect-main.mts` denied a `gh pr merge` segment only when it
+also carried `--admin`, and the deny list matched only `Bash(gh pr merge *--admin*)`. A
+plain `gh pr merge 42 --squash` typed into a session went straight to the server. Both now
+refuse every `gh pr merge` segment, and the hook's refusal names `node scripts/land.mts
+<pr>` as the way to merge and says `--admin` is no remedy.
+
+*Why:* 58 merges had gone through this repository and not one of them was a merge the
+server verified against the evidence `land.mts` gates on; the prohibition that was supposed
+to guarantee it was prose the model reads under load and the agent's own tooling never
+checked. A rule stated in bold twice and enforced zero times is a rule the loop does not
+have. This costs nothing to enforce, because `scripts/land.mts` spawns `gh` from inside
+Node: the hook and the deny list see only the session's Bash command string, which reads
+`node scripts/land.mts <pr>` — the one path that stays open.
+
+*Cost accepted:* a genuine manual merge leaves the session. There is no valve and none will
+be added — `AGENTIC_ALLOW_PUSH_MAIN=1` covers pushing to `main` for bootstrap and does not
+touch this — so an operator who must merge by hand does it in their own terminal or in the
+GitHub UI, where the ruleset (the layer that must not be bypassed) still applies. The hook's
+crash policy stays ALLOW, per invariant 3: it is a round-trip saver, not the gate.
 
 ## 15. 2026-09-17: one generated adoption record, and `adopt` calls `init`
 
