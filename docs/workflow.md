@@ -22,6 +22,30 @@ One GitHub milestone per phase, each with a **parent issue** that lists the sub-
 A milestone does not close while it has an open issue. Opening the next milestone's
 parent issue is the orchestrator's job when the current one has nothing left.
 
+Every milestone **description** follows one format — `.github/MILESTONE_TEMPLATE.md`
+(shipped to adopting repositories as `templates/.github/MILESTONE_TEMPLATE.md`, beside
+`ISSUE_TEMPLATE/` so GitHub never offers it as an issue template):
+
+```text
+<objective, one to three sentences>
+
+Out of this phase:
+- <what this phase deliberately does not do>
+
+Exit criteria:
+- [ ] <a criterion someone else can check>
+
+Depends on: <milestone or issue, or "none">
+```
+
+The exit criteria are the point: without them, "the phase is done" is decided by the last
+issue closing rather than by a criterion. `reconcile.mts` reads the reconciled milestone's
+description and reports `milestoneLint: { ok, missing }`, where `missing` names the absent
+parts — `objective`, `out-of-phase`, `exit-criteria` (the label and at least one `- [ ]`
+item under it), `depends-on`. It reports and never refuses: a milestone whose description
+has not been migrated yet still reconciles, still dispatches, and the orchestrator migrates the
+description as part of the phase.
+
 ## Labels
 
 | group | values | who changes it |

@@ -57,6 +57,15 @@ milestone with the lowest number; `--no-fetch` skips the fetch and reads the loc
 left by the last one, for an offline check against the last fetch. Fields:
 
 - `milestone` — the title it reconciled against.
+- `milestoneLint` — `{ ok, missing }`: whether that milestone's description holds the one
+  format of `.github/MILESTONE_TEMPLATE.md` (`docs/workflow.md`, "Milestones"). `missing`
+  names the absent parts — `objective`, `out-of-phase`, `exit-criteria` (the label and at
+  least one `- [ ]` item under it), `depends-on` — and `ok` is `missing` being empty. It is a
+  report, never a refusal: `ok: false` is **not** a stop reason and never blocks a
+  dispatch. Rewrite the description to the template during this phase, as work inside it
+  (`gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f description="$(cat
+  milestone.md)"`, the number looked up by title the way step 6 does), and keep the loop
+  running meanwhile.
 - `ready` — `{ number, title, blockedBy }`: `state:ready` issues in the milestone whose
   `Blocked by:` issues are all closed (`blockedBy` lists them; empty when none) and that
   carry no pending human label (those go to `humanPending` instead). This is step 1's
