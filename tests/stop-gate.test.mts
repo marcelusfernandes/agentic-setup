@@ -13,10 +13,10 @@
 // documented override path (AGENTIC_TEST_CMD / AGENTIC_CHECK_CMD) so a case is
 // one process instead of a package manager; the detection path itself gets its
 // own case with a real package.json.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
+import { check, commit, finish, git, hook, ROOT, tempRepo } from './lib/harness.mts';
 
 const RED = 'node red.mjs';
 const GREEN = 'node green.mjs';
@@ -162,5 +162,14 @@ const stateRepo = workRepo('feat/7-state');
 gate(stateRepo, red);
 check('the block counter lives under the git directory, not the worktree', existsSync(join(stateRepo, '.git', 'agentic-stop-gate.json')), 'no state file under .git/');
 check('the block counter leaves the working tree clean', git(['status', '--porcelain'], stateRepo) === '', git(['status', '--porcelain'], stateRepo));
+
+// --- AC2: hooks.json wires the gate on both stop events --------------------
+
+const wiring = JSON.parse(readFileSync(join(ROOT, 'hooks', 'hooks.json'), 'utf8'))?.hooks ?? {};
+for (const event of ['SubagentStop', 'Stop']) {
+  const entries = (wiring[event] ?? []).flatMap((entry: any) => entry?.hooks ?? []);
+  check(`hooks.json registers stop-gate.mts on ${event}`, entries.some((h: any) => typeof h?.command === 'string' && h.command.includes('hooks/stop-gate.mts')), JSON.stringify(wiring[event]));
+  check(`the ${event} entry allows longer than one command run`, entries.every((h: any) => Number(h?.timeout) >= 900), JSON.stringify(wiring[event]));
+}
 
 finish();
