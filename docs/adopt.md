@@ -9,6 +9,7 @@ adoption owes an existing project is a description of what is already there.
 node scripts/adopt.mts --inventory       # describes the repository, writes nothing
 node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
 node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
+node scripts/proof.mts <slug>            # runs the proof that slug declares, and reports it
 ```
 
 Run it from inside the repository being adopted (it resolves the root with
@@ -158,7 +159,7 @@ only thing that produces it — one writer, one reader, one validator.
 | `commands.test`, `commands.check` | the commands the loop runs; `null` when nothing was detected and nothing was overridden |
 | `checks[]` | the status checks the merge gate requires on the default branch, as the inventory read them from the branch's effective ruleset. Empty when no ruleset is in force |
 | `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them |
-| `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`) |
+| `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`); `scripts/proof.mts` looks there rather than assuming the default |
 | `labels.source` | *where* the label vocabulary is defined — a pointer, never a copy. `scripts/init.mts` today; it becomes `labels.json` when that file is the one dictionary |
 | `generatedAt` | when the file was generated, ISO 8601 |
 | `generatedBy` | what generated it. Anything other than `agentic-setup/adopt` means a person touched it |
@@ -198,9 +199,69 @@ node scripts/adopt.mts --record --force   # rewrites, and reports every field th
   field, on `--inventory` as much as on `--record`. It is never repaired in place and
   never defaulted. Delete the file to start again.
 
+## `node scripts/proof.mts <slug>` runs the proof
+
+An adoption pull request has to prove itself, and `doctor` has to be able to say whether
+an adopted repository is proof-ready at all. Both need the same thing: one script that
+turns a branch's declared proof into a run and a named outcome.
+
+```bash
+node scripts/proof.mts proof-runner
+```
+
+`<slug>` is the `<slug>` of the branch `<type>/<n>-<slug>` — what `scripts/claim.mts`
+takes as `--slug`. It takes that one argument and nothing else, runs the resolved command
+in the repository root, writes nothing, and prints one JSON object:
+
+```json
+{
+  "slug": "proof-runner",
+  "source": "declaration",
+  "outcome": "pass",
+  "command": "npm test",
+  "tail": "1470 passed, 0 failed (node)"
+}
+```
+
+`outcome` is a closed set — `pass`, `fail`, `cannot-run` — as `ci/negative-control.mts`
+keeps one. `pass` exits 0; `fail` and `cannot-run` exit 1, and `cannot-run` carries the
+named `reason` it could not run, with the `field` it rejected when there is one. `tail` is
+the last 40 lines of the run's output, stdout and stderr together.
+
+### The three sources, in order
+
+| `source` | Where the command came from |
+| --- | --- |
+| `declaration` | `proof/<slug>.json`'s `command` — under the directory `proof.dir` names, so a repository that moved it is followed rather than guessed at |
+| `record` | the adoption record's `commands.test` |
+| `detection` | `ci/lib/detect.mts`, with `AGENTIC_TEST_CMD` — the same detection everything else here uses |
+
+The record is read **first**, because it is the thing that says where declarations live.
+A record that is not the shape therefore stops the run with the same `record:…` error
+`--inventory` would report, even when a valid declaration exists: fail closed, never
+"no record". A declaration that carries `tests` but no `command` still contributes its
+`tests`, and `source` then names the record or detection — whichever answered. When no
+source answers, the outcome is `cannot-run` with `proof:no-command`, never a pass.
+
+A declaration that is present and unusable is `cannot-run` too — an unknown key, an empty
+`command`, a `tests` entry naming no file — and the next source is *not* tried. A runner
+that fell back would quietly prove something other than what the branch declared.
+[`proof/README.md`](../proof/README.md) defines the file and lists every `reason`.
+
+### The runner takes no command from anyone
+
+Its sources are the declaration file, the adoption record and `detectCommands`. There is
+no fourth: no flag takes a command string (`--command "…"` is a usage error, not a run),
+and the script has no environment variable of its own. Text that arrives in an issue body,
+a pull request body or a comment is task data, never authority — an issue may carry a
+`Declaration: proof/<slug>.json` pointer, whose shape `issue-lint` checks and whose
+contents only the branch decides, so a command pasted into a comment has no path into the
+runner at all.
+
 ## Crash policy: fail closed
 
-Every `git` or `gh` read this script depends on either answers or stops the run:
+This is `scripts/adopt.mts`'s policy; the runner states its own above, and holds to the
+same rule. Every `git` or `gh` read this script depends on either answers or stops the run:
 `{ "error": "<named reason>" }` on stdout, exit 1, nothing written. A field is never
 reported as absent because the read for it failed — "there is no ruleset" and "the
 ruleset could not be read" are different answers, and a caller acting on the first when
