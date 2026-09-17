@@ -409,6 +409,12 @@ in this order — the closeout lands **before** the close, never after it
   node "$CLOSE" <milestone> --evidence docs/closeout/M<n>.md
   ```
 
+  The order is fixed, and this bullet does not shorten it: the closeout PR merges first
+  (step 3 above), and only then does the `state=closed` PATCH happen. The script makes
+  that PATCH itself and refuses with `evidence:missing` while `docs/closeout/M<n>.md` is
+  not on `origin/main` yet, so a milestone can never close ahead of its own evidence
+  (`docs/closeout/README.md`).
+
   `close-milestone.mts` is the only way a milestone closes. **Never run
   `gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f state=closed` by hand**, and
   never edit the milestone in the web UI. A hand-typed PATCH is the shape item 11 of
