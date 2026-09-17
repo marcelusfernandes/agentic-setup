@@ -14,7 +14,9 @@ written in English; the language you talk to the agents in is your business.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
   committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
   decide the red: it copies the changed test files onto a checkout of the base and requires
-  the suite to fail there. It reads the commits for one thing only — when that red is
+  the suite to fail there (unless the branch declares its own list in `proof/<slug>.json`,
+  read from the head commit — see "The proof a branch declares" below). It reads the
+  commit *log* for one thing only — when that red is
   *structural* (a missing module or export, a syntax error), a `test(red):` commit in
   `base..head` touching one of those test files is what makes it acceptable (#135).
 
@@ -85,7 +87,7 @@ One verifiable sentence.
 ## Proof
 The test command and what it covers.
 Negative control: which assertions must fail before the change (CI verifies this).
-Declaration: proof/<slug>.json   ← optional, see "The proof a branch declares" below
+Optional, a line "Declaration: proof/<slug>.json" — see "The proof a branch declares" below.
 (`## Validation`, the Codex route's name for this section, is accepted instead.)
 
 ## Files
