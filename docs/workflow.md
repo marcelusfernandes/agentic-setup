@@ -199,14 +199,36 @@ fails.
 ## Merge
 
 Once checks are green and the PR carries an approved review (or the `type:docs` label,
-which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto` — it
-is the only way the orchestrator merges a PR, never `gh pr merge` by hand. The server
-merges the instant its own rules are satisfied: a base-branch ruleset with a
-`required_status_checks` rule when one exists, else whatever `gh pr checks --required`
-reports at the moment of the call. **The branch is not required to be up to date** — CI
-runs again on `main` after the merge; a conflict goes back to the implementer, who runs
-`git merge origin/main` on the published branch (rebase only before the first push;
-force-push is denied on every branch).
+which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto
+--match-head-commit <headRefOid>` — it is the only way the orchestrator merges a PR,
+never `gh pr merge` by hand. The server merges the instant its own rules are satisfied: a
+base-branch ruleset with a `required_status_checks` rule when one exists, else whatever
+`gh pr checks --required` reports at the moment of the call. **The branch is not required
+to be up to date** — CI runs again on `main` after the merge; a conflict goes back to the
+implementer, who runs `git merge origin/main` on the published branch (rebase only before
+the first push; force-push is denied on every branch).
+
+**The merge is pinned to the commit the review approved.** The reviewer here is an
+isolated agent that returns its verdict to the orchestrator and casts nothing on the
+server, so the commit it read is recorded by the orchestrator: at the moment it applies
+`review:approved` it also comments the marker `<!-- agentic-reviewed-sha: <oid> -->` with
+the head it reviewed (`skills/orchestrate/SKILL.md` step 5). `land.mts` reads the newest
+such marker and compares it with the `headRefOid` from its own `gh pr view` call; the same
+oid goes to the server on `--match-head-commit`, so a head that moves between the read and
+the call is refused there too. **A push after the review sends the pull request back
+instead of merging**: the marker no longer names its head, `land.mts` refuses, and the
+issue goes round again — a new review, a new marker. A `review:approved` label with no
+marker at all is the same refusal, because a label records no commit and so binds nothing.
+
+`land.mts` names the review mode it applied on every output — `agent` for that
+label-plus-marker path, `approved` when a server-verified review (`reviewDecision`) is
+what satisfied approval, `docs` for the `type:docs` exemption, which merges with no review
+at all and so reads no marker, and `null` on the one refusal with no mode to name, a PR it
+could not read at all. `missing` names what is wrong on a refusal: `state=<x>`
+(not `OPEN`), `review:not-approved`, `head:changed` (the head is not the reviewed commit,
+or no marker records one), `gh-pr-comments` (the comments read could not answer — the
+script fails closed rather than merging), `checks:required`, or `gh-pr-view` (could not
+read the PR at all).
 
 "Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
 command segment starting with `gh pr merge` — with or without `--admin`, with any merge

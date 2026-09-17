@@ -26,7 +26,11 @@
 // that base and passes only once the label alone stops being sufficient.
 // Cases M and O are the negative control for #78: the base never retries a
 // clean-status failure and always prints { queued } after a successful
-// --auto call, so both fail against the old script.
+// --auto call, so both fail against the old script. Cases P-T are the
+// negative control for #144: the base names no commit on either merge call
+// and reads no marker comment anywhere, so the --match-head-commit
+// assertions find an argv without the flag and the moved-head fixtures get a
+// queued merge instead of a refusal.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,6 +64,12 @@ case "\${1:-} \${2:-}" in
   "pr view")
     pr="$3"
     fields="$5"
+    # Each fixture PR's head oid is its own number repeated to 40 hex
+    # characters, so a marker comment can name the head it reviewed without a
+    # lookup table; \$stale is an oid no fixture head ever equals.
+    oid() { printf "$1%.0s" {1..20}; }
+    head=\$(oid "$pr")
+    stale=1111111111111111111111111111111111111111
     if [ "$fields" = "state" ]; then
       # The post-merge status probe (land.mts reads only { state } here) --
       # decides merged vs. queued without caring which merge call got there.
@@ -68,22 +78,35 @@ case "\${1:-} \${2:-}" in
         23) echo '{"state":"MERGED"}' ;;
         *) echo '{"state":"OPEN"}' ;;
       esac
+    elif [ "$fields" = "comments" ]; then
+      # The review binding: the orchestrator records the head it reviewed as
+      # <!-- agentic-reviewed-sha: <oid> --> when it applies review:approved.
+      case "$pr" in
+        15) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$stale"' -->"},{"body":"round two, looks good"},{"body":"<!-- agentic-reviewed-sha: '"$head"' -->"}]}' ;;
+        24) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$stale"' -->"}]}' ;;
+        25) echo '{"comments":[{"body":"approved in a comment with no marker in it"}]}' ;;
+        26) echo "fake-gh: could not read the comments" >&2; exit 1 ;;
+        *) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$head"' -->"}]}' ;;
+      esac
     else
       case "$pr" in
-        10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        11) echo '{"state":"OPEN","labels":[],"reviewDecision":null,"baseRefName":"main"}' ;;
-        12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        19) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        20) echo '{"state":"OPEN","labels":[],"reviewDecision":"APPROVED","baseRefName":"main"}' ;;
-        21) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        22) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
-        23) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main"}' ;;
+        10) echo '{"state":"CLOSED","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        11) echo '{"state":"OPEN","labels":[],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        12) echo '{"state":"OPEN","labels":[{"name":"type:docs"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        13) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        14) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        15) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        16) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        17) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        18) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        19) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        20) echo '{"state":"OPEN","labels":[],"reviewDecision":"APPROVED","baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        21) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        22) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        23) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        24) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        25) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
+        26) echo '{"state":"OPEN","labels":[{"name":"review:approved"}],"reviewDecision":null,"baseRefName":"main","headRefOid":"'"$head"'"}' ;;
         *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
       esac
     fi
@@ -159,6 +182,10 @@ function parse(stdout: string): any {
   }
 }
 
+// The fake `gh` derives every fixture PR's head oid from its number, so a
+// case can name the oid it expects on the merge call without a table.
+const headOid = (pr: number): string => String(pr).repeat(20);
+
 // --- A: PR is not OPEN -> refused, never reaches the ruleset check ----------
 const a = land(10);
 check('not-open refuses (exit 1)', a.status === 1, `${a.stdout}\n${a.stderr}`);
@@ -206,7 +233,7 @@ check('required_status_checks present invoked gh pr merge --squash --auto, never
 check('required_status_checks present never called gh pr checks', !/pr checks/.test(f.log), f.log);
 const fLines = f.log.trim().split('\n').filter(Boolean);
 const fMutatingLines = fLines.filter((l) => l.startsWith('pr merge') || l.startsWith('pr checks'));
-check('required_status_checks present: gh pr merge --auto is the last mutating call (only a status read follows)', fMutatingLines[fMutatingLines.length - 1] === 'pr merge 15 --squash --auto', f.log);
+check('required_status_checks present: gh pr merge --auto is the last mutating call (only a status read follows)', fMutatingLines[fMutatingLines.length - 1] === `pr merge 15 --squash --auto --match-head-commit ${headOid(15)}`, f.log);
 check('required_status_checks present: the merge is followed by a fresh gh pr view --json state read', fLines[fLines.length - 1] === 'pr view 15 --json state', f.log);
 
 // --- G: preconditions and gate pass, but auto-merge is disabled on the repo -
@@ -267,7 +294,7 @@ const mOut = parse(m.stdout);
 check('clean-status race: reports { merged, gate: ruleset }', mOut?.merged === 21 && mOut?.gate === 'ruleset', m.stdout);
 const mLines = m.log.trim().split('\n').filter(Boolean);
 const mMerges = mLines.filter((l) => l.startsWith('pr merge'));
-check('clean-status race: exactly two merge calls, --auto then plain --squash', mMerges.length === 2 && mMerges[0] === 'pr merge 21 --squash --auto' && mMerges[1] === 'pr merge 21 --squash', m.log);
+check('clean-status race: exactly two merge calls, --auto then plain --squash, both pinned to the head oid', mMerges.length === 2 && mMerges[0] === `pr merge 21 --squash --auto --match-head-commit ${headOid(21)}` && mMerges[1] === `pr merge 21 --squash --match-head-commit ${headOid(21)}`, m.log);
 check('clean-status race: reads state back with gh pr view --json state after merging', mLines[mLines.length - 1] === 'pr view 21 --json state', m.log);
 
 // --- N: `--auto` fails with an unrelated message -> reported as today,
@@ -278,7 +305,7 @@ const nOut = parse(n.stdout);
 check('unrelated merge failure reports { error } with gh\'s own message', typeof nOut?.error === 'string' && /unrelated merge failure/.test(nOut.error), n.stdout);
 const nLines = n.log.trim().split('\n').filter(Boolean);
 const nMerges = nLines.filter((l) => l.startsWith('pr merge'));
-check('unrelated merge failure: only the one --auto call, never a second merge call', nMerges.length === 1 && nMerges[0] === 'pr merge 22 --squash --auto', n.log);
+check('unrelated merge failure: only the one --auto call, never a second merge call', nMerges.length === 1 && nMerges[0] === `pr merge 22 --squash --auto --match-head-commit ${headOid(22)}`, n.log);
 check('unrelated merge failure never read PR state back', !nLines.includes('pr view 22 --json state'), n.log);
 
 // --- O: `--auto` succeeds outright and the PR is already MERGED by the
@@ -288,6 +315,48 @@ check('auto-merge succeeded and already merged (exit 0)', o.status === 0, `${o.s
 const oOut = parse(o.stdout);
 check('already-merged reports { merged, gate: ruleset }', oOut?.merged === 23 && oOut?.gate === 'ruleset', o.stdout);
 const oMerges = o.log.trim().split('\n').filter((l) => l.startsWith('pr merge'));
-check('already-merged: exactly one merge call (--auto), no retry needed', oMerges.length === 1 && oMerges[0] === 'pr merge 23 --squash --auto', o.log);
+check('already-merged: exactly one merge call (--auto), no retry needed', oMerges.length === 1 && oMerges[0] === `pr merge 23 --squash --auto --match-head-commit ${headOid(23)}`, o.log);
+
+// --- P: the head moved after the review -> the newest
+// <!-- agentic-reviewed-sha: <oid> --> marker names an older commit than
+// headRefOid, so the merge is refused instead of landing a head nobody read
+// (#191: approved at one commit, a merge commit landed by --auto after it) --
+const p = land(24, { FAKE_GH_RULES: 'required' });
+check('moved head refuses (exit 1)', p.status === 1, `${p.stdout}\n${p.stderr}`);
+const pOut = parse(p.stdout);
+check('moved head reports { refused, pr, missing: [head:changed] }', typeof pOut?.refused === 'string' && pOut?.pr === 24 && JSON.stringify(pOut?.missing) === JSON.stringify(['head:changed']), p.stdout);
+check('moved head never invoked gh pr merge', !/pr merge/.test(p.log), p.log);
+check('moved head read the PR comments', /pr view 24 --json comments/.test(p.log), p.log);
+
+// --- Q: review:approved with no marker comment at all -> the same refusal:
+// the label alone records no commit, so it merges nothing ------------------
+const q = land(25, { FAKE_GH_RULES: 'required' });
+check('label with no marker refuses (exit 1)', q.status === 1, `${q.stdout}\n${q.stderr}`);
+const qOut = parse(q.stdout);
+check('label with no marker reports missing: [head:changed]', JSON.stringify(qOut?.missing) === JSON.stringify(['head:changed']), q.stdout);
+check('label with no marker never invoked gh pr merge', !/pr merge/.test(q.log), q.log);
+
+// --- R: the comments read itself cannot answer -> fail closed (invariant 3),
+// no merge attempted ---------------------------------------------------------
+const r = land(26, { FAKE_GH_RULES: 'required' });
+check('unreadable comments refuses (exit 1)', r.status === 1, `${r.stdout}\n${r.stderr}`);
+const rOut = parse(r.stdout);
+check('unreadable comments reports missing: [gh-pr-comments]', JSON.stringify(rOut?.missing) === JSON.stringify(['gh-pr-comments']), r.stdout);
+check('unreadable comments never invoked gh pr merge', !/pr merge/.test(r.log), r.log);
+
+// --- S: the applied review mode is named on the merge/queue output and on
+// every refusal, so agent / approved / docs are told apart ------------------
+check('mode: agent on the label-plus-marker path (queued)', fOut?.mode === 'agent', f.stdout);
+check('mode: approved when a server-verified review satisfied approval', kOut?.mode === 'approved', k.stdout);
+check('mode: docs on the type:docs exemption', cOut?.mode === 'docs', c.stdout);
+check('mode: agent on a head:changed refusal', pOut?.mode === 'agent', p.stdout);
+check('mode: agent on a review:not-approved refusal', bOut?.mode === 'agent', b.stdout);
+check('mode: agent on a checks:required refusal', dOut?.mode === 'agent', d.stdout);
+check('mode: docs is exempt from the marker read as well (no comments call)', !/--json comments/.test(c.log), c.log);
+
+// --- T: the newest marker wins: PR 15 carries an older, stale marker before
+// the one naming its current head, and still queues ------------------------
+check('newest marker wins over an older, stale one', fOut?.queued === 15, f.stdout);
+check('the marker read happens, and before any merge call', f.log.includes('pr view 15 --json comments') && f.log.indexOf('pr view 15 --json comments') < f.log.indexOf('pr merge 15'), f.log);
 
 finish();
