@@ -122,6 +122,14 @@ JSON
 {"number":30,"title":"fix: a bug title maps to type:bug","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      31) cat <<'JSON'
+{"number":31,"title":"fix: planner seeded the wrong type","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"type:feature"}],"state":"OPEN"}
+JSON
+        ;;
+      32) cat <<'JSON'
+{"number":32,"title":"fix: planner seeded the right type","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"type:bug"}],"state":"OPEN"}
+JSON
+        ;;
       26) cat <<'JSON'
 {"number":26,"title":"feat: milestone lookup fails","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`scripts/claim.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN","milestone":{"title":"M2"}}
 JSON
@@ -176,6 +184,32 @@ function claim(args: string[], env: Record<string, string> = {}) {
     logText = '';
   }
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json, log: logText };
+}
+
+// The `gh issue edit …` line the fake gh logged for one issue, split back
+// into argv. Null when claim made no such call (a refusal, or a held claim).
+function issueEditArgv(log: string, number: number): string[] | null {
+  const lines = log.split('\n').filter((l) => l.startsWith(`issue edit ${number} `));
+  if (lines.length !== 1) return null;
+  return (lines[0] ?? '').trim().split(/\s+/);
+}
+
+// Replays the `--add-label` / `--remove-label` flags of one `gh issue edit`
+// call over the labels the issue already carried, and returns the `type:`
+// labels that survive — what GitHub would be left holding. The fake `gh`
+// only logs the edit, so this is how a case asserts the *resulting* set
+// rather than the flags that produced it.
+function typeLabelsAfterEdit(log: string, number: number, seeded: string[]): string[] {
+  const argv = issueEditArgv(log, number);
+  if (!argv) return [...seeded].filter((name) => name.startsWith('type:'));
+  const after = argv.reduce<string[]>((labels, arg, i) => {
+    const value = argv[i + 1];
+    if (!value) return labels;
+    if (arg === '--add-label') return labels.includes(value) ? labels : [...labels, value];
+    if (arg === '--remove-label') return labels.filter((name) => name !== value);
+    return labels;
+  }, [...seeded]);
+  return after.filter((name) => name.startsWith('type:')).sort();
 }
 
 function remoteBranches(): string[] {
@@ -293,6 +327,48 @@ check(
   'a fix: title is labelled type:bug, not type:fix',
   /issue edit 30 --add-assignee @me --add-label state:in-progress --add-label type:bug --remove-label state:ready/.test(fixTitle.log),
   fixTitle.log,
+);
+
+// --- a planner-seeded `type:` label that disagrees with the derived one is
+// removed in the same edit (#213). The planner labels the issue when it
+// opens it; claim re-derives the type from the branch/title and owns the
+// label from then on. Issue #31 was seeded `type:feature` but its title is
+// `fix:`, so the claim must leave the issue carrying exactly `type:bug` —
+// not both, which would leave no record of which one the orchestrator
+// meant.
+const seededWrongType = claim(['31', '--slug', 'x']);
+check('an issue seeded with a disagreeing type: claims normally, exit 0', seededWrongType.status === 0, `${seededWrongType.stdout}\n${seededWrongType.stderr}`);
+check(
+  'the claim removes the seeded type:feature',
+  /--remove-label type:feature/.test(seededWrongType.log),
+  seededWrongType.log,
+);
+check(
+  'the issue ends with exactly type:bug, not both labels',
+  JSON.stringify(typeLabelsAfterEdit(seededWrongType.log, 31, ['state:ready', 'type:feature'])) === JSON.stringify(['type:bug']),
+  seededWrongType.log,
+);
+check(
+  'the claim relabels in a single gh issue edit call',
+  issueEditArgv(seededWrongType.log, 31) !== null,
+  seededWrongType.log,
+);
+
+// The converse: a seeded label that already agrees is left alone. Emitting
+// `--remove-label type:bug` alongside `--add-label type:bug` in one edit
+// has no defined outcome on GitHub and could strip the label the claim is
+// meant to write, so the removal list must exclude the derived label.
+const seededRightType = claim(['32', '--slug', 'x']);
+check('an issue seeded with the agreeing type: claims normally, exit 0', seededRightType.status === 0, `${seededRightType.stdout}\n${seededRightType.stderr}`);
+check(
+  'an agreeing seeded type: is never removed',
+  !/--remove-label type:bug/.test(seededRightType.log),
+  seededRightType.log,
+);
+check(
+  'the issue still ends with exactly type:bug',
+  JSON.stringify(typeLabelsAfterEdit(seededRightType.log, 32, ['state:ready', 'type:bug'])) === JSON.stringify(['type:bug']),
+  seededRightType.log,
 );
 
 // --- AC3: gh naming a default branch that cannot resolve locally is an -----
