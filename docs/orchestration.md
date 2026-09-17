@@ -306,11 +306,14 @@ reviewer, that comments the verdict on the PR and sets `review:approved` or
 `state:qa-failed` (`skills/orchestrate/SKILL.md` step 5), beside the
 `<!-- agentic-reviewed-sha: <oid> -->` marker naming the head that was read. That is the
 default mode and the whole of it: the reviewer casts no GitHub review. In the opt-in
-`approved` mode — `AGENTIC_REVIEWER_TOKEN` set in its environment — the reviewer also
-casts a real GitHub review (`gh pr review --approve` or `--request-changes`) as that
-separate identity, and `land.mts` gates on that review instead of the marker
-(`agents/reviewer.md`, `docs/decisions.md` item 18). Never edits, never merges, never
-offers to fix.
+`approved` mode — selected by `land.mts --require-review` or by a base branch whose
+ruleset already carries `required_approving_review_count > 0` (`init --rules
+--require-review` is what raises it), never by whether `AGENTIC_REVIEWER_TOKEN` is set —
+the reviewer also casts a real GitHub review (`gh pr review --approve` or
+`--request-changes`) as the separate identity that variable gives it, and `land.mts`
+requires `reviewDecision === 'APPROVED'` *on top of* everything mode `agent` requires,
+the marker included (`agents/reviewer.md`, `docs/decisions.md` items 18 and 20). Never
+edits, never merges, never offers to fix.
 
 ## Hooks (deterministic, instead of prose)
 
@@ -413,9 +416,10 @@ split is read as pending.
   login or GitHub App installation with pull-request write, `AGENTIC_REVIEWER_TOKEN` where
   the reviewer and the orchestrator run, and the base branch ruleset's
   `required_approving_review_count` raised to 1 with `dismiss_stale_reviews_on_push`
-  (`init --require-review`) — the ruleset first, the token second. Then only a real
-  `APPROVED` review from that separate identity counts, and a repository with no second
-  login freezes at its first merge, which is why it is nobody's default.
+  (`init --rules --require-review` raises both; plain `--rules` resets the count to 0,
+  and the flag is ignored without `--rules`) — the ruleset first, the token second. Then
+  only a real `APPROVED` review from that separate identity counts, and a repository with
+  no second login freezes at its first merge, which is why it is nobody's default.
 - Agent Teams do not isolate in worktrees; the loop does not use them.
 - **A restarted orchestrator session cannot tell a live implementer from an abandoned
   one by label state alone.** If the orchestrator process dies (an OS kill, low memory)

@@ -44,10 +44,16 @@
 //              login: with `required_approving_review_count: 1` and nobody to
 //              cast the review, a solo repository freezes at its first merge,
 //              and every pull request refuses here with no way to satisfy it.
-//              Setting the variable without also setting the base branch
-//              ruleset's required_approving_review_count (`scripts/init.mts`'s
-//              "by hand" list) leaves `reviewDecision` null forever on a
-//              repository with no review policy.
+//              The count is the installer's to own, never a field left to be
+//              set by an operator: `scripts/init.mts --rules` resets it to 0
+//              and `scripts/init.mts --rules --require-review` raises it to 1
+//              (with stale approvals dismissed and the last push approved).
+//              Order matters on the way in — GitHub computes reviewDecision
+//              only on a branch where a review is actually required, so
+//              --require-review passed here against a base branch whose
+//              ruleset does not require one leaves reviewDecision null
+//              forever and refuses every pull request with no way to satisfy
+//              it.
 //   'docs'     the `type:docs` exemption, which merges with no review at all
 //              and so has no reviewed head to compare and reads no marker. It
 //              is an exemption from the *review*, never from the checks.

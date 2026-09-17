@@ -322,11 +322,14 @@ authenticates as that separate identity and casts a real `gh pr review
 orchestrator's own environment — `land.mts:95` reads `process.env.AGENTIC_REVIEWER_TOKEN`
 from the process running `land.mts` itself, not from the reviewer — `land.mts` requires
 `reviewDecision === 'APPROVED'` from GitHub itself, and the label becomes a convenience
-that `reconcile.mts` still reads but that no longer gates anything. Setup is by hand
-(printed by `scripts/init.mts`, mirrored in `skills/init/SKILL.md`): create a machine
-user or a GitHub App installation with pull-request write, store its token as
-`AGENTIC_REVIEWER_TOKEN` wherever the orchestrator and reviewer run (never in this
-repository), and set the base branch ruleset's `required_approving_review_count` to 1.
+that `reconcile.mts` still reads but that no longer gates anything. Setup (printed by
+`scripts/init.mts`, mirrored in `skills/init/SKILL.md`): create a machine user or a
+GitHub App installation with pull-request write, then run `node scripts/init.mts --rules
+--require-review`, which raises the base branch ruleset's
+`required_approving_review_count` to 1, dismisses stale approvals and requires the last
+push approved — the count is the installer's to own, and plain `--rules` resets it to 0 —
+and only then store that identity's token as `AGENTIC_REVIEWER_TOKEN` wherever the
+orchestrator and reviewer run (never in this repository).
 **Order matters:** raise the ruleset's required-review count *before* setting the token —
 GitHub computes `reviewDecision` only on a branch where a review is actually required, so
 setting the token first (with no such rule yet) leaves `reviewDecision` `null` forever,
@@ -446,11 +449,12 @@ push to `main`. A reviewer agent that approves badly is a real risk; a merge tha
 past the checks is not.
 
 *The opt-in `approved` mode.* A second identity is available and is nobody's default. It
-turns on when `scripts/init.mts --require-review` is run, or against a base branch whose
-ruleset already requires approving reviews. It needs, in this order: a second login or a
-GitHub App installation with pull-request write; the base branch ruleset's
-`required_approving_review_count` raised to 1 with `dismiss_stale_reviews_on_push`
-(`init --require-review` writes both); and only then the token stored as
+turns on when `scripts/init.mts --rules --require-review` is run, or against a base
+branch whose ruleset already requires approving reviews. It needs, in this order: a
+second login or a GitHub App installation with pull-request write; the base branch
+ruleset's `required_approving_review_count` raised to 1 with
+`dismiss_stale_reviews_on_push` (`init --rules --require-review` writes both — the flag
+alone is ignored, as only `--rules` writes a ruleset); and only then the token stored as
 `AGENTIC_REVIEWER_TOKEN` wherever the reviewer and the orchestrator run — the ruleset
 first, because GitHub computes `reviewDecision` only on a branch where a review is
 actually required, so a token set before the rule leaves `reviewDecision` `null` forever.

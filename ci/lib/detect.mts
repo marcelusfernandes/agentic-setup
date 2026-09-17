@@ -10,11 +10,21 @@
 // Detector order (first match wins, see DETECTORS below): Makefile,
 // package.json (node), Python (pyproject.toml/pytest.ini/setup.py/
 // requirements.txt), go.mod, Cargo.toml, Gemfile (ruby), mix.exs (elixir),
-// build.gradle(.kts) (gradle), pom.xml (maven). Makefile always wins: a repo
-// that also happens to hold, say, a Gemfile still gets `make test` when it
-// has a Makefile with a test: target.
+// build.gradle(.kts) (gradle), pom.xml (maven), and last of all a Python test
+// tree with no packaging marker at all. Makefile always wins: a repo that also
+// happens to hold, say, a Gemfile still gets `make test` when it has a
+// Makefile with a test: target.
+//
+// The Python test-tree detector is deliberately last, not next to the other
+// Python one: it fires only when every marker above it missed, so no
+// repository that detects today changes its answer because it happens to ship
+// a stray .py test file. Its signal is what git tracks, so a checked-out
+// virtualenv or a vendored copy is not a test tree. Crash policy: any failure
+// of the `git ls-files` probe (git absent, not a repository, non-zero status)
+// yields no signal, which is the answer this file already gave — `unknown`.
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 export type Commands = { test: string | null; check: string | null; stack: string };
 export type Detected = Commands & { source: 'override' | 'detected' | 'none' };
@@ -72,6 +82,51 @@ function fromPython(root: string): Commands | null {
   return { test: `${runner}pytest`, check: hasRuff ? `${runner}ruff check .` : null, stack: 'python' };
 }
 
+const PY_TEST_FILE = /^(test_.+|.+_test)\.py$/;
+
+/** Tracked *.py paths, or [] when root is not a readable git repository. */
+function trackedPythonFiles(root: string): string[] {
+  const r = spawnSync('git', ['ls-files', '-z', '--', '*.py'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return [];
+  return r.stdout.split('\0').filter(Boolean);
+}
+
+// Last resort, only after every marker above missed: a repository whose sole
+// Python signal is the tests themselves — the layout the four packaging
+// markers cannot see (scripts plus `engine/test_engine.py` behind its own
+// runner). `python3 -m unittest discover` is the stdlib runner, so it needs
+// nothing installed; `check` stays null because no linter is implied.
+//
+// KNOWN LIMITATION — the command, not the detector. CPython 3.11 dropped
+// namespace-package recursion from `unittest discover`: it descends into a
+// subdirectory only when that directory holds an `__init__.py`. So on the very
+// layout this detector exists for — tests one directory down, no `__init__.py`
+// — the command runs, collects nothing, prints `NO TESTS RAN` and exits 5.
+// `ci/negative-control.mts` reads that as a baseline failing its own tests
+// (`inconclusive`), and the adopter is handed a command that finds none of
+// their tests. Detecting the stack is still the improvement the criterion
+// asked for, and the two cases at the end of `tests/detect.test.mts` run the
+// command and pin both halves of this behaviour rather than describing it.
+// Which command a marker-less Python tree should really get — `pytest`, a
+// discovered start directory, or no command at all so the adopter reads
+// `cannot-run` instead of `inconclusive` — is issue #277, whose reasoning is
+// the orchestrator note of 2026-09-17 on issue #256. Do not substitute a
+// command here: #277 decides it, updates the two cases that pin this
+// behaviour, and removes this block once it no longer describes the code.
+function fromPythonTestTree(root: string): Commands | null {
+  const files = trackedPythonFiles(root);
+  const isTestTree = files.some((path) => {
+    const parts = path.split('/');
+    return PY_TEST_FILE.test(basename(path)) || parts.slice(0, -1).includes('tests');
+  });
+  if (!isTestTree) return null;
+  return { test: 'python3 -m unittest discover', check: null, stack: 'python' };
+}
+
 function fromGo(root: string): Commands | null {
   if (!has(root, 'go.mod')) return null;
   return { test: 'go test ./...', check: 'go vet ./...', stack: 'go' };
@@ -118,6 +173,7 @@ const DETECTORS = [
   fromElixir,
   fromGradle,
   fromMaven,
+  fromPythonTestTree,
 ];
 
 export function detectCommands(root: string, env: NodeJS.ProcessEnv = process.env): Detected {
