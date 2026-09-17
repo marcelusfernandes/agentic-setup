@@ -112,6 +112,9 @@ check('three consecutive blocks is the cap: the fourth red stop passes', capRuns
 check('the capped stop says why it was let through', /cap|three consecutive/i.test(capRuns[3].stderr), capRuns[3].stderr);
 check('the cap counts each block for the agent', /block 1 of 3/.test(capRuns[0].stderr) && /block 3 of 3/.test(capRuns[2].stderr), capRuns.map((r) => r.stderr).join('\n'));
 
+const afterCap = gate(capRepo, red);
+check('the cap pass resets the counter, so the next turn is gated again', afterCap.status === 2 && /block 1 of 3/.test(afterCap.stderr), `${afterCap.status}\n${afterCap.stderr}`);
+
 const resetRepo = workRepo();
 const beforeReset = [gate(resetRepo, red), gate(resetRepo, red)];
 const greenBetween = gate(resetRepo, green);
@@ -152,6 +155,7 @@ check('a detached HEAD is still gated', detached.status === 2, `${detached.stdou
 
 const outside = gate(tmpdir(), red);
 check('a cwd outside any git repository lets the stop through', outside.status === 0, `${outside.stdout}\n${outside.stderr}`);
+check('a cwd outside any git repository says so on stderr, like every cannot-judge path', /not inside a git worktree/.test(outside.stderr), outside.stderr);
 
 const noPayload = hook('stop-gate.mts', 'not json at all', { cwd: redRepo, env: { AGENTIC_STOP_GATE: '' } });
 check('an unreadable payload lets the stop through (crash policy: allow)', noPayload.status === 0, `${noPayload.stdout}\n${noPayload.stderr}`);

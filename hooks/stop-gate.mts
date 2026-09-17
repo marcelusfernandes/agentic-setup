@@ -35,7 +35,16 @@
 // The consecutive-block counter lives in the worktree's own git directory
 // (`.git/worktrees/<name>/` for a linked worktree), never in a tracked file:
 // it is per-worktree state, and a counter in the tree would show up in the
-// diff the agent is about to push.
+// diff the agent is about to push. It resets three ways: on a green run, on a
+// change of branch in the same worktree, and on the cap pass itself — so the
+// gate is live again for the agent's next turn rather than switched off for
+// the rest of the branch.
+//
+// What it judges is the payload's `cwd`, which is the agent's worktree only
+// when the agent was spawned with `isolation: "worktree"` or the session's own
+// cwd is the worktree. A subagent that merely `cd`s into a worktree is judged
+// on the session's checkout, and on the trunk that means no gate at all —
+// measured, three headless runs, #137 (comment 5715271545).
 //
 // Crash policy: ALLOW. An unreadable payload, a git command that cannot
 // answer, a counter that cannot be read or written, a command that times out
@@ -166,7 +175,10 @@ async function main() {
 
   const cwd = String(payload.cwd || process.cwd());
   const top = git(['rev-parse', '--show-toplevel'], cwd);
-  if (!top.ok || !top.stdout.trim()) return; // not a git worktree: nothing to gate
+  if (!top.ok || !top.stdout.trim()) {
+    note(HOOK, `\`${cwd}\` is not inside a git worktree (git could not name a top level), so there is no project to run; letting the stop through.`);
+    return;
+  }
   const root = top.stdout.trim();
 
   const branch = currentBranch(root);
@@ -195,6 +207,9 @@ async function main() {
   const stateFile = join(dir, STATE_FILE);
   const state = readState(stateFile, branch);
   if (state.blocks >= MAX_BLOCKS) {
+    // Third reset: the cap pass clears the counter, so the gate is live again
+    // for the agent's next turn instead of being off for the rest of the
+    // branch. It never holds the same turn, because this stop goes through.
     writeState(stateFile, { blocks: 0, branch });
     note(HOOK, `already blocked ${state.blocks} times on this branch — ${MAX_BLOCKS} consecutive blocks is the cap, so this stop goes through with the suite unproven. Say so in the pull request: the reviewer and CI are what is left.`);
     return;

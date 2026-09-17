@@ -37,9 +37,14 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    step 4 (`skills/orchestrate/SKILL.md`). An agent that labels its own work could buy
    its own exemptions.
 8. Stop — and expect the stop to be gated. `hooks/stop-gate.mts` fires on `SubagentStop`
-   in your worktree and runs the project's check command, then its test command (detected
-   by `ci/lib/detect.mts`; a `proof/<slug>.json` `command` replaces the detected test
-   command). While either is red the stop is blocked and you get
+   and runs the project's check command, then its test command (detected by
+   `ci/lib/detect.mts`; a `proof/<slug>.json` `command` replaces the detected test
+   command) in whatever directory the event carries as its `cwd`. That is **your**
+   worktree when you were spawned with `isolation: "worktree"`, as this card declares, or
+   when the session's own cwd is the worktree; an agent that merely `cd`s into a worktree
+   is judged on the session's checkout instead, and on `main` that is no gate at all
+   (measured: #137, comment 5715271545). While either command is red the stop is blocked
+   and you get
    `[agentic-setup/stop-gate] the <check|test> command <cmd> is red in <worktree>`, the
    block number, and the last lines of the failing output: read those lines, fix the
    cause, and try to stop again. It does not run on `main`/`master`, and it does not run
