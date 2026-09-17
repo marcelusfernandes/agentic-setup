@@ -17,6 +17,17 @@
 // trip. No quotes, backticks or `$()` are parsed, so a commit message that
 // quotes one of the forms above may be denied too — write it differently.
 //
+// Known misses, by construction: a segment is only matched when the forbidden
+// command is the literal head of it, so every indirect form gets through —
+// `bash -c 'gh pr merge 1'`, `sh -lc …`, `xargs gh …`, `command gh pr merge 1`,
+// `time gh pr merge 1`, a subshell `(gh pr merge 1)`, an alias, a wrapper
+// script, `$(…)`/backtick substitution, or the command read from a file. Only
+// leading env assignments, `sudo` and `env` are stripped (`commandSegments`).
+// These are NOT oversights to be patched one by one: chasing them is an arms
+// race a string check cannot win, and it is why this hook is the third layer
+// and not the gate. The ruleset (and, for merges, `scripts/land.mts`'s own
+// refusal path) is what actually holds.
+//
 // Item 3 does not touch `scripts/land.mts`: that script spawns `gh` from
 // inside Node, so the session's Bash tool — the only thing this hook sees —
 // reads `node scripts/land.mts <pr>`, which is allowed.

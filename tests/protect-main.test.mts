@@ -33,6 +33,7 @@ const denied = [
   'gh pr merge 1',
   'gh pr merge 42 --squash --delete-branch',
   'cd sub && gh pr merge 7 --merge', // a merge after && is still a command segment
+  'echo "x; gh pr merge 1"', // no quote parsing: the `;` splits inside the string too (see the hook header)
   'git push origin main:refs/heads/main', // AC1/AC3: long-form refspec, remote side is protected
   'git push origin HEAD:refs/heads/master',
 ];
