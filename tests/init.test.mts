@@ -101,11 +101,15 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // `repo edit --enable-auto-merge` / `--delete-branch-on-merge` create the
 // matching marker; `label create` is a no-op. `repo view --json
 // defaultBranchRef` (the ruleset's target) always answers "main". Every
-// call touching `.../rulesets` (list, POST, PUT) is handled by one case arm
-// keyed on the endpoint prefix: a 403 fixture (`$state/rulesets-403`) wins
-// over everything; otherwise `-X POST`/`-X PUT` write the request body to
-// `$state/ruleset-{post,put}-body.json` and report a canned id, and a plain
-// GET echoes `$state/rulesets-list.json` (default `[]`).
+// call touching `.../rulesets` (list, detail, POST, PUT) is handled by one
+// case arm keyed on the endpoint prefix: a 403 fixture
+// (`$state/rulesets-403`) wins over everything; otherwise `-X POST`/`-X PUT`
+// write the request body to `$state/ruleset-{post,put}-body.json` and report
+// a canned id, a GET on the collection echoes `$state/rulesets-list.json`
+// (default `[]`), and a GET on `.../rulesets/<id>` echoes
+// `$state/ruleset-<id>.json` (default `{}`) — the live list endpoint answers
+// with summaries only, so conditions, rules and bypass actors live in the
+// per-id fixture, exactly as the real API serves them.
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
@@ -133,7 +137,12 @@ case "\${1:-} \${2:-}" in
       cat > "$state/ruleset-put-body.json"
       echo '{"id":42,"name":"agentic-setup"}'
     else
-      cat "$state/rulesets-list.json" 2>/dev/null || echo '[]'
+      id="\${2##*/rulesets/}"
+      if [ "$id" = "\${2:-}" ]; then
+        cat "$state/rulesets-list.json" 2>/dev/null || echo '[]'
+      else
+        cat "$state/ruleset-$id.json" 2>/dev/null || echo '{}'
+      fi
     fi
     ;;
   "repo edit")
@@ -207,23 +216,53 @@ check('init --dry-run (with gh) exits 0', ghDry.status === 0, `${ghDry.stdout}${
 check('init --dry-run reports it would enable auto-merge and delete-branch-on-merge', /\+ auto-merge enabled/.test(ghDry.stdout) && /\+ delete-branch-on-merge enabled/.test(ghDry.stdout), ghDry.stdout);
 check('init --dry-run never actually calls gh repo edit', !/repo edit/.test(ghLog(state2)), ghLog(state2));
 
-// --- --rules: creates or updates a branch ruleset named "agentic-setup"
-// with the checks the merge model depends on (docs/decisions.md item 9(a)).
-// `ghRepo` carries no workflow files of its own, so the third required
-// check falls back to its default, "test".
+// --- --rules: creates, or updates, the branch ruleset that governs the
+// default branch — matched by what it governs, never by its name (#143) —
+// with the checks the merge model depends on (docs/decisions.md item 9(a))
+// and the review requirement `land.mts` and the Codex route both read off
+// the server. `ghRepo` carries no workflow files of its own, so the third
+// required check falls back to its default, "test".
 check('init without --rules never touches the rulesets endpoint', !/rulesets/.test(ghLog(state1)), ghLog(state1));
+
+/** The body the fake gh recorded for a POST or a PUT, or null when none was sent. */
+function ruleBody(stateDir: string, kind: 'post' | 'put'): any {
+  const p = join(stateDir, `ruleset-${kind}-body.json`);
+  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
+}
+/** One rule of a recorded payload by type, or null. */
+const ruleOfType = (body: any, type: string): any => body?.rules?.find((r: { type: string }) => r.type === type) ?? null;
+/** The four review fields the merge model needs on the `pull_request` rule (#143 AC2). */
+function requiresOneApprovingReview(body: any): boolean {
+  const p = ruleOfType(body, 'pull_request')?.parameters;
+  return (
+    !!p &&
+    p.required_approving_review_count === 1 &&
+    p.dismiss_stale_reviews_on_push === true &&
+    p.require_last_push_approval === true &&
+    JSON.stringify(p.allowed_merge_methods) === JSON.stringify(['squash'])
+  );
+}
+/** A state dir seeded with a ruleset list and one detail fixture per entry. */
+function rulesState(label: string, entries: Array<Record<string, any>>): string {
+  const dir = mkdtempSync(join(tmpdir(), `agentic-init-rules-${label}-`));
+  cleanup(() => rmSync(dir, { recursive: true, force: true }));
+  // the live list endpoint answers with summaries; details come per id
+  writeFileSync(join(dir, 'rulesets-list.json'), JSON.stringify(entries.map(({ rules, bypass_actors, ...summary }) => summary)));
+  for (const entry of entries) writeFileSync(join(dir, `ruleset-${entry.id}.json`), JSON.stringify(entry));
+  return dir;
+}
 
 const stateRulesEmpty = mkdtempSync(join(tmpdir(), 'agentic-init-rules-empty-'));
 cleanup(() => rmSync(stateRulesEmpty, { recursive: true, force: true }));
 const rulesEmpty = initWithGh(ghRepo, stateRulesEmpty, '--rules');
 check('init --rules (no existing ruleset) exits 0', rulesEmpty.status === 0, `${rulesEmpty.stdout}${rulesEmpty.stderr}`);
-check('init --rules creates a ruleset when none named agentic-setup exists', /\+ ruleset created/.test(rulesEmpty.stdout), rulesEmpty.stdout);
+check('init --rules creates a ruleset when none governs the default branch', /\+ ruleset created/.test(rulesEmpty.stdout), rulesEmpty.stdout);
 check('init --rules POSTs to the rulesets collection', ghLog(stateRulesEmpty).includes('rulesets -X POST'), ghLog(stateRulesEmpty));
-const postBody = JSON.parse(readFileSync(join(stateRulesEmpty, 'ruleset-post-body.json'), 'utf8'));
+const postBody = ruleBody(stateRulesEmpty, 'post');
 check('the created ruleset targets the default branch', postBody.conditions.ref_name.include.includes('refs/heads/main'), JSON.stringify(postBody));
 check(
   'the created ruleset requires scope, negative-control and the default test check',
-  JSON.stringify(postBody.rules.find((r: { type: string }) => r.type === 'required_status_checks').parameters.required_status_checks) ===
+  JSON.stringify(ruleOfType(postBody, 'required_status_checks').parameters.required_status_checks) ===
     JSON.stringify([{ context: 'scope' }, { context: 'negative-control' }, { context: 'test' }]),
   JSON.stringify(postBody),
 );
@@ -232,15 +271,154 @@ check(
   ['pull_request', 'non_fast_forward', 'deletion'].every((t) => postBody.rules.some((r: { type: string }) => r.type === t)),
   JSON.stringify(postBody),
 );
+check(
+  'the created ruleset requires one approving review, dismisses stale approvals, requires last-push approval and allows squash only',
+  requiresOneApprovingReview(postBody),
+  JSON.stringify(postBody),
+);
 
-const stateRulesExisting = mkdtempSync(join(tmpdir(), 'agentic-init-rules-existing-'));
-cleanup(() => rmSync(stateRulesExisting, { recursive: true, force: true }));
-writeFileSync(join(stateRulesExisting, 'rulesets-list.json'), JSON.stringify([{ id: 42, name: 'agentic-setup', target: 'branch' }]));
+// The shape this repository's own ruleset really has, read from the live
+// API: named after the branch ("main", not "agentic-setup"), its condition
+// the ~DEFAULT_BRANCH placeholder rather than refs/heads/main, and carrying
+// rules, parameters and bypass actors the installer does not manage. A
+// name-based lookup takes the create path here and POSTs a second ruleset
+// over the same branch — that is the defect #143 fixes.
+const LIVE_ID = 22358260;
+const stateRulesLive = rulesState('live', [
+  {
+    id: LIVE_ID,
+    name: 'main',
+    target: 'branch',
+    source_type: 'Repository',
+    enforcement: 'active',
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+    rules: [
+      { type: 'deletion' },
+      { type: 'non_fast_forward' },
+      {
+        type: 'pull_request',
+        parameters: {
+          required_approving_review_count: 0,
+          dismiss_stale_reviews_on_push: false,
+          require_last_push_approval: false,
+          require_extra_approval_for_unattributed_changes: true,
+          allowed_merge_methods: ['squash'],
+        },
+      },
+      { type: 'required_signatures' },
+    ],
+    bypass_actors: [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }],
+    node_id: 'RRS_fixture',
+    created_at: '2026-09-05T19:58:40.311-03:00',
+    _links: { self: { href: 'https://api.github.invalid/x' } },
+  },
+]);
+const rulesLive = initWithGh(ghRepo, stateRulesLive, '--rules');
+check('init --rules against a ruleset named after the branch exits 0', rulesLive.status === 0, `${rulesLive.stdout}${rulesLive.stderr}`);
+check(
+  'init --rules updates the ruleset that governs the default branch whatever its name',
+  ghLog(stateRulesLive).includes(`rulesets/${LIVE_ID} -X PUT`),
+  ghLog(stateRulesLive),
+);
+check(
+  'init --rules never POSTs a second ruleset over a branch one already governs',
+  !ghLog(stateRulesLive).includes('-X POST') && ruleBody(stateRulesLive, 'post') === null,
+  ghLog(stateRulesLive),
+);
+const liveBody = ruleBody(stateRulesLive, 'put');
+check('the updated ruleset requires one approving review with stale approvals dismissed', requiresOneApprovingReview(liveBody), JSON.stringify(liveBody));
+check(
+  'the update keeps a pull_request parameter the installer does not set',
+  ruleOfType(liveBody, 'pull_request')?.parameters?.require_extra_approval_for_unattributed_changes === true,
+  JSON.stringify(liveBody),
+);
+check('the update carries an unmanaged rule type through unchanged', ruleOfType(liveBody, 'required_signatures') !== null, JSON.stringify(liveBody));
+check(
+  'the update carries the fetched bypass actors through unchanged',
+  JSON.stringify(liveBody?.bypass_actors) === JSON.stringify([{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]),
+  JSON.stringify(liveBody),
+);
+check(
+  'the update keeps the ruleset own name and condition instead of renaming it',
+  liveBody?.name === 'main' && JSON.stringify(liveBody?.conditions?.ref_name?.include) === JSON.stringify(['~DEFAULT_BRANCH']),
+  JSON.stringify(liveBody),
+);
+check(
+  'the update sends back none of the read-only fields the detail fetch carries',
+  !!liveBody && !('node_id' in liveBody) && !('_links' in liveBody) && !('created_at' in liveBody) && !('source_type' in liveBody),
+  JSON.stringify(liveBody),
+);
+
+// The other spelling of the same condition: a ruleset whose include list
+// names refs/heads/<default branch> literally is matched too.
+const stateRulesExisting = rulesState('existing', [
+  {
+    id: 42,
+    name: 'agentic-setup',
+    target: 'branch',
+    conditions: { ref_name: { include: ['refs/heads/main'], exclude: [] } },
+    rules: [],
+    bypass_actors: [],
+  },
+]);
 const rulesExisting = initWithGh(ghRepo, stateRulesExisting, '--rules');
-check('init --rules (existing agentic-setup ruleset) exits 0', rulesExisting.status === 0, `${rulesExisting.stdout}${rulesExisting.stderr}`);
+check('init --rules (existing ruleset on refs/heads/main) exits 0', rulesExisting.status === 0, `${rulesExisting.stdout}${rulesExisting.stderr}`);
 check('init --rules updates the existing ruleset instead of creating one', /= ruleset updated/.test(rulesExisting.stdout), rulesExisting.stdout);
 check('init --rules PUTs to the existing ruleset by id', ghLog(stateRulesExisting).includes('rulesets/42 -X PUT'), ghLog(stateRulesExisting));
 check('init --rules does not also create a second ruleset', !existsSync(join(stateRulesExisting, 'ruleset-post-body.json')));
+
+// A ruleset that governs some other branch is not ours, whatever it is
+// called: only the one over the default branch is updated.
+const stateRulesOther = rulesState('other', [
+  { id: 8, name: 'agentic-setup', target: 'branch', conditions: { ref_name: { include: ['refs/heads/release'], exclude: [] } }, rules: [] },
+]);
+const rulesOther = initWithGh(ghRepo, stateRulesOther, '--rules');
+check('init --rules exits 0 when no ruleset governs the default branch', rulesOther.status === 0, `${rulesOther.stdout}${rulesOther.stderr}`);
+check(
+  'init --rules leaves a ruleset over another branch alone and creates one',
+  !ghLog(stateRulesOther).includes('rulesets/8 -X PUT') && ghLog(stateRulesOther).includes('rulesets -X POST'),
+  ghLog(stateRulesOther),
+);
+
+// --ruleset-name overrides the choice: the named ruleset is updated even
+// though another one governs the default branch.
+const stateRulesNamed = rulesState('named', [
+  { id: 11, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [] },
+  { id: 12, name: 'chosen', target: 'branch', conditions: { ref_name: { include: ['refs/heads/release'], exclude: [] } }, rules: [] },
+]);
+const rulesNamed = initWithGh(ghRepo, stateRulesNamed, '--rules', '--ruleset-name', 'chosen');
+check('init --rules --ruleset-name exits 0', rulesNamed.status === 0, `${rulesNamed.stdout}${rulesNamed.stderr}`);
+check(
+  'init --rules --ruleset-name updates the ruleset it names, not the one matched by condition',
+  ghLog(stateRulesNamed).includes('rulesets/12 -X PUT') && !ghLog(stateRulesNamed).includes('rulesets/11 -X PUT'),
+  ghLog(stateRulesNamed),
+);
+
+// Several rulesets over the same branch: the first is updated, the rest are
+// reported and left exactly as they are — never created over.
+const stateRulesMany = rulesState('many', [
+  { id: 21, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [] },
+  { id: 22, name: 'legacy', target: 'branch', conditions: { ref_name: { include: ['refs/heads/main'], exclude: [] } }, rules: [] },
+]);
+const rulesMany = initWithGh(ghRepo, stateRulesMany, '--rules');
+check('init --rules with several matching rulesets exits 0', rulesMany.status === 0, `${rulesMany.stdout}${rulesMany.stderr}`);
+check('init --rules updates the first matching ruleset', ghLog(stateRulesMany).includes('rulesets/21 -X PUT'), ghLog(stateRulesMany));
+check(
+  'init --rules reports the other matching rulesets and neither updates nor creates over them',
+  /! ruleset: 2 rulesets govern main/.test(rulesMany.stdout) && /"legacy" \(#22\)/.test(rulesMany.stdout) && !ghLog(stateRulesMany).includes('-X POST'),
+  `${rulesMany.stdout}\n${ghLog(stateRulesMany)}`,
+);
+
+// A tag ruleset shares the endpoint and must never be matched or updated.
+const stateRulesTag = rulesState('tag', [
+  { id: 31, name: 'tags', target: 'tag', conditions: { ref_name: { include: ['~ALL'], exclude: [] } }, rules: [] },
+]);
+const rulesTag = initWithGh(ghRepo, stateRulesTag, '--rules');
+check(
+  'init --rules ignores a ruleset that does not target branches',
+  rulesTag.status === 0 && !ghLog(stateRulesTag).includes('rulesets/31 -X PUT') && ghLog(stateRulesTag).includes('rulesets -X POST'),
+  ghLog(stateRulesTag),
+);
 
 const stateRules403 = mkdtempSync(join(tmpdir(), 'agentic-init-rules-403-'));
 cleanup(() => rmSync(stateRules403, { recursive: true, force: true }));
@@ -262,6 +440,42 @@ check(
   'init --rules --dry-run reads the rulesets list but never writes one',
   ghLog(stateRulesDry).includes('rulesets') && !ghLog(stateRulesDry).includes('-X POST') && !ghLog(stateRulesDry).includes('-X PUT'),
   ghLog(stateRulesDry),
+);
+check(
+  'init --rules --dry-run prints the payload it would POST',
+  /"required_approving_review_count": 1/.test(rulesDry.stdout) && /POST repos\/\{owner\}\/\{repo\}\/rulesets/.test(rulesDry.stdout),
+  rulesDry.stdout,
+);
+
+// The same preview against a repository that already has the ruleset: the
+// payload is the update body, and nothing mutating leaves the process.
+const stateRulesDryLive = rulesState('dry-live', [
+  {
+    id: LIVE_ID,
+    name: 'main',
+    target: 'branch',
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+    rules: [{ type: 'pull_request', parameters: { required_approving_review_count: 0, dismiss_stale_reviews_on_push: false } }],
+    bypass_actors: [],
+  },
+]);
+const rulesDryLive = initWithGh(ghRepo, stateRulesDryLive, '--rules', '--dry-run');
+check('init --rules --dry-run against an existing ruleset exits 0', rulesDryLive.status === 0, `${rulesDryLive.stdout}${rulesDryLive.stderr}`);
+check('init --rules --dry-run against an existing ruleset reports the update', /= ruleset updated/.test(rulesDryLive.stdout), rulesDryLive.stdout);
+check(
+  'init --rules --dry-run prints the payload it would PUT and sends nothing',
+  new RegExp(`PUT repos/\\{owner\\}/\\{repo\\}/rulesets/${LIVE_ID}`).test(rulesDryLive.stdout) &&
+    /"required_approving_review_count": 1/.test(rulesDryLive.stdout) &&
+    /"dismiss_stale_reviews_on_push": true/.test(rulesDryLive.stdout),
+  rulesDryLive.stdout,
+);
+check(
+  'init --rules --dry-run records zero mutating calls',
+  !ghLog(stateRulesDryLive).includes('-X POST') &&
+    !ghLog(stateRulesDryLive).includes('-X PUT') &&
+    ruleBody(stateRulesDryLive, 'post') === null &&
+    ruleBody(stateRulesDryLive, 'put') === null,
+  ghLog(stateRulesDryLive),
 );
 
 finish();
