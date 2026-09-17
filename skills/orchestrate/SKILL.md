@@ -316,7 +316,11 @@ labelling happens.
 
 ## 6. Close the milestone, then keep going
 
-- Milestone with no open issue left → close it first: look its number up by title
+- Milestone with no open issue left → close it first. Before you do, read the
+  `<!-- agentic-decision-log -->` comment on its parent issue and copy its lines verbatim
+  into the closeout summary (`docs/orchestration.md`, "The decision log"): they are the
+  phase's decision trail, and a decision that only ever existed in a comment thread is
+  lost the moment the milestone closes. Then look the milestone's number up by title
   (`gh api repos/{owner}/{repo}/milestones --jq '.[] | select(.title=="<current>") |
   .number'`), then `gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f
   state=closed`. Only then open the next milestone's parent issue and, as planner, its
