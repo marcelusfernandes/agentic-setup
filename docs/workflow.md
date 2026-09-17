@@ -101,6 +101,7 @@ its PR merges, and a closed issue is a done issue — nothing left to relabel. W
 ```
 ## Context
 Why it exists. Links to the spec, the report, or the code it changes (file:line).
+Optional, a line "Origin: <where this came from>" — see "Findings become issues" below.
 
 ## Goal
 One verifiable sentence.
@@ -147,6 +148,34 @@ justification goes on the next line, indented, which the parser skips:
 A grant left in a pull-request body counts for nothing; `scope` prints it under
 "An authorised: line in the pull-request body grants nothing" and fails on the file
 anyway.
+
+### Findings become issues
+
+A finding from a dogfood report — `docs/dogfood/<date>.md`, format and rules in
+[`docs/dogfood/README.md`](dogfood/README.md) — is opened **directly as its own
+`state:ready` issue**, carrying an `Origin:` line in `## Context` copied verbatim from
+the finding's `origin` cell:
+
+```
+## Context
+Origin: docs/dogfood/2026-01-31.md, "the wait loop spins on a conflicting PR"
+`scripts/land.mts` cannot tell a conflicting pull request from one whose checks are
+still queued, so the orchestrator waits out the timeout instead of reporting the
+conflict.
+```
+
+It is never parked as a bullet in a mother issue: a finding that is only a bullet is a
+candidate, and a candidate comes back — F12 of #96 returned as L21 of #129 because the
+first time it was never scheduled. The report is the other half of that rule: its
+`outcome` cell must name the `#N` the finding became, the merged PR or closed issue that
+already covered it, or a one-line reason it is not work, and
+[`tests/dogfood-report.test.mts`](../tests/dogfood-report.test.mts) fails a report that
+names none of the three.
+
+The `Origin:` line adds no rule to `issue-lint`: `## Context` is already required and
+non-empty (`ci/issue-lint.mts:163-171`), and the line is prose inside it. It is there for
+whoever reads the issue a month later, and for the reviewer who wants to see the pass it
+came out of.
 
 A sub-issue fits in one PR of roughly ≤ 800 lines of useful diff. If it does not, split
 it before dispatching. That figure is a per-PR recommendation for whoever plans the
