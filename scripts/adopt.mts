@@ -307,4 +307,7 @@ if (created.status !== 0) fail('plan-issue:not-created', (created.stderr || crea
 const url = created.stdout.trim().split('\n').filter(Boolean).pop() ?? '';
 const number = Number(url.match(/\/(\d+)\s*$/)?.[1]);
 if (!Number.isInteger(number)) fail('plan-issue:unreadable');
-console.log(JSON.stringify({ issue: number, url, gaps: inventory.gaps }));
+// `report.gaps`, not `inventory.gaps`: the body above was rendered from the
+// report, so printing the inventory's list would leave the one gap the
+// record introduces in the issue and out of the JSON a caller reads.
+console.log(JSON.stringify({ issue: number, url, gaps: report.gaps }));

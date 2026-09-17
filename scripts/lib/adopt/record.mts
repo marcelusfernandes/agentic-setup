@@ -264,7 +264,12 @@ const NOT_A_CHANGE = new Set<string>(['generatedAt']);
 /** Compares two values structurally; the record holds only JSON scalars and arrays. */
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-/** Every field where `after` differs from `before`, deepest path first. */
+/**
+ * Every field where `after` differs from `before`, by dotted path, in the
+ * order `SHAPE` declares them — a nested object is descended into rather
+ * than compared whole, so a change is reported as `commands.test` and never
+ * as `commands`. `generatedAt` is excluded (`NOT_A_CHANGE`).
+ */
 export function diffRecords(before: AdoptionRecord, after: AdoptionRecord): Change[] {
   const changes: Change[] = [];
   const walk = (a: Record<string, unknown>, b: Record<string, unknown>, fields: Record<string, FieldSpec>, prefix: string): void => {

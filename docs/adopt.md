@@ -117,7 +117,9 @@ already exist: `scripts/reconcile.mts` reports it under `humanPending`,
 A person reads the issue, ticks what should happen and flips the label to
 `human:decided`, which stays as the audit trail.
 
-On success it prints `{ "issue": 7, "url": "…", "gaps": [ … ] }`.
+On success it prints `{ "issue": 7, "url": "…", "gaps": [ … ] }`. `gaps` is the same list
+the body's checkboxes were rendered from, `record:stale` included — the JSON a caller
+reads and the issue a person reads never disagree.
 
 A second run never opens a second issue. When an open issue with that exact title
 already exists it refuses — `{ "refused": "…", "reason": "plan-issue:already-open",
