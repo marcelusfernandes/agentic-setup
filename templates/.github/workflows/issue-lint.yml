@@ -1,8 +1,16 @@
-# issue-lint — validates an issue's contract before it can be dispatched:
-# sections present, globs that parse and match something, globs disjoint
-# from the issues already in flight in the same milestone, and every file
-# the issue's globs cover checked for other tracked files that reference it
-# by path or basename. Runs only once the issue carries a milestone (a
+# issue-lint — validates an issue's contract before it can be dispatched,
+# with four checks: the required sections present and non-empty (including
+# the optional `Declaration:` line of `## Proof`, which must name a
+# `proof/<slug>.json` path when it is there); every glob in `## Files`
+# parsing and matching a tracked file, or being new; those globs disjoint
+# from the issues already in flight in the same milestone; and every
+# `Blocked by: #N` number naming an issue that exists. It reads no diff:
+# the entry-point check — every file the issue's globs cover grepped for
+# other tracked files that reference it by path or basename — was removed
+# in M4 (#62), because it could not tell a rename from an in-place edit and
+# fired on every ordinary import or mention; see `ci/issue-lint.mts:11-16`.
+# The shape it aimed at is caught at PR time instead, by `scope`'s
+# dangling-reference rule. Runs only once the issue carries a milestone (a
 # milestone is set right after triage; running before that would just fail
 # AC1's "not applicable yet" cases with noise).
 #
