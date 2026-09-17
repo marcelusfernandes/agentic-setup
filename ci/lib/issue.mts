@@ -69,3 +69,35 @@ export function blockedBy(body: string): number[] | null {
   if (/^none\b/i.test(rest)) return [];
   return [...rest.matchAll(/#?(\d+)/g)].map((m) => Number(m[1]));
 }
+
+/** The shape a declaration path must have: `proof/<slug>.json` (#136). */
+export const PROOF_DECLARATION_PATH = /^proof\/[a-z0-9-]+\.json$/;
+
+/**
+ * The optional `Declaration: proof/<slug>.json` line of the `## Proof`
+ * section (#136), as written — the path is returned raw (one pair of
+ * surrounding backticks stripped, because the section is prose and the
+ * templates show the path backticked), and `ci/issue-lint.mts` is what
+ * judges it against `PROOF_DECLARATION_PATH`.
+ *
+ * `null` when the section carries no such line at all: the declaration is
+ * optional and its absence is never a failure. An empty value (`Declaration:`
+ * with nothing after it) returns `''`, which the lint rejects — a line that
+ * announces a declaration and names none is a mistake, not an absence.
+ *
+ * The line is read from the `## Proof`/`## Validation` section only, so the
+ * word cannot be picked up from prose elsewhere in the body. It is read for
+ * linting and never to locate a file to execute: `ci/negative-control.mts`
+ * derives the slug from the branch, never from the issue (invariant 9).
+ */
+export function proofDeclaration(body: string): string | null {
+  const section = proofSection(body);
+  if (section === null) return null;
+  for (const raw of section.split(/\r?\n/)) {
+    const m = raw.trim().match(/^(?:[-*]\s+)?Declaration:(.*)$/i);
+    if (!m) continue;
+    const value = m[1].trim();
+    return /^`[^`]*`$/.test(value) ? value.slice(1, -1).trim() : value;
+  }
+  return null;
+}

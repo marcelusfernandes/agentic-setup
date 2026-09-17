@@ -40,10 +40,25 @@
 // crosses a `/` (ci/lib/globs.mts).
 //
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
-// the event or --labels a,b. Test files: TEST_FILE_GLOBS below, extended
+// the event or --labels a,b, and --branch <ref> (or the event's head ref)
+// naming the head branch. Test files: TEST_FILE_GLOBS below, extended
 // with AGENTIC_TEST_GLOBS (comma-separated). Test command: ci/lib/detect.mts
 // or AGENTIC_TEST_CMD. For Node projects the head checkout's node_modules is
 // linked into the base worktree so nothing is reinstalled.
+//
+// A branch may declare its own proof (#136). When --branch names a
+// `<type>/<n>-<slug>` branch and `proof/<slug>.json` exists at head, that
+// file — `{ "tests": [...] }`, optionally `"command"` — decides the run:
+// the overlay is exactly the files it names plus the declaration itself (no
+// test glob is consulted, so a proof that lives outside the usual test
+// paths is still overlaid), and `command` replaces the detected test
+// command for both runs. It is read from the head *commit*, never from an
+// issue or PR body (invariant 9): the slug comes from the branch, and the
+// only thing an issue carries is a `Declaration:` line that `issue-lint`
+// checks the shape of. A declaration that does not parse, or names no test,
+// is `cannot-run` — a broken declaration must not silently narrow the
+// control. Without a declaration nothing changes, including the path-class
+// skip, which is decided before the declaration is read.
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -130,18 +145,78 @@ if (legacyLabel) {
   console.log(`note: \`${legacyLabel}\` no longer skips the negative control by itself — the skip is by path class (set AGENTIC_SKIP_GLOBS to add one). The label is read for backward compatibility for one release.`);
 }
 
+// --- the proof a branch declares, when it declares one (#136) -------------
+
+type Declaration = { path: string; tests: string[]; command?: string };
+
+/** The `<slug>` of a `<type>/<n>-<slug>` ref, or `null` for any other shape. */
+function branchSlug(ref: string): string | null {
+  const m = ref.replace(/^refs\/heads\//, '').trim().match(/^[^/]+\/\d+-([a-z0-9-]+)$/);
+  return m ? m[1] : null;
+}
+
+/**
+ * `proof/<slug>.json` as it stands at head, or `null` when the branch
+ * declares nothing. Never reads the working tree: the file is taken from the
+ * head commit, so the check does not depend on what is checked out. An
+ * unusable declaration exits `cannot-run` rather than falling back to the
+ * globs — a declaration that is present is the contract.
+ */
+function readDeclaration(slug: string): Declaration | null {
+  const path = `proof/${slug}.json`;
+  const show = spawnSync('git', ['show', `${head}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  if (show.status !== 0) return null;
+
+  const bad = (why: string): never => finish('cannot-run', `\`${path}\` ${why}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(show.stdout);
+  } catch (error) {
+    bad(`does not parse as JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) bad('is not a JSON object');
+  const decl = parsed as Record<string, unknown>;
+
+  const tests = decl.tests;
+  if (!Array.isArray(tests) || tests.length === 0 || !tests.every((t) => typeof t === 'string' && t.trim() !== '')) {
+    bad('has no `"tests"` array of file paths');
+  }
+  const command = decl.command;
+  if (command !== undefined && (typeof command !== 'string' || command.trim() === '')) {
+    bad('has a `"command"` that is not a non-empty string');
+  }
+  return {
+    path,
+    tests: (tests as string[]).map((t) => t.trim()),
+    command: typeof command === 'string' ? command.trim() : undefined,
+  };
+}
+
+const branchRef = typeof args.branch === 'string' ? args.branch.trim() : String(event?.pull_request?.head?.ref ?? '').trim();
+const slug = branchRef ? branchSlug(branchRef) : null;
+if (branchRef && !slug) {
+  console.log(`note: \`${branchRef}\` is not a \`<type>/<n>-<slug>\` branch, so no proof declaration is looked up for it.`);
+}
+const declaration = slug ? readDeclaration(slug) : null;
+if (declaration) {
+  console.log(`note: \`${declaration.path}\` declares this branch's proof; the overlay is the ${declaration.tests.length} file(s) it names${declaration.command ? ` and its command \`${declaration.command}\`` : ''}.`);
+}
+
 const extraGlobs = csv(process.env.AGENTIC_TEST_GLOBS);
-const testFiles = changed.filter((f) => matchesAny(f, [...TEST_FILE_GLOBS, ...extraGlobs]));
-if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), or add the path class to AGENTIC_SKIP_GLOBS.');
+const testFiles = declaration
+  ? [...new Set([...declaration.tests, declaration.path])]
+  : changed.filter((f) => matchesAny(f, [...TEST_FILE_GLOBS, ...extraGlobs]));
+if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), declare the proof in `proof/<slug>.json`, or add the path class to AGENTIC_SKIP_GLOBS.');
 
 const commands = detectCommands(root);
-if (!commands.test) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow.');
+const testCommand = declaration?.command ?? commands.test;
+if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow, or name the command in `proof/<slug>.json`.');
 
 type RunResult = { status: number | null; crashed: boolean; output: string };
 
 /** Runs the detected test command in `cwd`; never throws. */
 function runTests(cwd: string): RunResult {
-  const r = spawnSync(String(commands.test), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  const r = spawnSync(String(testCommand), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
   return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
 }
 
@@ -201,38 +276,38 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     }
 
     const baseline = runTests(tmp);
-    console.log(`--- \`${commands.test}\` on pristine base ${base.slice(0, 7)} ---\n${tail(baseline.output)}\n---`);
+    console.log(`--- \`${testCommand}\` on pristine base ${base.slice(0, 7)} ---\n${tail(baseline.output)}\n---`);
     if (baseline.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${commands.test}\` could not be executed on the base checkout.` };
+      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
     }
     if (baseline.status !== 0) {
       return {
         outcome: 'inconclusive',
-        detail: `\`${commands.test}\` already fails on the pristine base (exit ${baseline.status}); the base does not pass its own tests; the negative control cannot discriminate.\n${tail(baseline.output)}`,
+        detail: `\`${testCommand}\` already fails on the pristine base (exit ${baseline.status}); the base does not pass its own tests; the negative control cannot discriminate.\n${tail(baseline.output)}`,
       };
     }
 
     overlayTestFiles(tmp);
     const overlaid = runTests(tmp);
-    console.log(`--- \`${commands.test}\` on base ${base.slice(0, 7)} with ${testFiles.length} test file(s) from head ---\n${tail(overlaid.output)}\n---`);
+    console.log(`--- \`${testCommand}\` on base ${base.slice(0, 7)} with ${testFiles.length} test file(s) from head ---\n${tail(overlaid.output)}\n---`);
 
     if (overlaid.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${commands.test}\` could not be executed on the base checkout.` };
+      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
     }
     if (overlaid.status === 0) {
-      return { outcome: 'vacuous', detail: `\`${commands.test}\` passed on the base with the PR's test files applied — the tests do not depend on the change.` };
+      return { outcome: 'vacuous', detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change.` };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
     const structural = STRUCTURAL_SIGNATURE.test(overlaid.output);
     if (structural && !redCommitTouchesTests()) {
       return {
         outcome: 'structural',
-        detail: `\`${commands.test}\` failed on the base only structurally (missing module or export, or a syntax error) with ${testFiles.length} test file(s): ${named} — the file could not run there at all, which is not an assertion catching the change. Either write a throwing stub so the red is a runtime red (safe-worktree §B7), or commit the failing test first with a subject starting \`test(red):\` that touches one of those files.\n${tail(overlaid.output)}`,
+        detail: `\`${testCommand}\` failed on the base only structurally (missing module or export, or a syntax error) with ${testFiles.length} test file(s): ${named} — the file could not run there at all, which is not an assertion catching the change. Either write a throwing stub so the red is a runtime red (safe-worktree §B7), or commit the failing test first with a subject starting \`test(red):\` that touches one of those files.\n${tail(overlaid.output)}`,
       };
     }
     return {
       outcome: 'pass',
-      detail: `\`${commands.test}\` failed on the base (exit ${overlaid.status}) with ${testFiles.length} test file(s): ${named}.`,
+      detail: `\`${testCommand}\` failed on the base (exit ${overlaid.status}) with ${testFiles.length} test file(s): ${named}.`,
       warning: structural ? STRUCTURAL_WARNING : undefined,
     };
   } finally {

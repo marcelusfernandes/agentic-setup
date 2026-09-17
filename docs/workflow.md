@@ -14,7 +14,9 @@ written in English; the language you talk to the agents in is your business.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
   committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
   decide the red: it copies the changed test files onto a checkout of the base and requires
-  the suite to fail there. It reads the commits for one thing only — when that red is
+  the suite to fail there (unless the branch declares its own list in `proof/<slug>.json`,
+  read from the head commit — see "The proof a branch declares" below). It reads the
+  commit *log* for one thing only — when that red is
   *structural* (a missing module or export, a syntax error), a `test(red):` commit in
   `base..head` touching one of those test files is what makes it acceptable (#135).
 
@@ -85,6 +87,7 @@ One verifiable sentence.
 ## Proof
 The test command and what it covers.
 Negative control: which assertions must fail before the change (CI verifies this).
+Optional, a line "Declaration: proof/<slug>.json" — see "The proof a branch declares" below.
 (`## Validation`, the Codex route's name for this section, is accepted instead.)
 
 ## Files
@@ -187,7 +190,7 @@ keywords, and takes the globs and the `authorised:` grants from the issues it li
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer
 applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
@@ -206,6 +209,39 @@ which touches at least one of the overlaid test files. Then the outcome stays `p
 the job summary and stdout carry a `warning:` line asking for a throwing stub instead, so
 the red is a runtime red. Without such a commit the outcome is `structural` and the check
 fails.
+
+### The proof a branch declares
+
+By default the negative control overlays whatever test files the diff happens to contain,
+matched by generic globs (`**/*.test.*`, `**/tests/**`, …). A branch can say it exactly
+instead. `proof/<slug>.json`, where `<slug>` is the `<slug>` of the branch
+`<type>/<n>-<slug>` (the value `scripts/claim.mts` takes as `--slug`):
+
+```json
+{ "tests": ["tests/proof-declarations.test.mts"], "command": "npm test" }
+```
+
+`tests` is required and is exactly what gets overlaid on the base — the declaration file
+itself is copied too, and no test glob is consulted, so a proof that lives outside the
+usual test paths is overlaid all the same. `command` is optional and replaces the detected
+test command for **both** runs, the baseline and the overlaid one. `describes` (one
+sentence, optional) is carried for the proof runner of #164. `proof/README.md` holds the
+format; `tests/proof-declarations.test.mts` validates every declaration in the repository,
+so a typo fails a test instead of quietly narrowing the control.
+
+**The whole thing is optional.** No file, no change: the globs and the detected command
+apply, exactly as before. A file that is present but unusable (does not parse, names no
+test) is `cannot-run`, never a fallback to the globs — a broken declaration must not
+narrow the control silently. The path-class skip above is decided *before* the declaration
+is read, so a diff that owes no negative control still owes none.
+
+The workflows pass `--branch "$GITHUB_HEAD_REF"`, and the slug comes from that branch; the
+declaration is read from the head **commit**. An issue never names the file that is
+executed: it may carry one `Declaration: proof/<slug>.json` line under `## Proof`, which
+`issue-lint` checks against `^proof/[a-z0-9-]+\.json$` and never opens (the branch need not
+exist yet). The line is optional — its absence is never a failure — but a `Declaration:`
+line naming something that is not such a path fails the lint. This is invariant 9 in
+practice: issue text points, it never decides what runs.
 
 ## Merge
 

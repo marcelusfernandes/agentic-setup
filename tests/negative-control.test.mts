@@ -122,4 +122,83 @@ check(
 
 check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
 
+// --- `proof/<slug>.json`: the overlay a branch declares (#136) -------------
+// `--branch <ref>` names the head branch (`<type>/<n>-<slug>`); when
+// `proof/<slug>.json` exists at head, the overlay is exactly the files it
+// names — no test glob involved — and its optional `command` replaces the
+// detected test command. Without `--branch`, nothing changes.
+//
+// Repository A: the detected test command already runs the declared file, so
+// the case isolates the overlay. `checks/pin.mts` matches no test glob, so
+// the same diff is `no-tests` when the declaration is not read.
+const declRepo = tempRepo();
+const declBase = commit(declRepo, {
+  'package.json': JSON.stringify({ name: 'd', private: true, scripts: { test: 'node checks/pin.mts' } }),
+  'lib.mts': 'export const v = 1;\n',
+  'checks/pin.mts': 'process.exit(0);\n',
+}, 'chore: base');
+git(['checkout', '-q', '-b', 'feat/10-declared'], declRepo);
+const declHead = commit(declRepo, {
+  'lib.mts': 'export const v = 2;\n',
+  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'proof/declared.json': JSON.stringify({ tests: ['checks/pin.mts'] }),
+}, 'feat: declare the proof of this slug');
+
+const declNc = (args: string[], cwd: string) => ci('negative-control.mts', args, { cwd });
+
+r = declNc(['--base', declBase, '--head', declHead], declRepo);
+check(
+  'without --branch a declared non-glob test file is still no-tests',
+  r.status === 1 && /no-tests/.test(r.out),
+  r.out,
+);
+
+r = declNc(['--base', declBase, '--head', declHead, '--branch', 'feat/10-declared'], declRepo);
+check(
+  'a declaration overlays a file no test glob matches, and the control passes',
+  r.status === 0 && /\bpass\b/.test(r.out) && /checks\/pin\.mts/.test(r.out),
+  r.out,
+);
+
+// Repository B: the detected command (`node checks/green.mts`) cannot see the
+// change; the declaration's `command` is what runs on the base, both for the
+// baseline and for the overlaid run.
+const cmdRepo = tempRepo();
+const cmdBase = commit(cmdRepo, {
+  'package.json': JSON.stringify({ name: 'c', private: true, scripts: { test: 'node checks/green.mts' } }),
+  'lib.mts': 'export const v = 1;\n',
+  'checks/green.mts': 'process.exit(0);\n',
+  'checks/pin.mts': 'process.exit(0);\n',
+}, 'chore: base');
+git(['checkout', '-q', '-b', 'feat/11-command'], cmdRepo);
+const cmdHead = commit(cmdRepo, {
+  'lib.mts': 'export const v = 2;\n',
+  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'proof/command.json': JSON.stringify({ tests: ['checks/pin.mts'], command: 'node checks/pin.mts' }),
+}, 'feat: declare the command that proves this slug');
+
+r = declNc(['--base', cmdBase, '--head', cmdHead, '--branch', 'feat/11-command'], cmdRepo);
+check(
+  "a declaration's command replaces the detected test command on the base",
+  r.status === 0 && /\bpass\b/.test(r.out) && /node checks\/pin\.mts/.test(r.out) && !/node checks\/green\.mts/.test(r.out),
+  r.out,
+);
+
+// A declaration that cannot be read is not silently ignored: it would narrow
+// the control to nothing.
+git(['checkout', '-q', '-b', 'feat/12-broken', cmdBase], cmdRepo);
+const brokenHead = commit(cmdRepo, {
+  'lib.mts': 'export const v = 3;\n',
+  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 3 ? 0 : 1);\n",
+  'proof/broken.json': '{ not json at all\n',
+}, 'feat: a declaration that does not parse');
+r = declNc(['--base', cmdBase, '--head', brokenHead, '--branch', 'feat/12-broken'], cmdRepo);
+check(
+  'a declaration that does not parse is cannot-run, not a silent skip',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/broken\.json/.test(r.out),
+  r.out,
+);
+
+check('negative-control leaves no worktree behind in the declaration repos', !/negative-control-/.test(git(['worktree', 'list'], cmdRepo)));
+
 finish();

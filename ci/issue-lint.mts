@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // issue-lint — validates an issue's contract before it is dispatched:
-// sections present, globs that parse and match something (or are `new`),
-// globs disjoint from the issues already in flight in the same milestone,
-// and every `Blocked by: #N` number in the issue actually exists. It never
+// sections present, the optional `Declaration:` line of `## Proof` naming a
+// `proof/<slug>.json` path, globs that parse and match something (or are
+// `new`), globs disjoint from the issues already in flight in the same
+// milestone, and every `Blocked by: #N` number in the issue actually
+// exists. It never
 // reads a diff — the mechanical form of the #3 guard (a rename that drops a
 // path without updating the file that referenced it) moved to PR time,
 // `scope`'s dangling-reference rule (#51), where a diff exists to check it
@@ -47,7 +49,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
 import { parseIssueGlobs } from './lib/scope.mts';
-import { blockedBy, checkboxes, PROOF_HEADINGS, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
+import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDeclaration, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
 const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
@@ -176,6 +178,17 @@ const issueGlobs = parseIssueGlobs(body);
 if (sec['Files'] && issueGlobs.length === 0) {
   failures.push('## Files has no bullet glob');
 }
+// The `Declaration: proof/<slug>.json` line is optional (#136): only a line
+// that is present and names something other than a `proof/<slug>.json` path
+// fails. The file itself is not looked up — the branch that carries it need
+// not exist when the issue is linted.
+const declaration = proofDeclaration(body);
+if (declaration !== null && !PROOF_DECLARATION_PATH.test(declaration)) {
+  failures.push(
+    `## Proof "Declaration:" line names ${declaration === '' ? 'no path' : `\`${declaration}\``}; it must be a path of the form \`proof/<slug>.json\` (lowercase letters, digits and dashes), or be left out entirely`,
+  );
+}
+
 const selfBlockedBy = blockedBy(body);
 if (sec['Dependencies'] && selfBlockedBy === null) {
   failures.push('## Dependencies has no "Blocked by:" line');
