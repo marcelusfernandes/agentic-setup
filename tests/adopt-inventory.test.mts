@@ -15,7 +15,7 @@
 // every spawn below exits non-zero with nothing on stdout and every JSON
 // assertion has nothing to parse. No case can pass vacuously.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
@@ -115,7 +115,7 @@ const FAKE_GIT = `#!/usr/bin/env bash
 for a in "$@"; do
   if [ "$a" = "--git-path" ]; then echo "fake-git: cannot resolve a git path" >&2; exit 1; fi
 done
-exec ${REAL_GIT} "$@"
+exec "${REAL_GIT}" "$@"
 `;
 const fakeGitDir = mkdtempSync(join(tmpdir(), 'agentic-fakegit-adopt-'));
 cleanup(() => rmSync(fakeGitDir, { recursive: true, force: true }));
@@ -479,5 +479,76 @@ check(
   iUrl.status === 1 && typeof iUrlOut?.error === 'string' && iUrlOut?.issue === undefined,
   `${iUrl.stdout}\n${iUrl.stderr}`,
 );
+
+// --- J: a path that exists and cannot be read is not a path that is absent --
+// ENOENT is the only errno that means "not there". EACCES on a hook file or
+// on .github/workflows must fail closed: reporting hooks:not-installed or
+// workflows:missing would send adoption to install over something it was
+// never allowed to look at.
+const IS_ROOT = process.getuid?.() === 0;
+
+/**
+ * Runs `fn` with `path` at `mode`, and puts the mode back afterwards —
+ * inline, not only in a cleanup, because the harness runs tempRepo()'s
+ * rmSync before any cleanup registered later and `force` does not get it
+ * past a directory it cannot read. The cleanup is the belt to that braces.
+ */
+function withMode<T>(path: string, mode: number, fn: () => T): T {
+  const original = statSync(path).mode & 0o7777;
+  const restore = () => {
+    try {
+      chmodSync(path, original);
+    } catch {
+      /* already restored */
+    }
+  };
+  cleanup(restore);
+  chmodSync(path, mode);
+  try {
+    return fn();
+  } finally {
+    restore();
+  }
+}
+
+if (IS_ROOT) {
+  check('unreadable hook and workflows cases skipped (running as root, which EACCES cannot stop)', true);
+} else {
+  const lockedHook = fixture({ 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node t.mjs' } }) });
+  installPrePush(lockedHook);
+  const jh = withMode(join(lockedHook, '.git', 'hooks', 'pre-push'), 0o000, () =>
+    adopt(['--inventory'], lockedHook, { FAKE_GH_RULES: 'full', FAKE_GH_LABELS: 'all' }),
+  );
+  const jhOut = parse(jh.stdout);
+  check(
+    'a hook file that exists and cannot be read exits 1 with { error: hooks:unreadable }',
+    jh.status === 1 && jhOut?.error === 'hooks:unreadable',
+    `${jh.stdout}\n${jh.stderr}`,
+  );
+  check(
+    'an unreadable hook file is never reported as hooks:not-installed',
+    jhOut !== null && !jh.stdout.includes('hooks:not-installed'),
+    jh.stdout,
+  );
+
+  const lockedWorkflows = fixture({
+    'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node t.mjs' } }),
+    '.github/workflows/agentic-checks.yml': WORKFLOW,
+  });
+  const jw = withMode(join(lockedWorkflows, '.github', 'workflows'), 0o000, () =>
+    adopt(['--inventory'], lockedWorkflows, { FAKE_GH_RULES: 'full', FAKE_GH_LABELS: 'all' }),
+  );
+  const jwOut = parse(jw.stdout);
+  check(
+    'a workflows directory that exists and cannot be listed exits 1 with { error: workflows:unreadable }',
+    jw.status === 1 && jwOut?.error === 'workflows:unreadable',
+    `${jw.stdout}\n${jw.stderr}`,
+  );
+  check(
+    'an unlistable workflows directory is never reported as workflows:missing',
+    jwOut !== null && !jw.stdout.includes('workflows:missing'),
+    jw.stdout,
+  );
+}
 
 finish();
