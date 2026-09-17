@@ -381,6 +381,29 @@ so it merges *that* commit or nothing — clear what blocks it and run `land` ag
 server's own review requirement, or the absence of any review to outrun, is what the queue
 answers to.
 
+**Which mode prints which.** Only `approved` and `docs` can print `{ queued }`. In
+`agent` — the default, and what this repository runs — a queue is disarmed and the run
+refuses, so that output never appears there: `agent` prints `{ merged }` or a refusal.
+Read any older description of `land.mts` as printing "`{ merged }` or `{ queued }`" with
+that in mind; it stopped being true of the default mode when #156 made the merge
+synchronous there.
+
+**`--wait` bounds that queue.** `node scripts/land.mts <pr> --wait [--timeout <seconds>]`
+returns only once `gh pr view <pr> --json state` reads `MERGED`, printing the same
+`{ merged, gate, mode }` a merge that happened at once prints. On the bound (default 900
+seconds, read every 10 seconds or every quarter of the budget, whichever is shorter) it
+prints `{ queued, gate, mode, timeout }` and exits 0 — a queue that is still a queue is not
+an error — and leaves the auto-merge armed for the server to fire. A pull request `CLOSED`
+without merging, and a state the poll cannot read, each stop the wait with `{ error }` and
+exit 1 instead of being polled to the timeout. `--timeout` without `--wait` is a usage
+error. In mode `agent` there is nothing to wait for — it merges the reviewed commit at once
+or disarms and refuses — so the flag is accepted there and changes nothing: it is about
+`approved` and `docs`, the two modes that print `{ queued }`. The poll reads the *outcome*
+after the server already owns the merge and decides nothing itself, so it is not a
+client-side read a merge can go stale behind (measured: `docs/dogfood/2026-09-10.md`, L3 —
+every merge that printed `{ queued }` in that pass was finished by a person polling by
+hand).
+
 "Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
 command segment that invokes `gh pr merge` — with or without `--admin`, with any merge
 flag, and whether or not a global flag is typed before the subcommand
