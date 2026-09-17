@@ -11,14 +11,17 @@
 //      them: a refspec starting with `:` whose remote side is main/master
 //      (`:main`, `:refs/heads/main`), or a --delete/-d flag with
 //      main/master among the refspecs
-//   3. starts with `gh pr merge`, with or without `--admin`
+//   3. invokes `gh pr merge`, with or without `--admin`, and whether or not a
+//      global flag is typed before the subcommand (`gh -R owner/repo pr merge`,
+//      `--repo`, `--hostname`, in short, long, attached or `=` form)
 // The ruleset and `hooks/git-pre-push` (every push from this machine, in or
 // out of Claude Code) are the layers that count; this one saves a round
 // trip. No quotes, backticks or `$()` are parsed, so a commit message that
 // quotes one of the forms above may be denied too — write it differently.
 //
 // Known misses, by construction: a segment is only matched when the forbidden
-// command is the literal head of it, so every indirect form gets through —
+// command is its head — `gh` at the head, with only its recognised global
+// flags between `gh` and `pr merge` — so every indirect form gets through —
 // `bash -c 'gh pr merge 1'`, `sh -lc …`, `xargs gh …`, `command gh pr merge 1`,
 // `time gh pr merge 1`, a subshell `(gh pr merge 1)`, an alias, a wrapper
 // script, `$(…)`/backtick substitution, or the command read from a file. Only
@@ -52,6 +55,31 @@ const MERGE_REMEDY =
   'merge happens outside the agent session.';
 const stripQuotes = (t: string) => t.replace(/^(['"])(.*)\1$/, '$2');
 
+// The `gh` global flags that take a value, in the forms the tokeniser has to
+// skip to reach the subcommand. `--flag=value` and the attached short form
+// (`-Rowner/repo`) are one token; the separated forms take the next token too.
+const GH_FLAG_WITH_SEPARATE_VALUE = new Set(['-R', '--repo', '--hostname']);
+const GH_FLAG_WITH_ATTACHED_VALUE = /^(?:-R.+|--(?:repo|hostname)=.*)$/;
+
+/**
+ * Whether the segment invokes `gh pr merge`, at the head or behind the global
+ * flags above (#204: `gh -R owner/repo pr merge --admin` is valid gh syntax
+ * and used to reach the shell). Anything the tokeniser does not recognise ends
+ * the skip, so an unknown flag reads as the subcommand and the segment is
+ * allowed — the same trade as the rest of this hook: the ruleset is the gate.
+ */
+function isGhPrMerge(segment: string): boolean {
+  const tokens = segment.split(/\s+/).filter(Boolean).map(stripQuotes);
+  if (tokens[0] !== 'gh') return false;
+  let i = 1;
+  while (i < tokens.length) {
+    if (GH_FLAG_WITH_SEPARATE_VALUE.has(tokens[i])) i += 2;
+    else if (GH_FLAG_WITH_ATTACHED_VALUE.test(tokens[i])) i += 1;
+    else break;
+  }
+  return tokens[i] === 'pr' && tokens[i + 1] === 'merge';
+}
+
 function checkPush(segment: string, cwd: string, command: string): void {
   const tokens = segment.replace(/^git\s+push\b/, '').trim().split(/\s+/).filter(Boolean).map(stripQuotes);
   if (tokens.some((t) => t.startsWith('--force') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t) || (t.startsWith('+') && t.length > 1))) {
@@ -80,7 +108,7 @@ async function main() {
 
   for (const segment of commandSegments(command)) {
     if (/^git\s+push\b/.test(segment)) checkPush(segment, cwd, command);
-    if (/^gh\s+pr\s+merge\b/.test(segment)) {
+    if (isGhPrMerge(segment)) {
       const lead = /--admin\b/.test(segment)
         ? '`gh pr merge --admin` bypasses the checks; forbidden.'
         : 'merging a pull request by hand is forbidden.';
