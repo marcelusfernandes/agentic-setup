@@ -196,6 +196,33 @@ Dispatch it straight to an implementer as round N+1: tell it to start from
 `origin/<branch>` (skill `safe-worktree` §C), that the previous agent is gone, and to
 verify what is already pushed, finish the work, and open the PR.
 
+**Grant a glob, then log it.** An implementer that stops on a file outside its issue's
+globs is asking for a grant, and only you write one: add the `authorised:` line to the
+PR's `## Files` (the glob alone on the line, the justification indented under it —
+`docs/workflow.md`, "`authorised:` is written only by the orchestrator"). A grant changes
+no file of its own, so it leaves no trace unless you log it. Run
+`scripts/log-decision.mts`, located the same way as the scripts above, against the
+milestone's **parent** issue:
+
+```bash
+LOG="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/log-decision.mts}"
+[ -f "$LOG" ] || LOG="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/log-decision.mts' 2>/dev/null | head -1)"
+[ -f "$LOG" ] || { echo "agentic-setup: log-decision.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
+node "$LOG" <parent> --kind grant --ref <#pr> "<what was granted, and why the issue's globs missed it>"
+```
+
+It appends one dated line — `<UTC ISO-8601> | <kind> | <ref> | <text>` — to a single
+comment on the parent issue, found by the `<!-- agentic-decision-log -->` marker, so a
+second call appends to that same comment instead of posting another. `--kind` is one of
+`grant`, `extra-round`, `human-pending` and nothing else. It **fails closed**: exit 1 with
+`{ refused, parent, missing }` when the parent issue does not exist or is closed
+(`parent:state`), the kind is outside that set (`kind:unknown`), `--ref` is not an issue
+or PR number (`ref:format`) or the text is empty (`text:empty`) — nothing written in any
+of those cases; exit 1 with `{ error }` when `gh` itself could not answer, which is not a
+verdict on the decision, so read it and retry rather than dropping the line. Exit 0 →
+`{ parent, comment, lines }`. The other two call sites are step 5 (an extra round) and
+"Escalate to a person" (`human:pending`).
+
 ## 4. PR opened → review
 
 When an implementer returns with a PR: launch the `reviewer` agent with the PR number and
@@ -218,7 +245,10 @@ apply the labels — `land.mts` and `reconcile.mts` read them regardless of what
 - a **second** `rejected` verdict on the same issue → additionally `gh issue edit <n>
   --add-label state:blocked --add-label human:pending`, comment the summary on the issue,
   and move on — unless the defect is purely mechanical with the exact fix named by the
-  reviewer, which earns one more round instead (log the exception on the issue).
+  reviewer, which earns one more round instead. That extra round is a decision of yours,
+  not a rule: log it on the milestone's parent issue as well as on the issue itself —
+  `node "$LOG" <parent> --kind extra-round --ref <#pr> "<the mechanical defect, and the
+  exact fix the reviewer named>"` (step 3 has the locator and the refusal shapes).
 
 Then act on the verdict:
 
@@ -304,6 +334,12 @@ production-affecting decision; a product decision the docs do not cover; any iss
 `state:blocked`. `reconcile.mts` lists these issues under `humanPending` and keeps them
 out of `ready`; `claim.mts` refuses them. A bare `human` label from a repository
 initialized before the split is read exactly like `human:pending`.
+
+Applying the label is the third pointed decision, so log it too, next to the comment that
+states what the person has to decide: `node "$LOG" <parent> --kind human-pending --ref
+<#n> "<what is blocked, and what a person has to decide>"` (step 3 has the locator and
+the refusal shapes). The line is a record, not a request — it never stands in for the
+comment on the issue itself, and a label never grants approval.
 
 ## Resume after a person decides
 
