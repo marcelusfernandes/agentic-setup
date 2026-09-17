@@ -293,6 +293,27 @@ if (!existsSync(readmePath)) {
   check('README.md says the milestone closes only after the closeout', /milestone/i.test(readme) && /close/i.test(readme));
   check('README.md names this pin test as the mechanism', /tests\/provenance\.test\.mts/.test(readme));
   check('README.md restates the grammar for scripts that re-parse it', /## Format/.test(readme) && /# Closeout M<n>/.test(readme));
+
+  // AC1 (#208): the ref the ancestry runs against is resolved, not assumed, so
+  // "What keeps it honest" has to name the order and the last resort.
+  const honestStart = readme.indexOf('## What keeps it honest');
+  const honestEnd = readme.indexOf('## Format');
+  const honest = honestStart === -1 ? '' : readme.slice(honestStart, honestEnd === -1 ? undefined : honestEnd);
+  check(
+    'README.md states the ref resolution order origin/main, then main, then HEAD',
+    /origin\/main[\s\S]{0,160}?\bmain\b[\s\S]{0,160}?\bHEAD\b/.test(honest),
+    honest,
+  );
+  check(
+    'README.md says HEAD is the last resort for a checkout with neither',
+    /HEAD[\s\S]{0,200}?(last resort|neither)/i.test(honest),
+    honest,
+  );
+  check(
+    'README.md states that rows are in ascending issue order',
+    /issue order/.test(readme) && /ascending/.test(readme),
+    readme.slice(-600),
+  );
 }
 
 // AC2: the real tree is clean; with no closeout file yet it passes with a note.
@@ -430,6 +451,45 @@ check(
   'an unauthenticated gh says on stderr what was skipped',
   noGhAudit.notes.some((n) => /gh is absent or unauthenticated/.test(n)),
   noGhAudit.notes.join('\n'),
+);
+
+// A checkout with neither origin/main nor main still has HEAD, the last of the
+// three refs resolveMainRef tries; the pin runs there instead of refusing.
+const headOnly = fixtureRepo();
+git(['checkout', '-q', '-b', 'trunk'], headOnly.repo);
+git(['branch', '-D', 'main'], headOnly.repo);
+writeCloseout(headOnly.repo, 'M1.md', closeout('1', headOnly.mainSha, [[1, 11, headOnly.mainSha]]));
+const headOnlyAudit = audit(headOnly.repo, withGh);
+check(
+  'a checkout with neither origin/main nor main falls back to HEAD',
+  headOnlyAudit.errors.length === 0,
+  headOnlyAudit.errors.join('\n'),
+);
+
+const outOfOrder = fixtureRepo();
+writeCloseout(
+  outOfOrder.repo,
+  'M1.md',
+  closeout('1', outOfOrder.mainSha, [[2, 12, outOfOrder.mainSha], [1, 11, outOfOrder.mainSha]]),
+);
+const outOfOrderAudit = audit(outOfOrder.repo, withGh);
+check(
+  'rows out of ascending issue order fail, naming both rows',
+  outOfOrderAudit.errors.some((e) => /ascending issue order/.test(e) && e.includes('#2') && e.includes('#1')),
+  outOfOrderAudit.errors.join('\n'),
+);
+
+const duplicateRow = fixtureRepo();
+writeCloseout(
+  duplicateRow.repo,
+  'M1.md',
+  closeout('1', duplicateRow.mainSha, [[1, 11, duplicateRow.mainSha], [1, 12, duplicateRow.mainSha]]),
+);
+const duplicateAudit = audit(duplicateRow.repo, withGh);
+check(
+  'the same issue listed twice fails the ascending order rule',
+  duplicateAudit.errors.some((e) => /ascending issue order/.test(e)),
+  duplicateAudit.errors.join('\n'),
 );
 
 const empty = fixtureRepo();
