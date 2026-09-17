@@ -239,6 +239,7 @@ const BROKEN: Broken[] = [
   { name: 'a field of the wrong type', text: JSON.stringify({ ...valid, checks: 'negative-control' }), reason: 'record:wrong-type', field: 'checks' },
   { name: 'a nested field of the wrong type', text: JSON.stringify({ ...valid, commands: { test: 1, check: null } }), reason: 'record:wrong-type', field: 'commands.test' },
   { name: 'an array holding the wrong type', text: JSON.stringify({ ...valid, hooks: [1] }), reason: 'record:wrong-type', field: 'hooks' },
+  { name: 'a version this reader does not know', text: JSON.stringify({ ...valid, version: 99 }), reason: 'record:unknown-version', field: 'version' },
   { name: 'text that is not JSON at all', text: '{ not json', reason: 'record:unparsable' },
   { name: 'JSON that is not an object', text: '[]', reason: 'record:wrong-type' },
 ];
