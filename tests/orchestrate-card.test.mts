@@ -80,4 +80,60 @@ check(
   /AGENTIC_REVIEWER_TOKEN/.test(reviewer) && /gh pr review/.test(reviewer),
 );
 
+// --- #265: the card carries the three costs the 2026-09-10/11 pass paid more than once
+// (docs/dogfood/2026-09-10.md, findings L5, L6 and L22). Each case reads the one section
+// that owns the sentence, sliced from its `##` heading to the next one — never to the end
+// of the file, which would let a sentence anywhere else in the card satisfy the assertion.
+
+/** The card's section starting at `heading`, bounded by the next `## ` heading. */
+function section(heading: string): string {
+  const start = card.indexOf(heading);
+  if (start === -1) return '';
+  const next = card.indexOf('\n## ', start + heading.length);
+  return next === -1 ? card.slice(start) : card.slice(start, next);
+}
+
+const reconcileStep = section('## 0. Reconcile from GitHub');
+const decide = section('## 5. Decide');
+check('SKILL.md step 0 is a section bounded by the next heading', reconcileStep.length > 0 && reconcileStep.length < card.length);
+check('SKILL.md step 5 is a section bounded by the next heading', decide.length > 0 && decide.length < card.length);
+
+// AC1 (L5): a label edit re-triggers agentic-checks, so the labels go on before the push
+// that starts the round, not after it.
+check(
+  'SKILL.md step 5 says a label edit re-triggers agentic-checks',
+  /agentic-checks/.test(decide) && /(re-?triggers?|cancels?)/i.test(decide),
+  decide.slice(0, 600),
+);
+check(
+  'SKILL.md step 5 applies the labels before the push that starts the round, not after it',
+  /before the push/i.test(decide) && /not after it/i.test(decide),
+  decide.slice(0, 600),
+);
+
+// AC2 (L6): a listing taken right after a write may lag, and the step re-reads once
+// before acting on an empty or stale result.
+check(
+  'SKILL.md step 0 says a listing taken right after a write may lag',
+  /listing[^.]*(right|immediately) after[^.]*write[^.]*lag/is.test(reconcileStep),
+  reconcileStep.slice(0, 600),
+);
+check(
+  'SKILL.md step 0 re-reads once before acting on an empty or stale result',
+  /re-reads?[^.]*once/i.test(reconcileStep) && /empty or stale/i.test(reconcileStep),
+  reconcileStep.slice(0, 600),
+);
+
+// AC3 (L22): the post-merge step names the exact command, and why the bare form fails.
+check(
+  'SKILL.md step 5 names the exact post-merge pull command',
+  decide.includes('git fetch origin && git pull --ff-only origin main'),
+  decide.slice(0, 600),
+);
+check(
+  'SKILL.md step 5 says why the bare pull fails on a checkout tracking more than one branch',
+  /Cannot fast-forward to multiple branches/.test(decide) && /more than one branch/i.test(decide),
+  decide.slice(0, 600),
+);
+
 finish();
