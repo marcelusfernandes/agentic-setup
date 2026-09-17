@@ -233,9 +233,30 @@ of `skills/orchestrate` — the implementer opens the PR with `state:in-review` 
 agent that labels its own work could buy its own exemptions, so `type:` is written by the
 orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
 `TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
-`chore`/`test`/`ci` → `type:infra`) and copied across from there. `scope` and `land` still
-read the PR's labels, never the issue's; `scope` reads the PR's body only for the closing
-keywords, and takes the globs and the `authorised:` grants from the issues it links.
+`chore`/`test`/`ci` → `type:infra`) and copied across from there.
+
+**Which check reads a label, and which reads only the body.** `scope` reads no label at
+all: it takes the closing keywords from the PR's **body**, and the globs and the
+`authorised:` grants from the **issues** those keywords link (`ci/lib/scope.mts`,
+`ci/scope-check.mts`). Two things do read labels, and both read the **PR's**, never the
+issue's: `negative-control` reads the `type:` labels — only to print a `note:` line, since
+#135, because the skip is by path class (below) — and `land.mts` reads two, `type:docs`
+(`scripts/land.mts:230`, the exemption from the *review*, never from the checks) and
+`review:approved` (`:255`, the marker label an agent review leaves behind in both modes;
+mode `approved` requires the server's own `APPROVED` on top of it and never falls back to
+the label alone).
+
+One flow has no `claim.mts` to write those labels: the **docs-writer** is launched
+directly after a merge, not dispatched from `state:ready`, so the orchestrator applies
+`type:docs`/`scope:docs` to its issue when it opens it and copies both onto its PR itself
+(`agents/docs-writer.md` step 4). Without them `land.mts` reads `isDocs` false and demands
+the review this flow exists to skip.
+
+The two readings are of different things, and a PR can sit between them: `type:docs`
+exempts the **review**, the path classes decide the **negative control**. A PR labelled
+`type:docs` whose diff reaches outside those classes — one `tests/**` file added under an
+`authorised:` grant is enough — still owes a failing test, and is no longer docs-only in
+the sense the label claims; relabel it to what the diff is.
 
 ## Required checks
 
@@ -243,13 +264,17 @@ keywords, and takes the globs and the `authorised:` grants from the issues it li
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files. And a **second warning of the same shape, which also never fails the check**: when the diff changes the mechanism the dogfood loop runs on — anything under `hooks/`, `ci/` or `scripts/`, or a `skills/**/SKILL.md`, deliberately *without* `.github/workflows/**` — and neither the pull-request body nor the diff names a `docs/dogfood/<date>.md` report, the JSON carries `dogfoodTrigger` and `dogfoodWarning` and the job summary a second `> warning:` line, and the check still exits 0. It stays a warning for the same reason: whether a dogfood run was owed is a judgement no file name settles. **The binding half of this one is not the check but the close of the phase**: `scripts/close-milestone.mts` refuses with `missing: ['dogfood']` when a pull request merged into the milestone touched one of those paths and the closeout's `## Dogfood` section names no dated report, so a phase that skipped a run does not close (#182). A phase whose merged pull requests touched nothing sensitive closes with no report |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) — and minus `.github/scripts/agentic/**`, which no class covers, because that is where `scripts/init.mts` copies this repository's `ci/` in an adopting repository and a gate that exempts a change to itself is not a gate (#214). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer
 applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
 touches any file outside those classes runs the check, whatever it is labelled — a
 refactor that changes behaviour is a `bug` or a `feature` and owes a failing test either
-way. For one release `type:docs`, `type:deps`, `type:infra`, `type:refactor` and
+way. One path is outside every class and stays there, `AGENTIC_SKIP_GLOBS` included:
+`.github/scripts/agentic/**`, the copy of this repository's `ci/` that `scripts/init.mts`
+writes into an adopting repository (`scripts/init.mts:325`). `.github/**` would otherwise
+cover it, and a pull request rewriting the negative control would be skipped by the
+negative control. For one release `type:docs`, `type:deps`, `type:infra`, `type:refactor` and
 `type:spec` are still read, only to print a `note:` line saying they no longer skip on
 their own and to name the label in a skip the path class already decided.
 
@@ -262,6 +287,14 @@ which touches at least one of the overlaid test files. Then the outcome stays `p
 the job summary and stdout carry a `warning:` line asking for a throwing stub instead, so
 the red is a runtime red. Without such a commit the outcome is `structural` and the check
 fails.
+
+The signature is read per **diagnostic block** — a maximal run of consecutive non-blank
+lines, which is how a runtime prints one diagnostic: the header, the offending source
+line, then its frames. A block counts only when it both carries a structural signature and
+names one of the overlaid test files or a file the diff touches. Matching the overlaid
+run's whole output let a structural-looking line from anywhere decide the verdict: a
+dependency that logs `Cannot find module` and carries on prints it in a block of its own,
+and flipped an honest assertion red to `structural` (#214).
 
 ### The proof a branch declares
 

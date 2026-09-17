@@ -321,6 +321,13 @@ copyTree(join(PLUGIN, 'templates', '.github'), join(root, '.github'), false);
 copyOne(join(PLUGIN, 'templates', '.worktreeinclude'), join(root, '.worktreeinclude'), false);
 
 // 2. CI scripts (plugin-owned: always current)
+//
+// This destination is the one path `ci/negative-control.mts` carves out of
+// every skipped path class (its NEVER_SKIP_GLOBS, which AGENTIC_SKIP_GLOBS
+// cannot put back): the gate's `.github/**` class covers everything under
+// `.github/`, so without the carve-out a pull request rewriting the copy of
+// the gate written here would be skipped by the gate (#214). Moving this
+// destination means moving that glob with it.
 say('ci scripts');
 copyTree(join(PLUGIN, 'ci'), join(root, '.github', 'scripts', 'agentic'), true);
 
