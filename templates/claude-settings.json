@@ -7,7 +7,7 @@
       "Bash(git reset --hard *)",
       "Bash(git clean *)",
       "Bash(git stash *)",
-      "Bash(gh pr merge *--admin*)",
+      "Bash(gh pr merge *)",
       "Bash(gh repo delete *)",
       "Bash(rm -rf / *)",
       "Bash(rm -rf ~ *)"

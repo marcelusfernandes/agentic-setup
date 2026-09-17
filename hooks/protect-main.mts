@@ -11,15 +11,23 @@
 //      them: a refspec starting with `:` whose remote side is main/master
 //      (`:main`, `:refs/heads/main`), or a --delete/-d flag with
 //      main/master among the refspecs
-//   3. starts with `gh pr merge` and passes `--admin`
+//   3. starts with `gh pr merge`, with or without `--admin`
 // The ruleset and `hooks/git-pre-push` (every push from this machine, in or
 // out of Claude Code) are the layers that count; this one saves a round
 // trip. No quotes, backticks or `$()` are parsed, so a commit message that
 // quotes one of the forms above may be denied too — write it differently.
 //
+// Item 3 does not touch `scripts/land.mts`: that script spawns `gh` from
+// inside Node, so the session's Bash tool — the only thing this hook sees —
+// reads `node scripts/land.mts <pr>`, which is allowed.
+//
 // Valve, for bootstrapping a repo with no ruleset yet:
 //   AGENTIC_ALLOW_PUSH_MAIN=1   lifts item 2's push form only, never 1, 3,
 //                               or item 2's deletion form
+// **No environment variable lifts item 3, and none is going to be added.**
+// An operator who genuinely has to merge a pull request by hand does it
+// outside the agent session (a terminal of their own, or the GitHub UI);
+// inside a session, `node scripts/land.mts <pr>` is the only way to merge.
 //
 // Crash policy: ALLOW. Node missing, an unreadable payload, or a throw here
 // all let the call through — the ruleset and git-pre-push remain.
@@ -27,6 +35,10 @@ import { commandSegments, currentBranch, deny, note, parsePayload, readStdin, va
 
 const HOOK = 'protect-main';
 const PROTECTED = /^(?:refs\/heads\/)?(?:main|master)$/;
+const MERGE_REMEDY =
+  'Run `node scripts/land.mts <pr>` instead — it is the only way to merge from a session, ' +
+  'and `--admin` is never a remedy. No environment variable lifts this; a genuine manual ' +
+  'merge happens outside the agent session.';
 const stripQuotes = (t: string) => t.replace(/^(['"])(.*)\1$/, '$2');
 
 function checkPush(segment: string, cwd: string, command: string): void {
@@ -57,8 +69,11 @@ async function main() {
 
   for (const segment of commandSegments(command)) {
     if (/^git\s+push\b/.test(segment)) checkPush(segment, cwd, command);
-    if (/^gh\s+pr\s+merge\b/.test(segment) && /--admin\b/.test(segment)) {
-      deny(HOOK, '`gh pr merge --admin` bypasses the checks; forbidden.');
+    if (/^gh\s+pr\s+merge\b/.test(segment)) {
+      const lead = /--admin\b/.test(segment)
+        ? '`gh pr merge --admin` bypasses the checks; forbidden.'
+        : 'merging a pull request by hand is forbidden.';
+      deny(HOOK, `${lead} ${MERGE_REMEDY}`);
     }
   }
 }
