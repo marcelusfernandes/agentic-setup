@@ -274,10 +274,14 @@ apply the labels — `land.mts` and `reconcile.mts` read them regardless of what
 `labeled` and `unlabeled` as well as on `synchronize`, under `concurrency` with
 `cancel-in-progress: true` (`.github/workflows/agentic-checks.yml`), so every `gh pr edit
 --add-label` cancels the run in flight and re-triggers a fresh one. That is the design,
-not a bug: put this step's verdict labels and step 4's `type:`/`scope:` copy on *before*
-the round's push, and the one run that push starts covers both; put them on after it and
-they cancel the very run you are waiting on, which is a pass full of `cancelled` runs and
-minutes spent twice (measured: `docs/dogfood/2026-09-10.md`, L5). The labels:
+not a bug: apply this step's verdict labels *before* you relaunch the implementer, and the
+one run its round-2 push starts covers both; apply them after that push and they cancel
+the very run you are waiting on, which is a pass full of `cancelled` runs and minutes
+spent twice (measured: `docs/dogfood/2026-09-10.md`, L5). Step 4's `type:`/`scope:` copy
+is the one edit that cannot come before a push — the PR does not exist until the
+implementer has pushed — so it costs one re-trigger by design: make it a single `gh pr
+edit` carrying both labels, before you read `$OID` and launch the reviewer, so the run it
+re-triggers is the one the verdict waits on. The labels:
 
 - `approved` → `gh pr edit <pr> --add-label review:approved --add-label state:in-review
   --remove-label state:qa-failed` (the remove is harmless when the label was never there —
