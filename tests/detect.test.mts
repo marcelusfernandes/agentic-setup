@@ -229,21 +229,33 @@ const run = (command: string, cwd: string): { status: number | null; out: string
   return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 };
 
+// The two trees the candidates run on, and what the detector answers for each.
+// Detection is pure, so these two cases need no interpreter and stay outside
+// the version guard below; only the spawned commands are opportunistic.
+repo = tempRepo();
+commit(repo, { 'engine/test_engine.py': PY_CASE }, 'tests one directory down, no __init__.py');
+c = detectCommands(repo, {});
+check(
+  'the marker-less tree that the rejected commands run on answers no command',
+  c.test === null && c.stack === 'python' && c.source === 'detected',
+  JSON.stringify(c),
+);
+
+const bare = tempRepo();
+commit(bare, { 'engine/test_engine.py': PY_BARE_CASE }, 'a bare test function one directory down');
+const bareCommands = detectCommands(bare, {});
+check(
+  'the bare-function tree answers no command either',
+  bareCommands.test === null && bareCommands.stack === 'python',
+  JSON.stringify(bareCommands),
+);
+
 if (recursesIntoNamespacePackages) {
   check(
     `the rejected python commands are not run here (python3 ${version.status === 0 ? `${major}.${minor}` : 'absent'}: needs >= 3.11)`,
     true,
   );
 } else {
-  repo = tempRepo();
-  commit(repo, { 'engine/test_engine.py': PY_CASE }, 'tests one directory down, no __init__.py');
-  c = detectCommands(repo, {});
-  check(
-    'the marker-less tree that the rejected commands run on answers no command',
-    c.test === null && c.stack === 'python' && c.source === 'detected',
-    JSON.stringify(c),
-  );
-
   // Candidate 1, what #256 answered: it collects nothing on this very layout.
   let r = run(REJECTED_DISCOVER, repo);
   check(
@@ -265,9 +277,6 @@ if (recursesIntoNamespacePackages) {
   // what a marker-less repository usually holds — collects nothing again, so
   // the start directory buys no general answer. This is the case that decides
   // the issue: no stdlib command fits the trees this detector fires on.
-  const bare = tempRepo();
-  commit(bare, { 'engine/test_engine.py': PY_BARE_CASE }, 'a bare test function one directory down');
-  check('the bare-function tree answers no command either', detectCommands(bare, {}).test === null, JSON.stringify(detectCommands(bare, {})));
   r = run(REJECTED_START_DIR, bare);
   check(
     '`unittest discover -s engine` collects nothing from a bare test function',

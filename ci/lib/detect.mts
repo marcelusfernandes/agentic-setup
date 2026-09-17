@@ -119,8 +119,8 @@ function trackedPythonFiles(root: string): string[] {
 // `ci/negative-control.mts` read the baseline as failing its own tests
 // (`inconclusive`), which hides the real problem. With no command the adopter
 // reads `cannot-run`, whose detail names the escapes — `AGENTIC_TEST_CMD`, a
-// `proof/<slug>.json` command (#257 adds the `Makefile` `test:` target) — and
-// naming the stack is still the improvement #256 asked for: `adopt`'s
+// `proof/<slug>.json` command, and a `Makefile` with a `test:` target (#257) —
+// and naming the stack is still the improvement #256 asked for: `adopt`'s
 // inventory and the stop gate both report `python` instead of `unknown`.
 // The executed cases at the end of `tests/detect.test.mts` spawn each rejected
 // candidate and read its exit code, so this reasoning is run, not described.
