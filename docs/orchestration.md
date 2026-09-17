@@ -179,7 +179,9 @@ another path, or a file not on `origin/main` yet), `evidence:format` (does not p
 against `docs/closeout/README.md`, or is still the template), `evidence:sha` (its
 `main SHA` or a row's merge commit is not an ancestor of `origin/main`),
 `evidence:issue-missing` (a closed issue of the milestone is neither a row in `## Issues`
-nor a `#N` in a `## Left out` bullet). Exit 1 with `{ error }` when `gh` or `git` itself
+nor a `#N` in a `## Left out` bullet), `dogfood` (a pull request merged into the phase
+changed `hooks/`, `ci/`, `scripts/` or a `skills/**/SKILL.md` and `## Dogfood` names no
+`docs/dogfood/<date>.md` report). Exit 1 with `{ error }` when `gh` or `git` itself
 could not answer — a tooling problem needing a person, never a verdict on the close and
 never a reason to fall back to a hand-typed PATCH. Exit 0 →
 `{ closed, milestone, sha, evidence }`, after appending

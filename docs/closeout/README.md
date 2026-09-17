@@ -105,7 +105,11 @@ The rules the parser applies, in order:
   appears twice and two rows out of order are named in the failure.
 - `## Left out` and `## Dogfood` each carry at least one bullet. Nothing to say
   is written out, not omitted: `- None — every issue shipped.` and
-  `- None needed — <why>`.
+  `- None needed — <why>`. The second holds only for a phase that touched none of
+  the paths the dogfood loop runs on: when a pull request merged into the phase
+  changed `hooks/`, `ci/`, `scripts/` or a `skills/**/SKILL.md`,
+  `close-milestone.mts` refuses the close with `missing: ['dogfood']` until a
+  bullet here names a `docs/dogfood/<date>.md` report (#182).
 - A document is either **empty** — every field a `<...>` placeholder and no rows,
   which is what `TEMPLATE.md` is — or **filled** — no placeholder left and at
   least one row. A half-filled document is an error, and an `M<n>.md` left as
