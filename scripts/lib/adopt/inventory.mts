@@ -2,6 +2,13 @@
 // first step is the one nothing did before: look at the repository and say
 // what is there, before writing a single byte into someone else's tree.
 //
+// The label read is one page, asked for explicitly (`LABEL_LIST_LIMIT`)
+// rather than left at `gh`'s default of 30. A page that comes back full may
+// be hiding more, and `gh` reports neither a total nor a cursor to tell, so
+// the report carries `labelsTruncated` instead of letting a caller read the
+// page as the whole set — `labels:missing` is drawn from that page and is a
+// guess whenever it is truncated.
+//
 // `takeInventory(root, gh, git)` is pure in the sense that matters here:
 // every effect it can have goes through the two command runners handed to
 // it, and it only ever asks them for reads — `gh api repos/{owner}/{repo}`,
@@ -65,6 +72,15 @@ export const SEEDED_LABELS = [
   'human:decided',
 ];
 
+/**
+ * The page `gh label list` is asked for. `gh` defaults to 30, which a real
+ * repository outgrows long before it runs out of labels — the same reason
+ * `ci/issue-lint.mts` sets an explicit `GH_LIST_LIMIT` on its own list read.
+ * It is a page and not a promise: an answer that fills it may be hiding more,
+ * which is what `labelsTruncated` says.
+ */
+export const LABEL_LIST_LIMIT = 200;
+
 /** The git hooks `scripts/init.mts` installs into the adopting repository. */
 const OWNED_HOOKS = ['pre-push'];
 
@@ -99,6 +115,14 @@ export type Inventory = {
   defaultBranch: string;
   ruleset: Ruleset | null;
   labels: string[];
+  /**
+   * `true` when the label read came back holding exactly the page it asked
+   * for (`LABEL_LIST_LIMIT`). The repository may have more labels the read
+   * never saw, so `labels` is a page rather than the whole set and
+   * `labels:missing` is a guess drawn from it. Reported on every run, never
+   * inferred by the reader from `labels.length`.
+   */
+  labelsTruncated: boolean;
   hooks: string[];
   workflows: string[];
   autoMerge: boolean;
@@ -234,9 +258,18 @@ export function takeInventory(root: string, gh: GhRunner, git: GitRunner): Inven
   if (!rules.ok) return { error: rules.error };
   if (!Array.isArray(rules.value)) return { error: 'ruleset:unreadable' };
 
-  const labels = readJson<Array<{ name?: unknown }>>(gh, ['label', 'list', '--json', 'name', '--limit', '200'], 'labels:unreadable');
+  const labels = readJson<Array<{ name?: unknown }>>(
+    gh,
+    ['label', 'list', '--json', 'name', '--limit', String(LABEL_LIST_LIMIT)],
+    'labels:unreadable',
+  );
   if (!labels.ok) return { error: labels.error };
   if (!Array.isArray(labels.value)) return { error: 'labels:unreadable' };
+  // A page that came back full is the only signal `gh` gives that there may
+  // be more: it reports no total and no cursor. Measured on what the read
+  // returned, before the empty names below are dropped, because it is a fact
+  // about the read and not about the names that survived it.
+  const labelsTruncated = labels.value.length >= LABEL_LIST_LIMIT;
 
   const hooksDir = gitHooksDir(root, git);
   if (!hooksDir.ok) return { error: hooksDir.error };
@@ -255,6 +288,7 @@ export function takeInventory(root: string, gh: GhRunner, git: GitRunner): Inven
     defaultBranch,
     ruleset: toRuleset(rules.value),
     labels: labels.value.map((l) => String(l?.name ?? '')).filter((name) => name.length > 0).sort(),
+    labelsTruncated,
     hooks: hooks.value,
     workflows: workflows.value,
     autoMerge,

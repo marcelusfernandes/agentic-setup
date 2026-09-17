@@ -223,6 +223,14 @@ function parse(stdout: string): any {
   }
 }
 
+/**
+ * The plan issue's prose, without the raw JSON it ends with. The report is
+ * dumped verbatim under `## Inventory`, so a field *name* like
+ * `labelsTruncated` appears there whatever its value — asserting on the whole
+ * body would let the dump stand in for the sentence a person actually reads.
+ */
+const prose = (body: string): string => body.split('## Inventory')[0] ?? '';
+
 /** How many times `gh` was asked to run the given subcommand in one run. */
 const ran = (log: string, verb: string): number => (log.match(new RegExp(`^${verb} `, 'gm')) ?? []).length;
 
@@ -307,7 +315,7 @@ const truncBody = truncArgs.indexOf('--body') === -1 ? '' : truncArgs[truncArgs.
 check('--plan-issue with a truncated label read still opens the issue', cPlan.status === 0 && truncBody.length > 0, `${cPlan.stdout}\n${cPlan.stderr}`);
 check(
   'the plan issue says the label list may be truncated, and names the limit it asked for',
-  /truncat/i.test(truncBody) && new RegExp(`\\b${LABEL_LIST_LIMIT}\\b`).test(truncBody),
+  /truncat/i.test(prose(truncBody)) && new RegExp(`\\b${LABEL_LIST_LIMIT}\\b`).test(prose(truncBody)),
   truncBody.split('\n').filter((l) => /label/i.test(l)).join('\n'),
 );
 
@@ -318,7 +326,7 @@ const wholeArgs = existsSync(join(cPlanWhole.stateDir, 'issue-create.args'))
 const wholeBody = wholeArgs.indexOf('--body') === -1 ? '' : wholeArgs[wholeArgs.indexOf('--body') + 1];
 check(
   'a label read that was not truncated says nothing about truncation',
-  wholeBody.length > 0 && !/truncat/i.test(wholeBody),
+  wholeBody.length > 0 && !/truncat/i.test(prose(wholeBody)),
   wholeBody.split('\n').filter((l) => /label/i.test(l)).join('\n'),
 );
 

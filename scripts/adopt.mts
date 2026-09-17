@@ -61,6 +61,7 @@
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
 import {
+  LABEL_LIST_LIMIT,
   OWNED_WORKFLOWS,
   SEEDED_LABELS,
   isFailure,
@@ -252,6 +253,12 @@ function renderPlan(report: Report): string {
       ? 'absent'
       : `\`${report.ruleset.rules.join('`, `')}\` — ${report.ruleset.requiredApprovingReviewCount} approving review(s) required`;
   const labelsPresent = SEEDED_LABELS.filter((name) => report.labels.includes(name)).length;
+  // The checklist below says which labels are missing, and that list is drawn
+  // from one page of `gh label list`. When the page came back full, it is a
+  // guess — so the person ticking the box is told before they tick it.
+  const labelsNote = report.labelsTruncated
+    ? ` — **the label read returned its full page of ${LABEL_LIST_LIMIT} and may be truncated**, so a label listed as missing below may be one this read never saw`
+    : '';
   const workflowsPresent = OWNED_WORKFLOWS.filter((name) => report.workflows.includes(name)).length;
   const has = [
     `- Stack: \`${report.stack}\` (${report.source})`,
@@ -259,7 +266,7 @@ function renderPlan(report: Report): string {
     `- Check command: ${show(report.check)}`,
     `- Default branch: \`${report.defaultBranch}\``,
     `- Ruleset on \`${report.defaultBranch}\`: ${ruleset}`,
-    `- Labels: ${labelsPresent}/${SEEDED_LABELS.length} of the loop's vocabulary present`,
+    `- Labels: ${labelsPresent}/${SEEDED_LABELS.length} of the loop's vocabulary present${labelsNote}`,
     `- Hooks: ${report.hooks.length === 0 ? 'none installed' : `\`${report.hooks.join('`, `')}\``}`,
     `- Workflows: ${workflowsPresent}/${OWNED_WORKFLOWS.length} of the loop's workflows present`,
     `- Auto-merge: ${report.autoMerge ? 'enabled' : 'disabled'}`,
