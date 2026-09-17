@@ -451,14 +451,14 @@ if (useGh) {
         say(/403/.test(err) ? '  ! ruleset: not available on this plan for a private repository' : `  ! ruleset: ${err.split('\n')[0]}`);
       };
       const list = run('gh', ['api', 'repos/{owner}/{repo}/rulesets'], root);
-      const fetch = list.ok ? fetchBranchRulesets(root, list.out) : null;
+      const listed = list.ok ? fetchBranchRulesets(root, list.out) : null;
       // Either read failing stops the run here: acting on a half-read list
       // is how a second ruleset ends up over an already governed branch.
-      const refusal = list.ok ? fetch?.unreadable ?? null : list.err || 'the rulesets list could not be read';
+      const refusal = list.ok ? listed?.unreadable ?? null : list.err || 'the rulesets list could not be read';
       if (refusal) {
         reportRulesetError(refusal);
       } else {
-        const rulesets = fetch?.rulesets ?? [];
+        const rulesets = listed?.rulesets ?? [];
 
         const repoView = run('gh', ['repo', 'view', '--json', 'defaultBranchRef'], root);
         const defaultBranch = parseJson<{ defaultBranchRef?: { name?: string } }>(repoView.out, {})?.defaultBranchRef?.name || 'main';
