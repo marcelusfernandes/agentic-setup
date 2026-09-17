@@ -86,7 +86,7 @@ repository root** and prints one JSON object on stdout:
 | key | meaning |
 |---|---|
 | `source` | where resolution stopped: `declaration`, `record` or `detection` |
-| `outcome` | `pass`, `fail` or `cannot-run` — a closed set, as `ci/negative-control.mts:49` keeps one |
+| `outcome` | `pass`, `fail` or `cannot-run` — a closed set, as `ci/negative-control.mts` keeps one |
 | `command` | the command that ran, or `null` when nothing did |
 | `tail` | the last 40 lines of the run's output, stdout and stderr together |
 | `reason` | on `cannot-run` only: the named reason, with the `field` it rejected when there is one |
