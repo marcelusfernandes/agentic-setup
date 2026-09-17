@@ -305,7 +305,7 @@ check(
   git(['status', '--porcelain'], guarded)
     .split('\n')
     .filter((line) => line.trim().length > 0)
-    .map((line) => line.slice(3))
+    .map((line) => line.trim().split(/\s+/).slice(1).join(' '))
     .join(',') === SETTINGS,
   git(['status', '--porcelain'], guarded),
 );
