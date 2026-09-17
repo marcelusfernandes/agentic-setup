@@ -42,10 +42,10 @@ already-required `test` check, not a new check name. It reads every
 That main ref is resolved, not assumed. The pin takes the first of
 `origin/main`, then `main`, then `HEAD` that resolves to a commit in the
 checkout it is reading, and refuses when none of the three does. `HEAD` is the
-last resort, for a checkout that has neither `origin/main` nor `main` — a
-detached CI checkout, or a worktree whose branch was renamed — where the
-alternative is to skip the ancestry check entirely; on a checkout of the branch
-under test that is the right thing to prove reachability against.
+last resort, for a checkout that has neither `origin/main` nor `main` — a clone
+that fetched only the branch under test, or a worktree whose branch was renamed
+— where the alternative is to skip the ancestry check entirely; on a checkout of
+the branch under test that is the right thing to prove reachability against.
 
 Ancestry needs history, which is why `.github/workflows/test.yml` checks out with
 `fetch-depth: 0`; a shallow checkout fails the pin rather than passing quietly.
