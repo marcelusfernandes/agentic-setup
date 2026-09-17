@@ -24,8 +24,15 @@ never created. Drop the flag to apply once the preview looks right.
 Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--dry-run` previews without
 writing anything; `--milestone "<title>"` creates the first milestone (optional); `--no-gh`
 skips labels, milestone and the ruleset (offline, or no `gh` auth); `--force` overwrites
-files you edited before (it never overwrites silently); `--rules` creates or updates the
-branch ruleset (see step 7 below) — omit it to leave rulesets untouched entirely.
+files you edited before (it never overwrites silently); `--rules` updates (or creates) the
+branch ruleset over the default branch (see step 7 below) — omit it to leave rulesets
+untouched entirely; `--ruleset-name <name>` picks the ruleset to update by name instead of
+by what it governs.
+
+**`--rules` requires an approving review, so run it only after the second identity of
+step 7's by-hand block exists.** On a repository with a single identity the merging
+identity cannot approve its own PR, and every merge is frozen until that identity is
+there.
 
 The script is idempotent. It:
 
@@ -43,16 +50,35 @@ The script is idempotent. It:
    merged branch is deleted for it;
 6. seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:decided`
    labels, and the milestone. An existing bare `human` label is left as found;
-7. **with `--rules`:** reads `repos/{owner}/{repo}/rulesets` and creates (POST) or updates
-   (PUT) a ruleset named `agentic-setup` on the repository's default branch, requiring a
-   pull request and `required_status_checks` for `scope`, `negative-control` and this
-   repository's own test workflow's job (the sole job of the sole workflow file this plugin
-   does not own; defaults to `test` when that is not unambiguous), and blocking
-   force-push and deletion. The read happens even under `--dry-run` so the report can say
-   `+ ruleset created` vs `= ruleset updated` without writing; a 403 — rulesets are not
-   available on a private repository on the free plan — is reported as exactly that,
-   `! ruleset: not available on this plan for a private repository`, instead of `gh`'s raw
-   error. Without `--rules`, no `rulesets` call is made at all.
+7. **with `--rules`:** reads `repos/{owner}/{repo}/rulesets` and, for each branch ruleset
+   in it, `repos/{owner}/{repo}/rulesets/<id>` — the list endpoint answers with summaries
+   only, so conditions, rules and bypass actors come from the per-id fetch. The ruleset it
+   updates (PUT) is the one that **governs the default branch**, found by its conditions
+   and never by its name: `conditions.ref_name.include` containing `~DEFAULT_BRANCH` or
+   `refs/heads/<default branch>`. `--ruleset-name <name>` overrides that choice; when
+   several rulesets match, the first is updated and the others are named in the report,
+   never created over. Only when nothing matches is a ruleset created (POST), named
+   `agentic-setup` (or `--ruleset-name`'s value) on `refs/heads/<default branch>`.
+
+   What it writes: a `pull_request` rule with `required_approving_review_count: 1`,
+   `dismiss_stale_reviews_on_push: true`, `require_last_push_approval: true` and
+   `allowed_merge_methods: ['squash']` — the shape `land.mts` and the Codex route need
+   before they will queue an automatic merge; `required_status_checks` for `scope`,
+   `negative-control` and this repository's own test workflow's job (the sole job of the
+   sole workflow file this plugin does not own; defaults to `test` when that is not
+   unambiguous); and `non_fast_forward` and `deletion` to block force-push and deletion.
+
+   What it keeps: a PUT replaces the whole ruleset, so everything the installer does not
+   manage is carried over from the ruleset it found — its name and conditions, its
+   `bypass_actors`, every rule of a type outside those four, and every parameter of those
+   four the installer does not set itself.
+
+   The reads happen even under `--dry-run` so the report can say `+ ruleset created` vs
+   `= ruleset updated` without writing; `--dry-run` additionally prints the exact payload
+   it would send and makes no POST or PUT at all. A 403 — rulesets are not available on a
+   private repository on the free plan — is reported as exactly that, `! ruleset: not
+   available on this plan for a private repository`, instead of `gh`'s raw error. Without
+   `--rules`, no `rulesets` call is made at all.
 
 Then, by hand — the script cannot do these:
 
@@ -71,14 +97,16 @@ Then, by hand — the script cannot do these:
 - **For a review gate the merging identity cannot satisfy itself:** create a machine user
   or a GitHub App installation with pull-request write, and store its token as
   `AGENTIC_REVIEWER_TOKEN` wherever the orchestrator and reviewer run (never in this
-  repository — `init` never writes it anywhere). **Order matters:** first set the base
-  branch ruleset's `required_approving_review_count` to 1 (`--rules` creates or updates the
-  ruleset but never sets this field itself — edit the `agentic-setup` ruleset it made),
-  *then* set the token. GitHub
+  repository — `init` never writes it anywhere). This identity is the one thing `--rules`
+  cannot do for you. **Order matters:** create the identity, *then* run `--rules` (it sets
+  the base branch ruleset's `required_approving_review_count` to 1 for you), *then* set the
+  token. GitHub
   only computes a PR's `reviewDecision` on a branch where a review is actually required;
   set the token before that rule exists and `reviewDecision` stays `null` forever, so
   every PR refuses in `land.mts` with no way to satisfy it (`scripts/land.mts`'s header
-  names this trap). Without the token, `land.mts` falls back to trusting the
+  names this trap). Running `--rules` before the identity exists is the other half of the
+  same trap: the rule is then required and nobody can satisfy it, so every merge is frozen
+  until the identity is created. Without the token, `land.mts` falls back to trusting the
   `review:approved` label — the same identity that runs `land.mts` can write that label
   itself, so this is meant as a bootstrap state, not a destination (`docs/decisions.md`
   item 13).
