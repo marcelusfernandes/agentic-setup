@@ -115,7 +115,7 @@ Then, by hand — the script cannot do these:
   the globs from. `negative-control` fails it as `no-tests`, because what the installer
   wrote are not test files and they do not all sit in a skipped path class. Both reds are
   correct on that one pull request — nothing is wrong with the install, so do not debug it
-  over them; merge it and carry on. They stop at the first ordinary issue-linked pull
+  over them. They stop at the first ordinary issue-linked pull
   request, the one that carries a `Closes #N` in its body and test files in its diff:
   `scope` then has an issue to read globs from, and `negative-control` has tests to overlay
   on the base.
