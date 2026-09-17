@@ -300,7 +300,10 @@ Then act on the verdict:
   ```
 
   `land.mts` is the only way the orchestrator merges a PR — never run `gh pr merge` by
-  hand for this step. It refuses (exit 1, `{ refused, pr, missing, mode }`) unless the PR
+  hand for this step. That prohibition is enforced, not merely asked for:
+  `hooks/protect-main.mts` denies a hand-typed `gh pr merge` in an agent's Bash tool, with
+  or without `--admin` and whether or not a global flag is typed before the subcommand
+  (`gh -R owner/repo pr merge`), and no environment variable lifts it. It refuses (exit 1, `{ refused, pr, missing, mode }`) unless the PR
   is `OPEN` and approved: `reviewDecision === 'APPROVED'`, or — only when the
   orchestrator's own environment has no `AGENTIC_REVIEWER_TOKEN` set — the
   `review:approved` label *plus* the `<!-- agentic-reviewed-sha: <oid> -->` marker you
