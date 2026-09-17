@@ -22,9 +22,21 @@
 //   0  claimed — prints { issue, branch, base, lint }
 //   1  refused (issue not claimable) -> { refused }
 //      or a usage/gh/git error         -> { error }
-//   2  held by another agent (the ref already exists) -> { held }
+//   2  held by another agent (a branch that locks the issue already
+//      exists) -> { held: "<that branch>" }
 //
-// The lock is the push's own protocol exchange with the remote, read via
+// Two things hold an issue, in namespaces that cannot see each other: this
+// route's own `<type>/<n>-<slug>` and the Codex loop's `codex/task-<n>`
+// (scripts/lib/issues.mts names both shapes, and is the only place either
+// is written down). So before the push there is one read — `git ls-remote
+// --heads origin`, asking the remote rather than the local tracking refs —
+// and any branch it finds that locks the issue is reported as { held }
+// without pushing anything. That read fails closed: when it errors the
+// claim exits 1 with { error } naming it, never assuming the issue is
+// free (#157).
+//
+// The read is an early refusal, not the lock. The lock is the push's own
+// protocol exchange with the remote, read via
 // `git push --porcelain`, not a local pre-check: a local
 // refs/remotes/origin/<branch> pre-check has two failure modes — (a)
 // pushing the exact commit a ref already points at is a silent no-op
@@ -48,15 +60,19 @@
 // non-fast-forward, so that wording never appears here — still caught by
 // the `[rejected]` fallback.
 //
-// Crash policy: never a stack trace. Refusal checks (closed, not
-// state:ready, an open blocker, no ## Files bullet, issue-lint) run before
-// any push, so a refusal changes nothing. The push is the lock: only a
+// Crash policy: never a stack trace, and every read that cannot answer
+// fails closed. Refusal checks (closed, not state:ready, an open blocker,
+// no ## Files bullet, issue-lint) and the pre-push lock read run before any
+// push, so a refusal — including a `git ls-remote` that errors — changes
+// nothing. The push is the lock: only a
 // successful push is followed by `gh issue edit` (assignee, `state:` and
 // `type:`, plus the removal of any disagreeing `type:`). Run from the repository
 // root — git commands use the current working directory. Node built-ins
 // only.
 //
-// issue-lint gate: the last refusal check before the push. ci/issue-lint.mts
+// issue-lint gate: the last refusal check before the lock read and the
+// push (a lock read that finds a branch reports `{ held }`, exit 2, which
+// is not a refusal but the other agent's claim). ci/issue-lint.mts
 // is resolved relative to this file's own location (not a hard-coded
 // relative path from the caller's cwd) and spawned with `process.execPath`
 // — the same node/bun running this script — with `cwd` left at this
@@ -75,7 +91,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from '../ci/lib/args.mts';
-import { BRANCH_TYPES, hasFilesBullet, parseBlockedBy, titleType, typeLabel } from './lib/issues.mts';
+import { BRANCH_TYPES, hasFilesBullet, lockBranches, parseBlockedBy, titleType, typeLabel } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[]; state: string };
@@ -204,7 +220,8 @@ if (skipLint) {
   lintField = { ok: true };
 }
 
-// --- 5. lock: fetch, then push the new branch from the default branch -------
+// --- 5. lock: fetch, read the locks already on the remote, then push the ----
+// new branch from the default branch ----------------------------------------
 const branch = `${type}/${number}-${slug}`;
 
 const repoView = ghJson<RepoView>(['repo', 'view', '--json', 'defaultBranchRef']);
@@ -214,6 +231,31 @@ if (!defaultBranch) errorOut('gh repo view: no default branch');
 git(['fetch', 'origin']);
 
 const base = git(['rev-parse', `origin/${defaultBranch}`]).trim();
+
+// Pre-push read: any branch that already locks this issue, in either
+// route's namespace (`scripts/lib/issues.mts` is the single place those
+// shapes are written down). The Codex loop locks `codex/task-<n>`, which
+// this script would never push and never collide with, so nothing but a
+// read can find it. `git ls-remote` asks the remote itself rather than the
+// local tracking refs, which `git fetch` never prunes and a narrowed fetch
+// refspec may never have created. It fails closed: a read that errors goes
+// through `git()` and exits 1 with `{ error }` naming the failed command,
+// never on to the push.
+//
+// This is an early refusal, not the lock. Two Claude-route agents racing
+// for the same issue can both read a free remote and then push; what
+// decides that race is still the create-only push below, for the reasons
+// the header gives. The read is what catches every lock the push cannot:
+// the other route's branch, and this route's own under a different slug.
+const existingLock = lockBranches(
+  number,
+  git(['ls-remote', '--heads', 'origin'])
+    .split('\n')
+    .map((line) => line.trim().split('\t')[1] ?? '')
+    .filter(Boolean)
+    .map((ref) => ref.replace(/^refs\/heads\//, '')),
+)[0];
+if (existingLock) held(existingLock);
 
 // --force-with-lease=<ref>: (empty expected value) means the named ref
 // must not already exist — the create-only form (git-push(1)). Without it,

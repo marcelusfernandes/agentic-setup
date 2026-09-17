@@ -180,7 +180,7 @@
 // `--milestone` given): there is nothing left to reconcile against.
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from '../ci/lib/args.mts';
-import { parseBlockedBy } from './lib/issues.mts';
+import { lockBranches, parseBlockedBy } from './lib/issues.mts';
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[] };
@@ -552,9 +552,16 @@ const deadWorktrees = linkedWorktrees
   .filter((w) => w.dead)
   .map((w) => ({ path: w.path, branch: w.branch, pid: w.pid as number, ...deadWorktreeWork(w.path, w.branch) }));
 
+// Which branch names lock an issue is `scripts/lib/issues.mts`'s to say —
+// both routes' shapes, `<type>/<n>-<slug>` (scripts/claim.mts) and
+// `codex/task-<n>` (the Codex loop's github.mts). Resolving through it is
+// what keeps an issue the other route already locked from reading as free
+// here (no branch, no PR, "stale"), which is the state a fresh orchestrator
+// treats as its own to take (#157). `lockBranches` puts the Claude route's
+// own shape first, so a branch this route can act on wins when an issue
+// somehow carries both.
 function branchFor(number: number): string | null {
-  const re = new RegExp(`^[a-z]+/${number}-`);
-  return [...remoteHeads].find((b) => re.test(b)) ?? null;
+  return lockBranches(number, remoteHeads)[0] ?? null;
 }
 function prFor(branch: string | null): PR | null {
   if (!branch) return null;
