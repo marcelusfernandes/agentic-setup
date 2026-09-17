@@ -266,14 +266,6 @@ To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
 review and required-check protections still apply. A milestone can group the pilot's issues.
 
-## Optional: discipline agent catalogue
-
-[`docs/agents.md`](docs/agents.md) describes an opt-in catalogue of preset discipline
-agent cards (QA, architecture, backend, frontend, design, product, research, planner,
-investigator, security-reviewer, data-migrations, devops, release-manager, profiler)
-under `templates/agents/`, in both routes' formats. Nothing installs it yet; it is
-source material for a person to read and adapt by hand until the installer flag ships.
-
 ## Development and migration
 
 ```sh
@@ -302,7 +294,6 @@ deliberately; installing Codex does not perform that migration.
 | [docs/adopt.md](docs/adopt.md) | adopting an existing repository: the read-only inventory and the plan issue it can open |
 | [docs/codex.md](docs/codex.md) | the Codex route's runtime boundaries, migration boundary and validation limits |
 | [docs/codex-plugin.md](docs/codex-plugin.md) | native Codex plugin distribution: install, updates, helper paths, packaging |
-| [docs/agents.md](docs/agents.md) | the opt-in discipline agent catalogue |
 | [contract.md](.agents/skills/autonomous-loop/references/contract.md) | the Codex loop's operating contract: issue formats, checkpoint answers, ownership |
 
 ## License
