@@ -42,8 +42,20 @@ of it. What is left is below.
    the stub above (turn the red into a runtime red) or the missing `test(red):` commit.
 8. **Check with the exact gate command**, not a partial one. A type-check on one package
    gives a false green; so does running a single test file when the gate runs the suite.
-   There is no Stop hook to run it for you — CI is the only gate, so run it yourself
-   before opening or updating the PR.
+   Run it yourself before opening or updating the PR. The `SubagentStop` gate
+   (`hooks/stop-gate.mts`) runs the detected check and test commands when you try to stop
+   and blocks the stop while either is red, but it is a backstop, not your turn: it caps
+   at three consecutive blocks, exempts a `test(red):` last commit, and lets the stop
+   through whenever it cannot judge. A block arrives as
+   `[agentic-setup/stop-gate] the test command … is red`, with the last lines of the
+   failing output — fix that, do not work around the gate.
+   **A silent green is not proof the gate ran.** It judges the directory the stop event
+   carries as its `cwd`: your worktree when you were spawned with `isolation: "worktree"`
+   or when the session's own cwd is the worktree, but the *session's* checkout when an
+   agent merely `cd`s into a worktree — and a session on `main` is never gated at all
+   (measured, three headless runs: #137, comment 5715271545). That is the case where
+   nothing at all ran, so §B8's first sentence stands: run the exact gate command
+   yourself.
 9. **Distrust an old error.** A failure from three edits ago is not evidence about now —
    run the check and test commands again before trusting a "fixed" from memory.
 
