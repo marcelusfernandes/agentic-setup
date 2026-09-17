@@ -302,7 +302,7 @@ go away.
 
 ## 14. 2026-09-17: a hand-typed `gh pr merge` is denied, not discouraged
 
-Status: proposed
+Status: accepted — written OK: issue #154 (the owner's specification of this change), under the standing M11–M16 delegation recorded on #161.
 
 "`land.mts` is the only way the orchestrator merges a pull request, never `gh pr merge`
 by hand" was written in bold in two contracts (`skills/orchestrate/SKILL.md`, `AGENTS.md`)

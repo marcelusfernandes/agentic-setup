@@ -128,15 +128,24 @@ CI: a PR fails if it adds a file over 800 lines or grows an existing one past 80
 counted against the base; a file already over 800 that shrinks or holds steady is not a
 violation, and a file whose first line reads `@generated` is exempt.
 
-Sub-issues are linked to the parent through GitHub's sub-issue API, which wants the
-issue **id**, not the number:
+Sub-issues are created and linked by one script — the three-line snippet that used to
+stand here (create, resolve the issue **id**, POST it to the parent) is no longer the
+contract:
 
 ```bash
-n=$(gh issue create --milestone "<milestone>" --label state:ready --label scope:<x> \
-  --label type:<y> --title "..." --body-file issue.md | grep -oE '[0-9]+$')
-id=$(gh api repos/{owner}/{repo}/issues/$n -q .id)
-gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$id
+node scripts/create-subissue.mts <parent> --title "<type>(<scope>): <goal>" \
+  --body-file issue.md --label scope:<x> --label type:<y>
 ```
+
+It refuses with `{ refused, parent, missing }` and exit 1 **before creating anything**
+when the parent does not exist or is closed (`parent:state`), the parent carries no
+milestone (`parent:milestone`), the title is not `<type>(<scope>): <goal>`
+(`title:format`), or `--body-file` is missing or unreadable (`body:missing`). On success
+it inherits the parent's milestone, links the child by its id, and applies `state:ready`
+only after `ci/issue-lint.mts` reports `ok: true` for the new issue — a body that fails
+the contract stays created and linked, without `state:ready`, and the script exits 1. Do
+not pass `--label state:ready`: the lint is what applies it, and the script drops it from
+the creation either way.
 
 ## PR (one template)
 
