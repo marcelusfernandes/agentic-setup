@@ -15,10 +15,12 @@
 //                in base..head touches any of the overlaid test files
 //   vacuous      the baseline was green and the overlaid run also passed — the
 //                tests prove nothing. Its detail names the usual cause, an
-//                entry point that enumerates its test directories: only test
-//                files are overlaid, so a brand-new test tree never runs on
-//                the base and the verdict is about the entry point, not the
-//                tests
+//                entry point that enumerates its test directories: a
+//                brand-new test tree is invisible to it on the base, so the
+//                verdict is about the entry point, not the tests. The entry
+//                point is overlaid only when a test glob matches its path or
+//                a declaration's `tests` names it — the same two routes that
+//                let the fix prove itself in the PR that makes it
 //   no-tests     the diff adds or changes no test files
 //   cannot-run   the test command could not be found or detected. When
 //                nothing was detected, the detail names the escape a
@@ -304,7 +306,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     if (overlaid.status === 0) {
       return {
         outcome: 'vacuous',
-        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, and the entry point itself is never overlaid (only test files are), so the base keeps running its own list and stays green. Make the entry point discover its tests rather than list them — landed on the base first, in its own PR, or named as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs.`,
+        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs.`,
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
