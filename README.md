@@ -266,6 +266,15 @@ To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
 review and required-check protections still apply. A milestone can group the pilot's issues.
 
+## What each phase shipped
+
+[`docs/closeout/`](docs/closeout/) holds one file per milestone: the UTC date the
+phase closed, the `main` SHA it was true at, and every issue with its pull request
+and its merge commit. What is still in flight is the
+[open milestones](https://github.com/marcelusfernandes/agentic-setup/milestones?state=open).
+This file makes no dated claim about the repository's own state — the closeouts and
+the milestone list carry the date, and a paragraph here would not.
+
 ## Development and migration
 
 ```sh
@@ -291,6 +300,7 @@ deliberately; installing Codex does not perform that migration.
 | [docs/orchestration.md](docs/orchestration.md) | the orchestrator, roles, stop reasons, decision log, milestone closing, headless, hooks |
 | [docs/workflow.md](docs/workflow.md) | branches, milestones, labels, the issue and PR templates, required checks, merge |
 | [docs/decisions.md](docs/decisions.md) | the numbered decisions behind the mechanisms, and why each one stands |
+| [docs/closeout/](docs/closeout/) | what each phase shipped: one file per milestone, dated, with the merge commit of every issue |
 | [docs/adopt.md](docs/adopt.md) | adopting an existing repository: the read-only inventory and the plan issue it can open |
 | [docs/codex.md](docs/codex.md) | the Codex route's runtime boundaries, migration boundary and validation limits |
 | [docs/codex-plugin.md](docs/codex-plugin.md) | native Codex plugin distribution: install, updates, helper paths, packaging |
