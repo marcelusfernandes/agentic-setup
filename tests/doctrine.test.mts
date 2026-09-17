@@ -428,5 +428,83 @@ check(
   honest.slice(-900),
 );
 
+// --- #212: who owns required_approving_review_count, and what selects mode `approved` ---
+// `scripts/init.mts` owns that count in both directions — `--rules` resets it to 0,
+// `--rules --require-review` raises it to 1 — and the bare `--require-review` is ignored
+// without `--rules` (`scripts/init.mts:94-95`). Three documents still called the count a
+// step an operator sets by hand, and `docs/orchestration.md` still said the token selects
+// mode `approved` and that `land` gates on the review *instead of* the marker, which
+// stopped being true at #156. Prose about a flag has no other consumer, so it gets one
+// here — `authorised: tests/doctrine.test.mts` on #212's `## Files`, logged on #201.
+// The spans are scoped per item: the flag is named in several items, and an unbounded
+// read would let any one of them satisfy this on another's behalf.
+
+const LAND = join('scripts', 'land.mts');
+const INIT_WITH_RULES = '`scripts/init.mts --rules --require-review`';
+
+const item13 = span(decisions, '## 13. The 2026-09-06 audit', '## 16.');
+check('#212 AC2 docs/decisions.md still carries item 13 to read', item13.length > 0);
+check(
+  '#212 AC2 item 13 runs `init --rules --require-review` for the ruleset step',
+  item13.includes('`node scripts/init.mts --rules --require-review`'),
+  item13.slice(-900),
+);
+check(
+  '#212 AC2 item 13 no longer calls the reviewer-identity setup a by-hand step',
+  !item13.includes('Setup is by hand'),
+  item13.slice(-900),
+);
+check(
+  '#212 AC2 item 13 keeps the order-matters warning: the ruleset before the token',
+  item13.includes('**Order matters:**'),
+  item13.slice(-900),
+);
+check(
+  '#212 AC2 item 18 names the flag with `--rules`, not the bare `--require-review`',
+  item18.includes(INIT_WITH_RULES) && item18.includes('`init --rules --require-review` writes both'),
+  item18.slice(0, 900),
+);
+check(
+  '#212 AC2 "The reviewer" no longer says `land.mts` gates on the review instead of the marker',
+  reviewerSection.length > 0 && !reviewerSection.includes('instead of the marker'),
+  reviewerSection.slice(-900),
+);
+check(
+  '#212 AC2 "The reviewer" names the two selectors of mode `approved`, and neither is the token',
+  reviewerSection.includes('`required_approving_review_count > 0`')
+    && reviewerSection.includes('never by whether `AGENTIC_REVIEWER_TOKEN` is set'),
+  reviewerSection.slice(-900),
+);
+
+const landHeader = span(readNormalized(LAND), "// land — the only way", "import { spawnSync }");
+check('#212 AC3 scripts/land.mts still has a header comment to read', landHeader.length > 0);
+check(
+  '#212 AC3 the header no longer sends the reader to an `init` "by hand" list for the count',
+  !landHeader.includes('"by hand" list'),
+  landHeader.slice(0, 900),
+);
+check(
+  '#212 AC3 the header names the two invocations that own the count instead',
+  landHeader.includes('`scripts/init.mts --rules` resets it to 0') && landHeader.includes(INIT_WITH_RULES),
+  landHeader.slice(0, 900),
+);
+
+// AC4: a remaining "by hand" is fine — `docs/decisions.md:118` keeps one for the three
+// *checks* a 403 leaves manual — as long as none of them is about the review count. The
+// window is a sentence's worth of normalized text either side.
+const NEAR = 240;
+for (const relative of [DECISIONS, ORCHESTRATION, LAND]) {
+  const text = readNormalized(relative);
+  const offenders: string[] = [];
+  for (let at = text.indexOf('by hand'); at !== -1; at = text.indexOf('by hand', at + 1)) {
+    const window = text.slice(Math.max(0, at - NEAR), at + NEAR);
+    if (window.includes('required_approving_review_count')) offenders.push(window);
+  }
+  check(
+    `#212 AC4 no "by hand" in ${relative} describes required_approving_review_count as manual`,
+    offenders.length === 0,
+    offenders.join('\n---\n'),
+  );
+}
 
 finish();
