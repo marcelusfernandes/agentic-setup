@@ -8,6 +8,7 @@
 //   node scripts/adopt.mts --plan-issue
 //   node scripts/adopt.mts --record [--force]
 //   node scripts/adopt.mts --workflows
+//   node scripts/adopt.mts --hooks
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
 // JSON on stdout and performs **no write of any kind**: no file is created
@@ -60,6 +61,21 @@
 // the file, not to lose it. A file that is already what would be written is
 // `skipped` too, and nothing is rewritten.
 //
+// `--hooks` is the fourth mutation, and it writes exactly two things: the
+// `pre-push` hook into the directory git says it runs hooks from, and the deny
+// list into `.claude/settings.json`. What it installs is what the record's
+// `hooks[]` names (#166), resolved by `scripts/lib/adopt/hooks.mts`, which
+// plans without writing; a record is required, and without one it refuses with
+// `{ refused, reason: 'hooks:no-record' }`. A name in `hooks[]` that this setup
+// does not ship is `{ error: 'hooks:unknown-hook', field }` and nothing is
+// installed — a record naming a hook nobody installs is a repository that
+// believes it is protected and is not. An existing `pre-push` that does not
+// carry the `agentic-setup` marker was written by a person: it is `skipped`
+// with the reason and never replaced, and there is no `--force` past that
+// either. The deny-list merge keeps every rule it did not put there and
+// reports them as `preserved`. Running it twice is a no-op that reports `skip`
+// for every file.
+//
 // **Crash policy: fail closed.** Any `git` or `gh` read that cannot answer
 // prints `{ error: <named reason> }` and exits 1. No field is ever reported
 // as absent because the read for it failed — "there is no ruleset" and "the
@@ -95,8 +111,8 @@ import {
   writeRecord,
   type AdoptionRecord,
 } from './lib/adopt/record.mts';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import {
   WORKFLOW_DIR,
   WorkflowError,
@@ -104,8 +120,9 @@ import {
   readTemplates,
   renderWorkflows,
 } from './lib/adopt/workflows.mts';
+import { HookError, planHooks } from './lib/adopt/hooks.mts';
 
-const USAGE = 'usage: node scripts/adopt.mts --inventory | --plan-issue | --record [--force] | --workflows';
+const USAGE = 'usage: node scripts/adopt.mts --inventory | --plan-issue | --record [--force] | --workflows | --hooks';
 
 /** The title the plan issue is deduplicated by; one per repository. */
 const PLAN_ISSUE_TITLE = 'Adoption plan: what this repository is missing';
@@ -151,11 +168,12 @@ const wantInventory = flags.inventory === true;
 const wantPlanIssue = flags['plan-issue'] === true;
 const wantRecord = flags.record === true;
 const wantWorkflows = flags.workflows === true;
+const wantHooks = flags.hooks === true;
 const force = flags.force === true;
 // Exactly one mode. `--force` is a modifier of `--record` and never a mode
 // of its own: on its own it names nothing to do, and it must not be read as
 // "write the record" by accident.
-if ([wantInventory, wantPlanIssue, wantRecord, wantWorkflows].filter(Boolean).length !== 1) fail(USAGE);
+if ([wantInventory, wantPlanIssue, wantRecord, wantWorkflows, wantHooks].filter(Boolean).length !== 1) fail(USAGE);
 if (force && !wantRecord) fail(USAGE);
 
 // --- 2. the repository root -------------------------------------------------
@@ -284,6 +302,82 @@ if (wantWorkflows) {
       gaps: rendering.gaps,
     }),
   );
+  process.exit(0);
+}
+
+// --- 4c. --hooks: the hooks the record names ---------------------------------
+// A reader of the record, like `--workflows`: the record is its only input,
+// and a repository without one is refused rather than detected a second time.
+// Everything it writes is a file the plan names — the `pre-push` hook under
+// the directory git runs hooks from, and `.claude/settings.json` — and the
+// marker is what keeps a hand-written hook safe.
+if (wantHooks) {
+  if (existing === null) {
+    console.log(
+      JSON.stringify({
+        refused:
+          `there is no ${RECORD_FILE} to install from; run \`node scripts/adopt.mts --record\` first. ` +
+          'The hooks are installed from the record, so that what a repository has and what its record says are ' +
+          'one answer rather than two.',
+        reason: 'hooks:no-record',
+      }),
+    );
+    process.exit(1);
+  }
+
+  /** The same exit as `failRecord`, for a plan this tool refuses. */
+  const failHook = (err: HookError): never => {
+    const field = err.field === null ? {} : { field: err.field };
+    console.log(JSON.stringify({ error: err.reason, ...field, detail: err.message }));
+    process.exit(1);
+  };
+
+  // Where git runs hooks from is git's answer and never a guess:
+  // `core.hooksPath` moves it, and in a worktree `.git` is a file whose hooks
+  // live in the common directory. `scripts/lib/adopt/inventory.mts` asks the
+  // same question for its own report; this asks it again rather than planning
+  // against an assumed `.git/hooks`.
+  const hooksPath = gitIn(root)(['rev-parse', '--git-path', 'hooks']);
+  if (hooksPath.status !== 0 || hooksPath.stdout.trim().length === 0) fail('hooks:unreadable');
+  const hooksDir = resolve(root, hooksPath.stdout.trim());
+
+  let plan;
+  try {
+    plan = planHooks(existing, { root, hooksDir });
+  } catch (err) {
+    if (err instanceof HookError) failHook(err);
+    throw err;
+  }
+
+  /** What happened to one file, and why. Every outcome carries its reason. */
+  type HookOutcome = {
+    hook: string;
+    file: string;
+    outcome: 'created' | 'updated' | 'skipped';
+    reason: string;
+    deny?: unknown;
+  };
+  const OUTCOME = { create: 'created', update: 'updated', skip: 'skipped' } as const;
+  const outcomes: HookOutcome[] = [];
+
+  for (const entry of plan.entries) {
+    const deny = entry.deny === null ? {} : { deny: entry.deny };
+    if (entry.action !== 'skip' && entry.content !== null) {
+      try {
+        mkdirSync(dirname(join(root, entry.path)), { recursive: true });
+        writeFileSync(join(root, entry.path), entry.content);
+        if (entry.mode !== null) chmodSync(join(root, entry.path), entry.mode);
+      } catch (err) {
+        fail('hooks:not-written', (err as Error).message);
+      }
+    }
+    outcomes.push({ hook: entry.hook, file: entry.path, outcome: OUTCOME[entry.action], reason: entry.reason, ...deny });
+  }
+
+  // `recorded` is what the record asked for, printed beside what happened to
+  // it: a hook named there and `skipped` here is the one line that says the
+  // repository does not have what its record claims.
+  console.log(JSON.stringify({ hooks: outcomes, recorded: existing.hooks }));
   process.exit(0);
 }
 
