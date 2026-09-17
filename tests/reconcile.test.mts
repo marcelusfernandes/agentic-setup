@@ -94,7 +94,8 @@ JSON
   {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":72,"title":"In progress worktree locked by a dead pid","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":7,"title":"In progress locked by the Codex route","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
         ;;
@@ -116,7 +117,8 @@ JSON
   {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
   {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
   {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
-  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null}
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null},
+  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null}
 ]
 JSON
     ;;
@@ -178,6 +180,9 @@ for (const branch of [
   'feat/42-cancelled-check',
   'feat/50-prune-target',
   'feat/60-shadowed',
+  // The Codex route's lock shape for issue #7 (#157): one canonical name per
+  // issue, no slug, so `^[a-z]+/<n>-` never matches it.
+  'codex/task-7',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
@@ -406,6 +411,18 @@ check('in-progress with a remote branch and a PR', inProgress20?.branch === 'fea
 check('in-progress with neither PR nor remote branch', inProgress21?.branch === null && inProgress21?.hasRemoteBranch === false && inProgress21?.pr === null, JSON.stringify(inProgress21));
 
 check('stale lists only the issue with no PR and no remote branch', (out?.stale ?? []).length === 1 && out.stale[0].number === 21, JSON.stringify(out?.stale));
+
+// --- AC1 (#157): an issue whose only remote branch is the Codex route's
+// `codex/task-<n>` lock is not free. Both routes' lock shapes live in
+// scripts/lib/issues.mts, so the issue resolves to that branch and its PR
+// instead of reading as "no remote branch" (which would let a Claude-route
+// agent claim work another coordinator already owns).
+const inProgress7 = (out?.inProgress ?? []).find((i: any) => i.number === 7);
+check(
+  'an issue locked by the Codex route resolves its codex/task-<n> branch and PR',
+  inProgress7?.branch === 'codex/task-7' && inProgress7?.hasRemoteBranch === true && inProgress7?.pr === 107,
+  JSON.stringify(inProgress7),
+);
 
 // --- AC3: a remote-tracking ref shadowed by a same-named local branch one
 // level down must still resolve to its real (slash-bearing) branch name, not

@@ -106,6 +106,10 @@ JSON
 {"number":25,"title":"feat: warnings only","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`covered.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
 JSON
         ;;
+      33) cat <<'JSON'
+{"number":33,"title":"feat: warnings only, legacy flag","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`covered.mts\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+        ;;
       27) cat <<'JSON'
 {"number":27,"title":"feat: pending human decision","body":"## Context\\nSome context.\\n\\n## Goal\\nDo the thing.\\n\\n## Acceptance criteria\\n- [ ] AC1 does it\\n\\n## Proof\\nnpm test covers it.\\n\\n## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"},{"name":"Human:Pending"}],"state":"OPEN"}
 JSON
@@ -409,13 +413,29 @@ check('a closed blocker still creates the branch on origin', remoteBranches().in
 // either has committed anything beyond the shared base). Only the push's
 // own protocol exchange with the remote — which --porcelain surfaces as
 // "=" (up to date) — catches it.
+//
+// claim.mts also reads the remote's existing lock branches before it pushes
+// (#157), and that read would spot both branches below — so these two cases
+// run with a fake `git` whose `ls-remote` answers with nothing (exit 0) and
+// whose every other subcommand is the real binary. That is the race the
+// pre-push read cannot win by construction: the other agent's branch lands
+// between the read and the push. Blind that read and what is left deciding
+// the race is the push's own protocol exchange with the remote, which is
+// what these two cases exist to exercise.
+const realGit = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+const blindReadDir = mkdtempSync(join(tmpdir(), 'agentic-claim-blind-read-'));
+cleanup(() => rmSync(blindReadDir, { recursive: true, force: true }));
+writeFileSync(join(blindReadDir, 'git'), `#!/usr/bin/env bash\nif [ "$1" = "ls-remote" ]; then exit 0; fi\nexec ${realGit} "$@"\n`);
+chmodSync(join(blindReadDir, 'git'), 0o755);
+const PATH_WITH_BLIND_READ = `${blindReadDir}:${PATH_WITH_FAKE_GH}`;
+
 const pusherDir = mkdtempSync(join(tmpdir(), 'agentic-claim-pusher-'));
 cleanup(() => rmSync(pusherDir, { recursive: true, force: true }));
 git(['clone', '-q', remoteDir, pusherDir], repo);
 const preexistingSha = git(['rev-parse', 'origin/main'], repo);
 git(['push', 'origin', `${preexistingSha}:refs/heads/feat/21-preclaimed`], pusherDir);
 git(['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], repo);
-const upToDate = claim(['21', '--slug', 'preclaimed']);
+const upToDate = claim(['21', '--slug', 'preclaimed'], { PATH: PATH_WITH_BLIND_READ });
 check('an up-to-date push is held, exit 2', upToDate.status === 2 && upToDate.json?.held === 'feat/21-preclaimed', JSON.stringify(upToDate));
 check('an up-to-date held claim does not touch labels', !upToDate.log.includes('issue edit'), upToDate.log);
 
@@ -431,7 +451,7 @@ check('an up-to-date held claim does not touch labels', !upToDate.log.includes('
 git(['push', 'origin', `${preexistingSha}:refs/heads/feat/22-anc`], pusherDir);
 git(['commit', '-q', '--allow-empty', '-m', 'advance main'], repo);
 git(['push', '-q', 'origin', 'main'], repo);
-const ancestorHeld = claim(['22', '--slug', 'anc']);
+const ancestorHeld = claim(['22', '--slug', 'anc'], { PATH: PATH_WITH_BLIND_READ });
 check('a branch at an ancestor of the base is held, exit 2', ancestorHeld.status === 2 && ancestorHeld.json?.held === 'feat/22-anc', JSON.stringify(ancestorHeld));
 check('a branch at an ancestor of the base is held without touching labels', !ancestorHeld.log.includes('issue edit'), ancestorHeld.log);
 check(
@@ -509,13 +529,26 @@ check(
 // to issue-lint (the passthrough is gone) — so the claim still succeeds
 // exactly as without the flag. Unlike issue-lint (#62), claim.mts prints no
 // note about the flag being ignored; it is silently absorbed by parseArgs.
-const legacyStrict = claim(['25', '--slug', 'warn-legacy-strict', '--strict']);
+// Issue #33 carries the same body as #25 and is claimed here rather than
+// re-claiming #25 under a second slug: #25 is already locked by the claim
+// above, and a locked issue is now held whatever slug the second caller
+// passes (the case below).
+const legacyStrict = claim(['33', '--slug', 'warn-legacy-strict', '--strict']);
 check('a legacy --strict flag does not break the claim, exit 0', legacyStrict.status === 0, `${legacyStrict.stdout}\n${legacyStrict.stderr}`);
 check(
   'a legacy --strict flag still reports { ok: true } on the success JSON',
   legacyStrict.json?.lint?.ok === true && Object.keys(legacyStrict.json?.lint ?? {}).length === 1,
   JSON.stringify(legacyStrict),
 );
-check('a legacy --strict flag still creates the branch on origin', remoteBranches().includes('feat/25-warn-legacy-strict'), JSON.stringify(remoteBranches()));
+check('a legacy --strict flag still creates the branch on origin', remoteBranches().includes('feat/33-warn-legacy-strict'), JSON.stringify(remoteBranches()));
+
+// --- #157: the lock is on the *issue*, not on one spelling of its branch.
+// The pre-push read resolves every branch name that locks the issue, so a
+// second claim of #25 under a different slug is held on the branch the
+// first claim created — before any push of its own.
+const otherSlug = claim(['25', '--slug', 'a-different-slug']);
+check('a second claim of a locked issue under another slug is held, exit 2', otherSlug.status === 2 && otherSlug.json?.held === 'feat/25-warn', JSON.stringify(otherSlug));
+check('that held claim pushes no branch of its own', !remoteBranches().includes('feat/25-a-different-slug'), JSON.stringify(remoteBranches()));
+check('that held claim does not touch labels', !otherSlug.log.includes('issue edit'), otherSlug.log);
 
 finish();

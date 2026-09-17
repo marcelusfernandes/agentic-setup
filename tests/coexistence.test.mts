@@ -1,10 +1,22 @@
 #!/usr/bin/env node
 // Codex and legacy Claude setup are independent, opt-in installation routes.
-// Exercise both real installers in throwaway git repositories; no GitHub calls.
+// Exercise both real installers in throwaway git repositories; the installer
+// cases make no GitHub calls.
+//
+// The two routes also coexist at run time, on the same issues: each locks an
+// issue by pushing a branch, in namespaces that cannot see each other
+// (`<type>/<n>-<slug>` for the Claude route's scripts/claim.mts,
+// `codex/task-<n>` for the Codex route's autonomous-loop). The last section
+// below runs the real scripts/claim.mts against a disposable remote that
+// already carries the other route's lock, with a fake `gh` first on PATH
+// (GitHub is never called) and — for the fail-closed case — a fake `git`
+// whose `ls-remote` fails while every other subcommand delegates to the real
+// binary (#157).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, commit, finish, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
+import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
 
 function run(script: string, cwd: string, args: string[] = []) {
   return spawnSync(RUNTIME, [join(ROOT, 'scripts', script), ...args], { cwd, encoding: 'utf8' });
@@ -69,5 +81,124 @@ for (const flags of [[], ['--dry-run'], ['--force']]) {
   check(`legacy setup ${flags.join(' ') || 'run'} preserves Codex files byte-for-byte`,
     unchanged(codexRepo, beforeCodex));
 }
+
+// --- the two routes' locks recognise each other (#157) ----------------------
+// A pushed branch is the lock on both sides, so an issue the Codex route
+// already locked with `codex/task-<n>` must not be claimable by the Claude
+// route. scripts/claim.mts reads the remote's heads before it pushes and
+// reports the branch it found as { held }, exit 2 — the vocabulary it
+// already uses for a branch another agent holds.
+const FAKE_GH = `#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+  "repo view")
+    echo '{"defaultBranchRef":{"name":"main"}}'
+    ;;
+  "issue view")
+    cat <<'JSON'
+{"number":0,"title":"feat: locked elsewhere","body":"## Files\\n- \`x\`\\n\\n## Dependencies\\nBlocked by: none\\n","labels":[{"name":"state:ready"}],"state":"OPEN"}
+JSON
+    ;;
+  "issue edit")
+    ;;
+  *)
+    echo "fake-gh: unknown command: $*" >&2
+    exit 1
+    ;;
+esac
+`;
+
+// Every subcommand but `ls-remote` is the real git: the pre-push read is the
+// only call this fake breaks, so the refusal it produces cannot be confused
+// with a repository that was never set up.
+const realGit = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+const FAKE_GIT = `#!/usr/bin/env bash
+if [ "$1" = "ls-remote" ]; then
+  echo "fatal: could not read from remote repository (simulated)" >&2
+  exit 128
+fi
+exec ${realGit} "$@"
+`;
+
+const fakeGhDir = mkdtempSync(join(tmpdir(), 'agentic-coexistence-gh-'));
+cleanup(() => rmSync(fakeGhDir, { recursive: true, force: true }));
+writeFileSync(join(fakeGhDir, 'gh'), FAKE_GH);
+chmodSync(join(fakeGhDir, 'gh'), 0o755);
+
+const fakeGitDir = mkdtempSync(join(tmpdir(), 'agentic-coexistence-git-'));
+cleanup(() => rmSync(fakeGitDir, { recursive: true, force: true }));
+writeFileSync(join(fakeGitDir, 'git'), FAKE_GIT);
+chmodSync(join(fakeGitDir, 'git'), 0o755);
+
+const lockRepo = tempRepo();
+commit(lockRepo, { 'README.md': '# locks\n' }, 'init');
+const lockRemote = mkdtempSync(join(tmpdir(), 'agentic-coexistence-remote-'));
+cleanup(() => rmSync(lockRemote, { recursive: true, force: true }));
+git(['init', '-q', '--bare', lockRemote], lockRepo);
+git(['remote', 'add', 'origin', lockRemote], lockRepo);
+git(['push', '-q', 'origin', 'main'], lockRepo);
+
+let lockLogCounter = 0;
+function claim(args: string[], extraPath = '') {
+  const log = join(fakeGhDir, `log-${lockLogCounter++}.txt`);
+  const path = `${extraPath ? `${extraPath}:` : ''}${fakeGhDir}:${process.env.PATH ?? ''}`;
+  const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'claim.mts'), ...args], {
+    cwd: lockRepo,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: path, GH_LOG: log },
+  });
+  let json: any = null;
+  try {
+    json = JSON.parse(r.stdout);
+  } catch {
+    json = null;
+  }
+  let logText = '';
+  try {
+    logText = readFileSync(log, 'utf8');
+  } catch {
+    logText = '';
+  }
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, json, log: logText };
+}
+
+function remoteBranches(): string[] {
+  return git(['ls-remote', '--heads', 'origin'], lockRepo)
+    .split('\n')
+    .map((l) => l.trim().split('\t')[1])
+    .filter((ref): ref is string => Boolean(ref))
+    .map((ref) => ref.replace(/^refs\/heads\//, ''));
+}
+
+// The Codex route takes the lock first: `codex/task-7` on the shared remote.
+git(['push', '-q', 'origin', 'main:refs/heads/codex/task-7'], lockRepo);
+
+const codexHeld = claim(['7', '--slug', 'x', '--no-lint']);
+check(
+  'an issue locked by the Codex route is held, exit 2',
+  codexHeld.status === 2 && codexHeld.json?.held === 'codex/task-7',
+  `${JSON.stringify(codexHeld.json)} (exit ${codexHeld.status})`,
+);
+check(
+  'a held claim never pushes the Claude route\'s own lock branch',
+  !remoteBranches().includes('feat/7-x'),
+  JSON.stringify(remoteBranches()),
+);
+check('a held claim does not assign or relabel the issue', !codexHeld.log.includes('issue edit'), codexHeld.log);
+
+// The pre-push read fails closed: a `git ls-remote` that cannot answer
+// refuses the claim rather than assuming the issue is free.
+const readFails = claim(['8', '--slug', 'y', '--no-lint'], fakeGitDir);
+check(
+  'a failed remote read refuses the claim, exit 1',
+  readFails.status === 1 && typeof readFails.json?.error === 'string' && /ls-remote/.test(readFails.json.error),
+  `${JSON.stringify(readFails.json)} (exit ${readFails.status})`,
+);
+check(
+  'a failed remote read never creates a branch',
+  !remoteBranches().includes('feat/8-y'),
+  JSON.stringify(remoteBranches()),
+);
+check('a failed remote read does not assign or relabel the issue', !readFails.log.includes('issue edit'), readFails.log);
 
 finish();
