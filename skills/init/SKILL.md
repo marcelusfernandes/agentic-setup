@@ -46,7 +46,9 @@ The script is idempotent. It:
    files are left alone unless `--force`;
 2. copies the plugin's `ci/` into `.github/scripts/agentic/` — always overwritten, that is
    plugin-owned code and updates must reach CI;
-3. merges the permission deny list into `.claude/settings.json` (union; your entries stay);
+3. merges the permission deny list into `.claude/settings.json` (union, minus the
+   installer's own superseded rules, which are replaced by their current wording; your
+   entries stay);
 4. installs `hooks/git-pre-push` as `.git/hooks/pre-push` (a foreign pre-push is reported,
    not replaced);
 5. turns on the repository's `allow_auto_merge` and `delete_branch_on_merge` settings

@@ -16,7 +16,8 @@ commit(repo, { 'a.txt': 'a' }, 'init');
 
 // AC1(a): force-push, in any form the hook is asked to catch.
 // AC1(b): a push that targets main/master, or a bare push while on it.
-// AC1 merge: any `gh pr merge` segment, `--admin` or not.
+// AC1 merge: any `gh pr merge` segment, `--admin` or not, and with a global
+// flag (`-R`/`--repo`, `--hostname`) typed before the `pr merge` subcommand.
 const denied = [
   'git push --force origin feat/1-x',
   'git push -f origin feat/1-x',
@@ -34,6 +35,13 @@ const denied = [
   'gh pr merge 42 --squash --delete-branch',
   'cd sub && gh pr merge 7 --merge', // a merge after && is still a command segment
   'echo "x; gh pr merge 1"', // no quote parsing: the `;` splits inside the string too (see the hook header)
+  'gh -R owner/repo pr merge 1', // #204: a global flag before the subcommand is still a merge
+  'gh -Rowner/repo pr merge 1', // the short flag with its value attached
+  'gh --repo owner/repo pr merge 1 --squash',
+  'gh --repo=owner/repo pr merge 1 --squash',
+  'gh --hostname github.example.com pr merge 1',
+  'gh -R owner/repo --hostname github.example.com pr merge 1', // two global flags
+  'git status && gh -R owner/repo pr merge --admin', // #204: after another segment, no PR number
   'git push origin main:refs/heads/main', // AC1/AC3: long-form refspec, remote side is protected
   'git push origin HEAD:refs/heads/master',
 ];
@@ -52,6 +60,8 @@ const allowed = [
   'node scripts/land.mts 1 --allow-label',
   'git commit -m "docs: never gh pr merge by hand"', // quoted, not a command segment
   'gh pr view 1 --json mergeStateStatus', // a neighbouring gh pr subcommand stays allowed
+  'gh -R owner/repo pr view 1 --json mergeStateStatus', // #204: skipping a global flag never widens past `pr merge`
+  'gh -R owner/repo pr list --search merge', // the skipped flag's value is not read as a subcommand
   'git push origin main:refs/heads/feat/x', // AC2/AC3: local side matches, remote side does not
   'git push origin refs/heads/main:feat/x', // AC2: local side is refs/heads/main, remote side does not match
 ];
@@ -92,6 +102,12 @@ check('protect-main says `--admin` is never a remedy', /--admin/.test(plain.stde
 const admin = bash('gh pr merge 1 --admin', repo);
 check('protect-main keeps the existing --admin wording', /bypasses the checks/.test(admin.stderr), admin.stderr);
 check('protect-main also names land.mts on the --admin form', /node scripts\/land\.mts <pr>/.test(admin.stderr), admin.stderr);
+
+// #204: the wording does not depend on where the subcommand starts.
+const globalAdmin = bash('gh -R owner/repo pr merge 1 --admin', repo);
+check('protect-main keeps the --admin wording behind a global flag', /bypasses the checks/.test(globalAdmin.stderr), globalAdmin.stderr);
+const globalPlain = bash('gh -R owner/repo pr merge 1', repo);
+check('protect-main uses the plain wording behind a global flag', /merging a pull request by hand is forbidden/.test(globalPlain.stderr), globalPlain.stderr);
 
 // AC3: no valve lifts the merge rule — a genuine manual merge leaves the session.
 check(
