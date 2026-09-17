@@ -1,36 +1,99 @@
 # agentic-setup
 
-A Codex setup for autonomous planning, specification and implementation, with durable
-human checkpoints for consequential decisions.
+Autonomous planning, specification and implementation on top of GitHub, with durable
+human checkpoints for the decisions that deserve a person.
 
-Keep one authorized objective moving: plan the next useful task, specify it, implement,
-review, validate and reconcile. Continue until its success criteria are met or a real
-decision or blocker needs the user. GitHub holds the plan and evidence across restarts.
-Status appears in GitHub labels, not `[ ]` or status prefixes in issue/PR titles.
-The coordinator reconciles labels after durable transitions; evidence and explicit human
-permissions remain authoritative. Starting the loop grants routine publication and validated
-merge within its boundaries unless you restrict them. `human` pauses affected work for
-decisions, not every PR. Acceptance criteria may still use checkboxes.
+Two routes ship from this repository and are peers: a **Claude Code plugin** and a
+**Codex** loop. They share one GitHub vocabulary (`state:`, `type:`, `human:pending` /
+`human:decided`), the rule that the plan and the evidence live in GitHub so a restart
+loses nothing, and the rule that status is a label — never a `[ ]` or a status prefix in
+an issue or PR title. Acceptance criteria may still use checkboxes. The coordinator
+reconciles labels after durable transitions; evidence and explicit human permissions
+remain authoritative.
 
-The default is one coordinator and one implementation at a time. No local task database,
-PID-based cleanup, mandatory milestones, scope globs or fixed cast of agent roles.
+The two routes do not share a runtime. Neither installer runs the other, they coexist in
+one repository, and one coordinator owns a given objective at a time — never run both
+against the same work. Keeping both available does not imply feature parity; a new
+behaviour on one route does not change the other unless its own contract, implementation
+and tests do so.
 
-## Choose a workflow
-
-Codex is the primary route below. The [Claude Code plugin](docs/legacy-claude.md)
-remains a supported installation option with its existing runtime, hooks, labels and
-contracts. These routes coexist in the repository; neither installer runs the other.
-Choose one coordinator per objective and never run both against the same work.
-Keeping Claude available does not require feature parity with Codex. Removing it would
-require a separate maintainer decision, not an automatic migration cleanup.
+| | Claude Code | Codex |
+|---|---|---|
+| the loop | milestones → issues → worktrees → PRs: an orchestrator dispatches implementers and a reviewer and merges through `land.mts` | one authorized objective, continued until its success criteria are met or a decision or blocker needs the user |
+| install | `/plugin install` ([below](#quick-start--claude-code)) | `codex plugin add` ([below](#quick-start--codex)) |
+| what it puts in your repository | GitHub templates, CI checks, a permission deny list, a pre-push hook, labels, optionally a branch ruleset | a self-contained skill directory (project-local install), or nothing at all (plugin) |
+| detail | [Claude Code plugin](docs/legacy-claude.md), [orchestration](docs/orchestration.md), [git, issues and PRs](docs/workflow.md) | [migration and validation](docs/codex.md), [plugin distribution](docs/codex-plugin.md), the [operating contract](.agents/skills/autonomous-loop/references/contract.md) |
 
 Open the [self-contained visual guide](docs/workflow-visual.html) in a browser for
 the lifecycle, milestone/issue/PR relationships, route-specific labels and human
 checkpoints. It works offline and includes installation and starter prompts.
 
-## Install as a Codex plugin
+## Prerequisites
 
-With Node.js 22.18+, Git, authenticated `gh` and a Codex CLI with plugin support:
+Node.js 22.18+, Git and an authenticated `gh`, for either route. There is no build step
+and no runtime dependency: the hooks, CI scripts and installers use `node:` built-ins
+only. Then the CLI of the route you pick — Claude Code with plugin support, or a Codex
+CLI with plugin support.
+
+## Quick start — Claude Code
+
+```text
+/plugin marketplace add marcelusfernandes/agentic-setup
+/plugin install agentic-setup@agentic-setup
+/agentic-setup:init --dry-run --milestone "M1 foundation"
+/agentic-setup:init --milestone "M1 foundation" --rules
+/agentic-setup:orchestrate
+```
+
+1. **Preview first.** `--dry-run` prints the exact report a real run would print and
+   changes nothing on disk or on GitHub — no file written, the pre-push hook untouched,
+   labels, milestone and ruleset only reported. Read it before dropping the flag.
+2. **Apply it.** `--milestone "<title>"` creates the milestone; `--rules` updates the
+   branch ruleset that already governs your default branch — whatever it is called — or
+   creates one when nothing does, so a pull request is required, squash is the only merge
+   method, `scope`, `negative-control` and your own test workflow's check are required,
+   and force-push and deletion are blocked. `--rules` on its own never turns a review gate
+   on, and is safe to run at any time; `--require-review` is the separate opt-in, and it
+   needs a second reviewing identity to exist first or every merge freezes on a repository
+   where one identity both merges and would have to approve. Other flags: `--no-gh`
+   (offline: skips labels, milestone and ruleset), `--force`, `--ruleset-name <name>`.
+   [`skills/init/SKILL.md`](skills/init/SKILL.md) holds the full list and the steps the
+   script cannot do for you.
+3. **Give the loop something to run.** `init` creates the milestone's title; you write its
+   **description** in the one format of `.github/MILESTONE_TEMPLATE.md` (objective, `Out of
+   this phase:`, `Exit criteria:` checkboxes, `Depends on:`) — those exit criteria are what
+   says the phase is finished. Then open the milestone's **parent issue**, listing its
+   sub-issues, and the task issues themselves from `.github/ISSUE_TEMPLATE/task.md`
+   (Context, Goal, Acceptance criteria, Proof, Files, Dependencies). The `issue-lint`
+   workflow `init` installs checks that contract before an issue is dispatched, and an
+   issue's `Files` globs are exactly what the `scope` check enforces on its PR.
+4. **Run it.** `/agentic-setup:orchestrate` runs the orchestrator's loop across every open
+   milestone — reconcile, dispatch ready issues to implementers in worktrees, review,
+   merge, continue — to completion, not one pass, stopping only for the closed list of
+   reasons [below](#human-decisions-and-stop-rules).
+
+For an unattended run with nobody watching the session, start Claude Code in print mode
+from a local checkout of this plugin:
+
+```bash
+claude --plugin-dir <path-to-the-agentic-setup-plugin-checkout> \
+  -p "/agentic-setup:orchestrate" \
+  --permission-mode acceptEdits \
+  --allowedTools Bash Read Edit Write Glob Grep Agent
+```
+
+`--plugin-dir` points at a checkout rather than the marketplace install on purpose: it is
+what makes `CLAUDE_PLUGIN_ROOT` resolve for every script and hook invocation, and what
+loads `hooks/hooks.json` — whose `WorktreeCreate` entry puts each agent's worktree outside
+`.claude/`, a path whose protected-path rules denied a headless session's writes outright.
+`--permission-mode acceptEdits` accepts file edits without a prompt; what actually keeps
+the session from pushing to `main` or writing outside its worktree are the two `PreToolUse`
+hooks, not that flag. A turn or time budget is an ordinary flag around the same command
+(`--max-turns <n>`, or an external `timeout <seconds>`), never invented by the orchestrator.
+[orchestration.md#headless](docs/orchestration.md#headless) explains each flag and the
+fallback for a loaded plugin that predates the worktree hook.
+
+## Quick start — Codex
 
 ```sh
 codex plugin marketplace add marcelusfernandes/agentic-setup --ref main
@@ -43,7 +106,30 @@ settings into the project. Authorize an objective explicitly using the prompt be
 See [plugin distribution](docs/codex-plugin.md) for local preview, updates, helper paths
 and coexistence with existing installations. The native plugin does not load Claude.
 
-## Alternative: project-local installation
+Fill in the project's actual validation commands. With project-local installation,
+ask the following; for the plugin, replace `$autonomous-loop` with
+`$agentic-setup:autonomous-loop`:
+
+```text
+Use $autonomous-loop to achieve <observable outcome>.
+Success criteria: <evidence>.
+Boundaries: <scope, constraints, non-goals>.
+Publishing issues/branches/PRs and merging after validation and review are authorized.
+Pause affected work for human decisions; continue independent tasks.
+Human decision maker: @my-github-login.
+```
+
+The skill creates the authorized GitHub objective and works from it. To resume, use
+`$autonomous-loop` with the same objective issue number. Installing alone starts no
+objective. Starting the loop grants routine publication and validated merge within its
+boundaries unless you restrict them; `human` pauses affected work for decisions, not
+every PR.
+
+On this route the default is one coordinator and one implementation at a time, with no
+local task database, PID-based cleanup, mandatory milestones, scope globs or fixed cast of
+agent roles.
+
+### Alternative: project-local installation
 
 Requires Node.js 22.18+, Git, authenticated `gh` and Codex with project skills.
 The optional headless runner uses `codex exec` with JSON events and an output schema;
@@ -64,23 +150,7 @@ skill files, never an existing `AGENTS.md`.
 Symbolic links in planned destination paths are refused before any installation writes,
 including with `--force`.
 
-Fill in the project's actual validation commands. With project-local installation,
-ask the following; for the plugin, replace `$autonomous-loop` with
-`$agentic-setup:autonomous-loop`:
-
-```text
-Use $autonomous-loop to achieve <observable outcome>.
-Success criteria: <evidence>.
-Boundaries: <scope, constraints, non-goals>.
-Publishing issues/branches/PRs and merging after validation and review are authorized.
-Pause affected work for human decisions; continue independent tasks.
-Human decision maker: @my-github-login.
-```
-
-The skill creates the authorized GitHub objective and works from it. To resume, use
-`$autonomous-loop` with the same objective issue number.
-
-## Optional headless loop
+### Optional headless loop
 
 With project-local installation, from the target repository:
 
@@ -88,7 +158,11 @@ With project-local installation, from the target repository:
 node .agents/skills/autonomous-loop/scripts/run.mts 123 --max-turns 12
 ```
 
-With plugin installation, use the loaded skill's `scripts/run.mts` instead; see
+The objective's issue number is positional; the only options are `--max-turns <1..100>`
+and `--profile <name>`. With plugin installation, use the loaded skill's `scripts/run.mts`
+instead — take `installedPath` from the JSON installation result and run
+`<installedPath>/skills/autonomous-loop/scripts/run.mts` from the target repository, never
+a hardcoded cache version; see
 [cache-relative execution](docs/codex-plugin.md#locate-helpers-and-update).
 
 Each invocation advances bounded Codex transitions, reconciles GitHub and stops on a
@@ -107,6 +181,64 @@ Run logs live under Git's metadata directory in `agentic-runs/`, outside tracked
 The summary records CLI invocations, duration and available input/cached/output token
 counts. Cached input is part of input, not an extra charge to add again. The turn limit
 is not a hard token/spending cap. Logs may contain sensitive task/tool content.
+
+## What `init` writes into your repository
+
+Only the Claude route's `init` changes a repository; the Codex plugin writes nothing into
+it, and the project-local Codex installer writes only the skill directory named above.
+`init` is idempotent, and `--dry-run` shows the whole report before anything happens. It:
+
+- copies the GitHub templates into `.github/` — the issue and PR templates,
+  `MILESTONE_TEMPLATE.md`, and the `guard-main`, `agentic-checks` and `issue-lint`
+  workflows — plus `.worktreeinclude` at the root; a file that already exists is left
+  alone unless you pass `--force`;
+- copies the plugin's `ci/` into `.github/scripts/agentic/` (`scope-check.mts`,
+  `negative-control.mts`, `issue-lint.mts` and their `lib/`). These are plugin-owned and
+  always overwritten, so an update reaches CI;
+- merges the permission deny list into `.claude/settings.json` as a union — your own
+  entries stay;
+- installs `hooks/git-pre-push` as `.git/hooks/pre-push`; a pre-push hook it did not write
+  is reported, never replaced;
+- turns on the repository's `allow_auto_merge` and `delete_branch_on_merge` settings,
+  which `land.mts` depends on;
+- seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:decided`
+  labels, and the milestone passed to `--milestone` (its title; you write the description).
+  An existing bare `human` label is left as found;
+- with `--rules` only, updates the branch ruleset that governs the default branch, or
+  creates one. Everything that ruleset carried and the installer does not manage — its
+  name, conditions, bypass actors, rules of other types — is kept.
+
+What it never touches: your source, your tests and your own workflows; the `scope:` labels
+are yours to add. Without `--rules` no rulesets call is made at all, and `--no-gh` skips
+labels, milestone and ruleset entirely for an offline run. `AGENTIC_REVIEWER_TOKEN` is
+never written anywhere by the installer. Installing this route preserves an existing
+Codex installation's skills, project instructions and `.codex` settings, and the Codex
+installer likewise preserves this route's instructions, settings, hooks and CI.
+
+## Human decisions and stop rules
+
+`human:pending` on a record means a person must decide before that work continues;
+`human:decided` records that a decision was made and is kept as the audit trail — it never
+blocks. The two are exclusive and matched by exact name, and neither is an approval in
+itself: a label never grants permission. On the Claude route, `reconcile.mts` keeps
+`human:pending` issues out of the ready list and `claim.mts` refuses them, and agents never
+add, remove or replace `human:decided` — a person does. On the Codex route,
+`human:pending` on the objective pauses all work; on a task or its PR it pauses that task
+and its dependents, while independent tasks continue.
+
+The Claude orchestrator's loop runs to completion, not one pass, and stops only for three
+reasons: no open milestone; every open issue in the milestone is `state:blocked`,
+`human:pending` or otherwise waiting on a person — including a `reconcile`/`gh`/`git` call
+itself failing, which needs a person rather than a retry; or an explicit turn or time
+budget given on the command line is spent. It then comments a summary on the milestone's
+parent issue. [orchestration.md#stop-reasons](docs/orchestration.md#stop-reasons) is the
+contract.
+
+The Codex runner reports the equivalent in the JSON it prints for each invocation:
+`complete`, `waiting_human`, `waiting_ci`, `blocked`, or `limit` when the turn budget is
+spent (`blocked` and `limit` exit 2). Resume the same command once the external state has
+changed. The [operating contract](.agents/skills/autonomous-loop/references/contract.md)
+holds the issue formats, checkpoint answers and ownership rules.
 
 ## Human checkpoints and merge safety
 
@@ -128,9 +260,6 @@ required passing server checks and stale-approval dismissal. The merge is pinned
 reviewed commit. If that policy is unavailable, automatic merge stops; no fallback bypass.
 The setup does not provide an identity security boundary when agent and human share
 credentials. Use separate execution/reviewer identities for stronger isolation.
-
-Read the [operating contract](.agents/skills/autonomous-loop/references/contract.md) for
-issue formats, checkpoint answers and ownership rules.
 
 To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
@@ -160,6 +289,20 @@ The installer coexistence tests exercise both installation orders with actual sc
 and verify the other route's instructions/settings/hooks/CI survive unchanged. Existing
 required CI workflows remain intact until their server-side requirements are migrated
 deliberately; installing Codex does not perform that migration.
+
+## Where the detail lives
+
+| doc | what it covers |
+|---|---|
+| [docs/legacy-claude.md](docs/legacy-claude.md) | the Claude Code route's own page: installation, contracts, coexistence |
+| [docs/orchestration.md](docs/orchestration.md) | the orchestrator, roles, stop reasons, decision log, milestone closing, headless, hooks |
+| [docs/workflow.md](docs/workflow.md) | branches, milestones, labels, the issue and PR templates, required checks, merge |
+| [docs/decisions.md](docs/decisions.md) | the numbered decisions behind the mechanisms, and why each one stands |
+| [docs/adopt.md](docs/adopt.md) | adopting an existing repository: the read-only inventory and the plan issue it can open |
+| [docs/codex.md](docs/codex.md) | the Codex route's runtime boundaries, migration boundary and validation limits |
+| [docs/codex-plugin.md](docs/codex-plugin.md) | native Codex plugin distribution: install, updates, helper paths, packaging |
+| [docs/agents.md](docs/agents.md) | the opt-in discipline agent catalogue |
+| [contract.md](.agents/skills/autonomous-loop/references/contract.md) | the Codex loop's operating contract: issue formats, checkpoint answers, ownership |
 
 ## License
 
