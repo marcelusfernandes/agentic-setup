@@ -463,9 +463,10 @@ const milestoneLint = milestone === null ? null : lintMilestoneDescription(miles
 
 // 2. open issues: the milestone's, or — under --no-milestone — the ones that
 // carry none. GitHub's own `no:milestone` search qualifier is not used: the
-// search index lags a write by seconds to minutes, and an issue created in
-// this pass would be missing from exactly the report meant to make it
-// visible. The repository-wide open list carries `milestone` per issue, so
+// search index can lag a write (the L6 lesson of #129 — a listing right after
+// a write may lag), and an issue created in this pass would then be missing
+// from exactly the report meant to make it visible. The repository-wide open
+// list carries `milestone` per issue, so
 // the filter is a local, immediate `milestone === null` on the same
 // `gh issue list` call shape the milestone branch uses — the two sets are
 // disjoint by construction, never merged.
