@@ -271,8 +271,13 @@ review and required-check protections still apply. A milestone can group the pil
 [`docs/agents.md`](docs/agents.md) describes an opt-in catalogue of preset discipline
 agent cards (QA, architecture, backend, frontend, design, product, research, planner,
 investigator, security-reviewer, data-migrations, devops, release-manager, profiler)
-under `templates/agents/`, in both routes' formats. Nothing installs it yet; it is
-source material for a person to read and adapt by hand until the installer flag ships.
+under `templates/agents/`, in both routes' formats. What that phase shipped, what it
+did not, and the decision that retired the catalogue are in
+[`docs/closeout/M9.md`](docs/closeout/M9.md), dated and carrying the `main` SHA it was
+true at. What every other finished phase shipped is in
+[`docs/closeout/`](docs/closeout/); what is still in flight is the
+[open milestones](https://github.com/marcelusfernandes/agentic-setup/milestones?state=open).
+Neither is a paragraph in this file, because a paragraph here carries no date.
 
 ## Development and migration
 
@@ -299,6 +304,7 @@ deliberately; installing Codex does not perform that migration.
 | [docs/orchestration.md](docs/orchestration.md) | the orchestrator, roles, stop reasons, decision log, milestone closing, headless, hooks |
 | [docs/workflow.md](docs/workflow.md) | branches, milestones, labels, the issue and PR templates, required checks, merge |
 | [docs/decisions.md](docs/decisions.md) | the numbered decisions behind the mechanisms, and why each one stands |
+| [docs/closeout/](docs/closeout/) | what each phase shipped: one file per milestone, dated, with the merge commit of every issue |
 | [docs/adopt.md](docs/adopt.md) | adopting an existing repository: the read-only inventory and the plan issue it can open |
 | [docs/codex.md](docs/codex.md) | the Codex route's runtime boundaries, migration boundary and validation limits |
 | [docs/codex-plugin.md](docs/codex-plugin.md) | native Codex plugin distribution: install, updates, helper paths, packaging |
