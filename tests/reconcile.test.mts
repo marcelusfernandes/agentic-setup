@@ -16,7 +16,13 @@ import { check, cleanup, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harn
 const FAKE_GH = `#!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
   "api repos/{owner}/{repo}/milestones")
-    echo '[{"number":2,"title":"M2","state":"open"},{"number":1,"title":"M1","state":"open"}]'
+    cat <<'JSON'
+[
+  {"number":2,"title":"M2","state":"open","description":"Only an objective sentence, and nothing else.\\n"},
+  {"number":1,"title":"M1","state":"open","description":"The loop reports what a phase still owes.\\n\\nOut of this phase:\\n- anything a person must decide\\n\\nExit criteria:\\n- [ ] every sub-issue closed\\n- [ ] docs equal code\\n\\nDepends on: none\\n"},
+  {"number":3,"title":"M3","state":"open","description":null}
+]
+JSON
     ;;
   "issue list")
     args="$*"
@@ -49,6 +55,9 @@ case "\${1:-} \${2:-}" in
   {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]}
 ]
 JSON
+        ;;
+      *"--milestone M2"*|*"--milestone M3"*)
+        echo '[]'
         ;;
       *)
         echo "fake-gh: unknown milestone" >&2
@@ -544,6 +553,50 @@ check(
   'the default run fetches with --prune first and no longer sees the deleted branch, so it is stale instead of resumable (AC1/AC3)',
   fetchedResumable50 === undefined && fetchedStale50 !== undefined,
   JSON.stringify({ fetchedResumable50, fetchedStale50 }),
+);
+
+// --- #171: milestoneLint reports whether the reconciled milestone's
+// description holds the one format `.github/MILESTONE_TEMPLATE.md` fixes —
+// an objective, `Out of this phase:`, `Exit criteria:` as `- [ ]` checkboxes
+// and `Depends on:`. It reports only: a non-conforming description never
+// fails the pass and never changes which milestone was picked. ------------
+function parseJson(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+check(
+  'a conforming milestone description lints ok with nothing missing',
+  out?.milestoneLint?.ok === true && Array.isArray(out?.milestoneLint?.missing) && out.milestoneLint.missing.length === 0,
+  JSON.stringify(out?.milestoneLint),
+);
+
+const rObjectiveOnly = reconcile('--milestone', 'M2');
+check('reconcile exits 0 on a milestone whose description is only an objective', rObjectiveOnly.status === 0, `${rObjectiveOnly.stdout}\n${rObjectiveOnly.stderr}`);
+const outObjectiveOnly = parseJson(rObjectiveOnly.stdout);
+check(
+  'a description with only an objective misses out-of-phase, exit-criteria and depends-on, and nothing else',
+  outObjectiveOnly?.milestoneLint?.ok === false &&
+    JSON.stringify(outObjectiveOnly?.milestoneLint?.missing) === JSON.stringify(['out-of-phase', 'exit-criteria', 'depends-on']),
+  JSON.stringify(outObjectiveOnly?.milestoneLint),
+);
+check(
+  'the lint never changes which milestone was reconciled',
+  outObjectiveOnly?.milestone === 'M2',
+  JSON.stringify(outObjectiveOnly?.milestone),
+);
+
+const rNoDescription = reconcile('--milestone', 'M3');
+check('reconcile exits 0 on a milestone with no description at all', rNoDescription.status === 0, `${rNoDescription.stdout}\n${rNoDescription.stderr}`);
+const outNoDescription = parseJson(rNoDescription.stdout);
+check(
+  'a milestone with no description at all misses all four parts',
+  outNoDescription?.milestoneLint?.ok === false &&
+    JSON.stringify(outNoDescription?.milestoneLint?.missing) === JSON.stringify(['objective', 'out-of-phase', 'exit-criteria', 'depends-on']),
+  JSON.stringify(outNoDescription?.milestoneLint),
 );
 
 // --- default milestone: lowest-numbered open milestone, no --milestone -----
