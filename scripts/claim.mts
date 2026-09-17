@@ -8,6 +8,9 @@
 // scripts/lib/issues.mts (feat -> type:feature, fix -> type:bug; chore,
 // test and ci all -> type:infra). The implementer no longer labels its own
 // PR with it; the orchestrator copies `type:` and `scope:` across at step 4.
+// Claim time is where the derived label takes over from whatever the
+// planner seeded: any other `type:` label the issue already carries is
+// removed in the same edit, so the issue never holds two of them.
 //
 //   node scripts/claim.mts <n> --slug <slug> [--type <type>] [--no-lint]
 //
@@ -49,7 +52,7 @@
 // state:ready, an open blocker, no ## Files bullet, issue-lint) run before
 // any push, so a refusal changes nothing. The push is the lock: only a
 // successful push is followed by `gh issue edit` (assignee, `state:` and
-// `type:`). Run from the repository
+// `type:`, plus the removal of any disagreeing `type:`). Run from the repository
 // root — git commands use the current working directory. Node built-ins
 // only.
 //
@@ -253,15 +256,34 @@ if (push.status === 0) {
 // --- 6. only now: assign and relabel ----------------------------------------
 // The `type:` label rides on the same edit as the state change: the
 // orchestrator owns it, so no agent ever labels its own work (#135). The
-// branch type maps through TYPE_LABELS — every BRANCH_TYPES value has a
-// label, so `typeLabel` cannot return null for a validated type, but the
-// nullable shape is honoured rather than asserted away.
+// branch type maps through TYPE_LABELS; `typeLabel` is nullable for an
+// arbitrary string, but `type` was validated against BRANCH_TYPES above
+// (or derived by `titleType`, which only returns a BRANCH_TYPES member),
+// and every BRANCH_TYPES value has a label — so the check below is a real
+// invariant that never fires on the validated path, not a fallback for a
+// case the mapping allows. It reports through errorOut like every other
+// failure here: never a stack trace (#213).
+//
+// Whoever opened the issue may have seeded a `type:` label of their own,
+// and claim time is when the derived one takes over: every `type:` label
+// the issue currently carries other than the derived one is removed in
+// this same edit, so the issue is never left holding two with no record of
+// which the orchestrator meant. A seeded label that already agrees is left
+// alone — `--remove-label X --add-label X` in one edit has no defined
+// outcome and could strip the label this step exists to write.
 const label = typeLabel(type);
+if (!label) errorOut(`no type: label for branch type ${type}`);
+
+const staleTypeLabels = (issue.labels ?? [])
+  .map((l) => l.name)
+  .filter((name) => name.startsWith('type:') && name !== label);
+
 gh([
   'issue', 'edit', String(number),
   '--add-assignee', '@me',
   '--add-label', 'state:in-progress',
-  ...(label ? ['--add-label', label] : []),
+  '--add-label', label,
+  ...staleTypeLabels.flatMap((name) => ['--remove-label', name]),
   '--remove-label', 'state:ready',
 ]);
 
