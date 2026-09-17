@@ -24,7 +24,9 @@ Two roles:
    rather than assumed; see `skills/orchestrate/SKILL.md` step 0 for the invocation and
    what each field means), instead of reconciling from memory. It fetches `origin`
    with prune itself first (`--no-fetch` reads the local refs left by the last fetch,
-   for an offline check):
+   for an offline check; `--no-milestone` reconciles the open issues that carry no
+   milestone at all, where `milestone` and `milestoneLint` are both `null`, and is a
+   usage error together with `--milestone`):
    carrying `human:pending` or a legacy bare `human`, whatever its state → not
    dispatched; a person decides and flips it to `human:decided` (`humanPending`)
    in-progress with no PR and no remote branch → ready (`stale`)
