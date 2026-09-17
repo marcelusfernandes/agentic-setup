@@ -53,11 +53,17 @@ node "$RECONCILE" --milestone "<current>"
 
 `reconcile.mts` runs `git fetch --prune origin` itself before reading remote branches, so
 this makes one network call for git, not two. Without `--milestone`, it picks the open
-milestone with the lowest number; `--no-fetch` skips the fetch and reads the local refs
+milestone with the lowest number; `--no-milestone` reconciles the other set instead — the
+open issues that carry no milestone at all, so a small fix that reasonably went without
+one is claimed and landed through the scripts rather than by hand — and passing it
+together with `--milestone` is a usage error naming both, never a precedence;
+`--no-fetch` skips the fetch and reads the local refs
 left by the last one, for an offline check against the last fetch. Fields:
 
-- `milestone` — the title it reconciled against.
-- `milestoneLint` — `{ ok, missing }`: whether that milestone's description holds the one
+- `milestone` — the title it reconciled against, or `null` under `--no-milestone`: there
+  is no milestone to name.
+- `milestoneLint` — `{ ok, missing }`, or `null` under `--no-milestone` (no milestone, so
+  no description to lint): whether that milestone's description holds the one
   format of `.github/MILESTONE_TEMPLATE.md` (`docs/workflow.md`, "Milestones"). `missing`
   names the absent parts — `objective`, `out-of-phase`, `exit-criteria` (the label and at
   least one `- [ ]` item under it), `depends-on` — and `ok` is `missing` being empty. It is a
