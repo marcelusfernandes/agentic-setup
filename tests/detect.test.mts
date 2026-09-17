@@ -115,12 +115,14 @@ check(
 );
 
 // No marker at all, but a tracked test_*.py at depth: the last-resort signal.
+// It names the stack and answers no command (#277) — see the executed cases at
+// the end of this file for why no stdlib command is answerable here.
 repo = tempRepo();
 commit(repo, { 'engine/runner.py': '', 'engine/test_engine.py': '' }, 'python scripts only');
 c = detectCommands(repo, {});
 check(
-  'a tracked test_*.py with no marker detects python',
-  c.test === 'python3 -m unittest discover' && c.check === null && c.stack === 'python' && c.source === 'detected',
+  'a tracked test_*.py with no marker names python and answers no command',
+  c.test === null && c.check === null && c.stack === 'python' && c.source === 'detected',
   JSON.stringify(c),
 );
 
@@ -128,8 +130,8 @@ repo = tempRepo();
 commit(repo, { 'engine_test.py': '' }, 'python with the suffix spelling');
 c = detectCommands(repo, {});
 check(
-  'a tracked *_test.py with no marker detects python',
-  c.test === 'python3 -m unittest discover' && c.stack === 'python',
+  'a tracked *_test.py with no marker names python and answers no command',
+  c.test === null && c.stack === 'python',
   JSON.stringify(c),
 );
 
@@ -137,8 +139,8 @@ repo = tempRepo();
 commit(repo, { 'tests/helpers.py': '' }, 'python with a tests directory');
 c = detectCommands(repo, {});
 check(
-  'a tracked tests/ holding a .py with no marker detects python',
-  c.test === 'python3 -m unittest discover' && c.stack === 'python',
+  'a tracked tests/ holding a .py with no marker names python and answers no command',
+  c.test === null && c.stack === 'python',
   JSON.stringify(c),
 );
 
@@ -192,12 +194,12 @@ check(
   JSON.stringify(c),
 );
 
-// --- The detected command, actually run (known limitation of #256) ---------
-// CPython 3.11 dropped namespace-package recursion from `unittest discover`,
-// so the command the criterion names collects nothing on the very layout this
-// detector exists for. These two cases run it instead of describing it. python3
-// is not a dependency of this repository, so an absent (or pre-3.11)
-// interpreter is a skip and never a failure, the way the shellcheck cases in
+// --- Why the fallback answers no command (#277), by running the candidates --
+// The detector names the stack but leaves `test` null. These cases are the
+// reason, executed rather than described: they spawn each stdlib candidate on
+// the layout finding F1 of #96 describes and read its exit code. python3 is not
+// a dependency of this repository, so an absent (or pre-3.11) interpreter is a
+// skip and never a failure, the way the shellcheck cases in
 // tests/adopt.test.mts skip.
 const PY_CASE = [
   'import unittest',
@@ -209,36 +211,88 @@ const PY_CASE = [
   '',
 ].join('\n');
 
+// The same test written the way a repository with no packaging marker often
+// writes it: a bare function, which `unittest` collects under no layout at all.
+const PY_BARE_CASE = ['def test_ok():', '    assert 1 == 1', ''].join('\n');
+
+// The two candidates #277 weighed and rejected, kept as literals: the detector
+// no longer answers either, so the cases below name them themselves.
+const REJECTED_DISCOVER = 'python3 -m unittest discover';
+const REJECTED_START_DIR = 'python3 -m unittest discover -s engine';
+
 const version = spawnSync('python3', ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], { encoding: 'utf8' });
 const [major = 0, minor = 0] = (version.stdout ?? '').trim().split('.').map(Number);
 const recursesIntoNamespacePackages = version.status !== 0 || major < 3 || (major === 3 && minor < 11);
 
+const run = (command: string, cwd: string): { status: number | null; out: string } => {
+  const r = spawnSync(command, [], { cwd, shell: true, encoding: 'utf8' });
+  return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+};
+
+// The two trees the candidates run on, and what the detector answers for each.
+// Detection is pure, so these two cases need no interpreter and stay outside
+// the version guard below; only the spawned commands are opportunistic.
+repo = tempRepo();
+commit(repo, { 'engine/test_engine.py': PY_CASE }, 'tests one directory down, no __init__.py');
+c = detectCommands(repo, {});
+check(
+  'the marker-less tree that the rejected commands run on answers no command',
+  c.test === null && c.stack === 'python' && c.source === 'detected',
+  JSON.stringify(c),
+);
+
+const bare = tempRepo();
+commit(bare, { 'engine/test_engine.py': PY_BARE_CASE }, 'a bare test function one directory down');
+const bareCommands = detectCommands(bare, {});
+check(
+  'the bare-function tree answers no command either',
+  bareCommands.test === null && bareCommands.stack === 'python',
+  JSON.stringify(bareCommands),
+);
+
 if (recursesIntoNamespacePackages) {
   check(
-    `the detected python command is not run here (python3 ${version.status === 0 ? `${major}.${minor}` : 'absent'}: needs >= 3.11)`,
+    `the rejected python commands are not run here (python3 ${version.status === 0 ? `${major}.${minor}` : 'absent'}: needs >= 3.11)`,
     true,
   );
 } else {
-  repo = tempRepo();
-  commit(repo, { 'engine/test_engine.py': PY_CASE }, 'tests one directory down, no __init__.py');
-  c = detectCommands(repo, {});
-  let run = spawnSync(String(c.test), [], { cwd: repo, shell: true, encoding: 'utf8' });
-  let out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  // Candidate 1, what #256 answered: it collects nothing on this very layout.
+  let r = run(REJECTED_DISCOVER, repo);
   check(
-    'the detected command collects nothing when the test package has no __init__.py',
-    c.test === 'python3 -m unittest discover' && run.status === 5 && /Ran 0 tests/.test(out) && /NO TESTS RAN/.test(out),
-    `${c.test} -> exit ${run.status}\n${out}`,
+    '`unittest discover` collects nothing when the test package has no __init__.py',
+    r.status === 5 && /Ran 0 tests/.test(r.out) && /NO TESTS RAN/.test(r.out),
+    `${REJECTED_DISCOVER} -> exit ${r.status}\n${r.out}`,
   );
 
-  // The same tree with an __init__.py runs the test, which is what makes the
-  // case above a limitation of the command and not of the detection.
-  writeFileSync(join(repo, 'engine', '__init__.py'), '');
-  run = spawnSync(String(c.test), [], { cwd: repo, shell: true, encoding: 'utf8' });
-  out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  // Candidate 2, the obvious repair: a start directory does rescue *this* tree,
+  // which is why it looks like the fix.
+  r = run(REJECTED_START_DIR, repo);
   check(
-    'the same tree with an __init__.py runs the test the detector found',
-    run.status === 0 && /Ran 1 test\b/.test(out) && /\bOK\b/.test(out),
-    `${c.test} -> exit ${run.status}\n${out}`,
+    '`unittest discover -s engine` does run a TestCase one directory down',
+    r.status === 0 && /Ran 1 test\b/.test(r.out) && /\bOK\b/.test(r.out),
+    `${REJECTED_START_DIR} -> exit ${r.status}\n${r.out}`,
+  );
+
+  // ...but only for a TestCase. The same layout with a bare test function —
+  // what a marker-less repository usually holds — collects nothing again, so
+  // the start directory buys no general answer. This is the case that decides
+  // the issue: no stdlib command fits the trees this detector fires on.
+  r = run(REJECTED_START_DIR, bare);
+  check(
+    '`unittest discover -s engine` collects nothing from a bare test function',
+    r.status === 5 && /Ran 0 tests/.test(r.out) && /NO TESTS RAN/.test(r.out),
+    `${REJECTED_START_DIR} -> exit ${r.status}\n${r.out}`,
+  );
+
+  // An __init__.py makes candidate 1 work, which is what the adopter can do for
+  // themselves — and what the `cannot-run` message points them at. Kept so the
+  // reason above stays a fact about the command, not about the detection.
+  writeFileSync(join(repo, 'engine', '__init__.py'), '');
+  r = run(REJECTED_DISCOVER, repo);
+  check(
+    'the same tree with an __init__.py runs under plain `unittest discover`',
+    r.status === 0 && /Ran 1 test\b/.test(r.out) && /\bOK\b/.test(r.out),
+    `${REJECTED_DISCOVER} -> exit ${r.status}\n${r.out}`,
   );
 }
 

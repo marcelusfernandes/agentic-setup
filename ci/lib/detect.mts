@@ -19,9 +19,11 @@
 // Python one: it fires only when every marker above it missed, so no
 // repository that detects today changes its answer because it happens to ship
 // a stray .py test file. Its signal is what git tracks, so a checked-out
-// virtualenv or a vendored copy is not a test tree. Crash policy: any failure
-// of the `git ls-files` probe (git absent, not a repository, non-zero status)
-// yields no signal, which is the answer this file already gave — `unknown`.
+// virtualenv or a vendored copy is not a test tree. It names the stack and
+// answers no test command at all — see its own header for why nothing in the
+// standard library fits these trees. Crash policy: any failure of the
+// `git ls-files` probe (git absent, not a repository, non-zero status) yields
+// no signal, which is the answer this file already gave — `unknown`.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -98,25 +100,30 @@ function trackedPythonFiles(root: string): string[] {
 // Last resort, only after every marker above missed: a repository whose sole
 // Python signal is the tests themselves — the layout the four packaging
 // markers cannot see (scripts plus `engine/test_engine.py` behind its own
-// runner). `python3 -m unittest discover` is the stdlib runner, so it needs
-// nothing installed; `check` stays null because no linter is implied.
+// runner). It names the stack and answers **no command** (`test: null`,
+// `check: null`), the same shape `fromPackageJson` already returns for a
+// package.json with no test script.
 //
-// KNOWN LIMITATION — the command, not the detector. CPython 3.11 dropped
-// namespace-package recursion from `unittest discover`: it descends into a
-// subdirectory only when that directory holds an `__init__.py`. So on the very
-// layout this detector exists for — tests one directory down, no `__init__.py`
-// — the command runs, collects nothing, prints `NO TESTS RAN` and exits 5.
-// `ci/negative-control.mts` reads that as a baseline failing its own tests
-// (`inconclusive`), and the adopter is handed a command that finds none of
-// their tests. Detecting the stack is still the improvement the criterion
-// asked for, and the two cases at the end of `tests/detect.test.mts` run the
-// command and pin both halves of this behaviour rather than describing it.
-// Which command a marker-less Python tree should really get — `pytest`, a
-// discovered start directory, or no command at all so the adopter reads
-// `cannot-run` instead of `inconclusive` — is issue #277, whose reasoning is
-// the orchestrator note of 2026-09-17 on issue #256. Do not substitute a
-// command here: #277 decides it, updates the two cases that pin this
-// behaviour, and removes this block once it no longer describes the code.
+// Why no command (#277). Nothing in the standard library collects these trees
+// reliably, and there is no marker here to say what is installed:
+//   - `python3 -m unittest discover` — CPython 3.11 dropped namespace-package
+//     recursion, so it descends into a subdirectory only when that directory
+//     holds an `__init__.py`. On the very layout this detector exists for it
+//     collects nothing, prints `NO TESTS RAN` and exits 5.
+//   - `python3 -m unittest discover -s <dir>` — rescues that one tree, but
+//     only when the tests are `unittest.TestCase` subclasses, and it cannot
+//     name a start directory when the tests sit in more than one.
+//   - `pytest` — would collect both spellings, but the absence of every
+//     packaging marker is exactly the evidence that nothing is installed.
+// A command that runs and collects nothing is worse than none: `exit 5` makes
+// `ci/negative-control.mts` read the baseline as failing its own tests
+// (`inconclusive`), which hides the real problem. With no command the adopter
+// reads `cannot-run`, whose detail names the escapes — `AGENTIC_TEST_CMD`, a
+// `proof/<slug>.json` command, and a `Makefile` with a `test:` target (#257) —
+// and naming the stack is still the improvement #256 asked for: `adopt`'s
+// inventory and the stop gate both report `python` instead of `unknown`.
+// The executed cases at the end of `tests/detect.test.mts` spawn each rejected
+// candidate and read its exit code, so this reasoning is run, not described.
 function fromPythonTestTree(root: string): Commands | null {
   const files = trackedPythonFiles(root);
   const isTestTree = files.some((path) => {
@@ -124,7 +131,7 @@ function fromPythonTestTree(root: string): Commands | null {
     return PY_TEST_FILE.test(basename(path)) || parts.slice(0, -1).includes('tests');
   });
   if (!isTestTree) return null;
-  return { test: 'python3 -m unittest discover', check: null, stack: 'python' };
+  return { test: null, check: null, stack: 'python' };
 }
 
 function fromGo(root: string): Commands | null {
