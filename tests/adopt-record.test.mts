@@ -17,9 +17,11 @@
 // Negative control: on the base there is no `--record` flag at all, so every
 // `--record` spawn exits 1 on usage with nothing to parse, and no report
 // carries a `record` key or the `record:stale` gap — nothing on the base
-// compares a record with detection anywhere in the tree.
+// compares a record with detection anywhere in the tree. Section M is the
+// exception: `record.mts` is tracked, so its red there is an assertion red —
+// the file exports six names nothing outside it reads.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
@@ -409,5 +411,59 @@ if (IS_ROOT) {
   check('a failed write never reports { written: true }', lNotWrittenOut?.written === undefined, lNotWritten.stdout);
   check('a failed write leaves the record as it found it', readRaw(locked) === before, readRaw(locked));
 }
+
+// --- M: every export of record.mts has a caller (#233) ----------------------
+// An export nothing calls reads as part of the record's contract without
+// being one: `LABELS_SOURCE` and five others were placeholders for steps that
+// had not landed, and a reviewer of #193 read them as the shape the record
+// promises. The pin is the cheapest thing that makes the next speculative
+// export fail the suite instead of shipping — a name that is genuinely
+// needed gets exported together with the call that needs it.
+//
+// The source files are walked rather than listed with `git ls-files`: the
+// negative control copies the test files onto a checkout of the base, and
+// this case must not depend on that checkout being a git repository.
+const RECORD_REL = join('scripts', 'lib', 'adopt', 'record.mts');
+const RECORD_SRC = readFileSync(join(ROOT, RECORD_REL), 'utf8');
+
+/**
+ * A file's code, with its block and line comments removed. A prose mention
+ * is not a caller — this very case names `LABELS_SOURCE` in the paragraph
+ * above, and counting that would let the pin pass on the defect it exists
+ * to catch.
+ */
+const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+/** Every name `record.mts` exports: a const, a function, a class or a type. */
+const EXPORTED = [...RECORD_SRC.matchAll(/^export (?:const|function|class|type|interface) (\w+)/gm)].map((m) => m[1] ?? '');
+
+/** Every `.mts` file under the directories `tsconfig.json` compiles. */
+function sources(dir: string): string[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries.flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : sources(path);
+    return path.endsWith('.mts') ? [path] : [];
+  });
+}
+
+const CALLERS = ['hooks', 'ci', 'scripts', 'tests', join('.agents', 'skills')]
+  .flatMap((dir) => sources(join(ROOT, dir)))
+  .filter((path) => path !== join(ROOT, RECORD_REL))
+  .map((path) => code(readFileSync(path, 'utf8')));
+
+const orphans = EXPORTED.filter((name) => !CALLERS.some((text) => new RegExp(`\\b${name}\\b`).test(text)));
+check('record.mts exports something at all (the walk found the file)', EXPORTED.length > 0, RECORD_REL);
+check('the caller walk found the rest of the tree', CALLERS.length > 10, `${CALLERS.length} source files read`);
+check(
+  'every export of record.mts is named somewhere outside it',
+  orphans.length === 0,
+  `exported and never read: ${orphans.join(', ')}`,
+);
 
 finish();
