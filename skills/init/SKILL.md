@@ -108,6 +108,17 @@ Then, by hand — the script cannot do these:
 - Review `git status` and open the bootstrap PR with these files. Pushing the very first
   commit to `main` needs the message to contain `[allow-push-main]` (`guard-main`'s escape
   hatch, bootstrap only, visible in the history).
+
+  **That bootstrap pull request comes back with two reds by design, and `test` is the one
+  check that must be green on it.** `scope` fails it because a bootstrap pull request links
+  no issue: with no `Closes #N` in the body there is no issue whose `## Files` it could read
+  the globs from. `negative-control` fails it as `no-tests`, because what the installer
+  wrote are not test files and they do not all sit in a skipped path class. Both reds are
+  correct on that one pull request — nothing is wrong with the install, so do not debug it
+  over them; merge it and carry on. They stop at the first ordinary issue-linked pull
+  request, the one that carries a `Closes #N` in its body and test files in its diff:
+  `scope` then has an issue to read globs from, and `negative-control` has tests to overlay
+  on the base.
 - If `--rules` reported the free-plan limit (or you skipped it), make `scope`,
   `negative-control` and your own test workflow **required checks** on `main` by hand
   instead; keep the pre-push hook either way — it is the fallback for a repository with no
