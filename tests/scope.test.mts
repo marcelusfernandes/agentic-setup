@@ -605,11 +605,14 @@ check(
   rNudge.out,
 );
 
+// The assertion is on the decision keys, not on `/warning:/` at large: since
+// #182 a second, independent nudge (the dogfood one below) prints its own
+// `> warning:` line, and `hooks/protect-main.mts` triggers it too.
 const rNudgeDecided = scope(filesHookPlusDecision, nudgeIssue, prPlain);
 check(
   'scope does not warn when the same diff also touches docs/decisions/',
   rNudgeDecided.status === 0 &&
-    !/warning:/.test(rNudgeDecided.out) &&
+    !/no decision recorded/.test(rNudgeDecided.out) &&
     !('decisionNudge' in scopeJson(rNudgeDecided.out)) &&
     !('warning' in scopeJson(rNudgeDecided.out)),
   rNudgeDecided.out,
@@ -656,6 +659,116 @@ check(
 check(
   'decisionNudge treats only SKILL.md under skills/, not every file there',
   decisionNudge !== undefined && decisionNudge(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md']).length === 0,
+);
+
+// #182: the dogfood nudge. A PR that changes the mechanism the loop runs on
+// — `hooks/`, `ci/`, `scripts/` or a `skills/**/SKILL.md` — while pointing
+// at no `docs/dogfood/<date>.md` report is named in a second `warning:`
+// line, and the check still exits 0 (the decision on #180's shape). The
+// binding half is `scripts/close-milestone.mts`, once per phase.
+//
+// These cases assert the dogfood keys specifically: every sensitive file
+// here also fires the decision nudge, so `/warning:/` alone would not
+// discriminate the two.
+const DOGFOOD_PHRASE = /dogfood report/;
+const prDogfood = file(
+  'pr-dogfood.md',
+  'Closes #1\n\n## Proof\nRan the loop against a disposable repository; written up in `docs/dogfood/2026-09-17.md`.\n\n## Files\n',
+);
+const filesWithReport = file('files-dogfood-added.txt', 'ci/scope-check.mts\ndocs/dogfood/2026-09-17.md\n');
+const dogfoodIssue = file(
+  'issue-dogfood.md',
+  '## Files\n- `hooks/**`, `ci/**`, `scripts/**`, `skills/**`, `.github/**`, `docs/**`\n',
+);
+
+const rDogfood = scope(filesHookOnly, dogfoodIssue, prPlain);
+const rDogfoodJson = scopeJson(rDogfood.out);
+check(
+  'scope warns and still exits 0 on a mechanism file when the PR names no dogfood report',
+  rDogfood.status === 0 &&
+    DOGFOOD_PHRASE.test(rDogfood.out) &&
+    JSON.stringify(rDogfoodJson.dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) &&
+    typeof rDogfoodJson.dogfoodWarning === 'string',
+  rDogfood.out,
+);
+
+const rDogfoodNamed = scope(filesHookOnly, dogfoodIssue, prDogfood);
+check(
+  'scope does not raise the dogfood nudge when the PR body names a docs/dogfood/<date>.md report',
+  rDogfoodNamed.status === 0 &&
+    !DOGFOOD_PHRASE.test(rDogfoodNamed.out) &&
+    !('dogfoodTrigger' in scopeJson(rDogfoodNamed.out)) &&
+    !('dogfoodWarning' in scopeJson(rDogfoodNamed.out)),
+  rDogfoodNamed.out,
+);
+
+const rDogfoodAdded = scope(filesWithReport, dogfoodIssue, prPlain);
+check(
+  'scope does not raise the dogfood nudge when the diff itself carries a docs/dogfood/<date>.md report',
+  rDogfoodAdded.status === 0 &&
+    !DOGFOOD_PHRASE.test(rDogfoodAdded.out) &&
+    !('dogfoodTrigger' in scopeJson(rDogfoodAdded.out)) &&
+    !('dogfoodWarning' in scopeJson(rDogfoodAdded.out)),
+  rDogfoodAdded.out,
+);
+
+const rDogfoodDocs = scope(filesDocsOnly, dogfoodIssue, prPlain);
+check(
+  'scope raises no dogfood nudge for a diff touching only docs/',
+  rDogfoodDocs.status === 0 && !('dogfoodTrigger' in scopeJson(rDogfoodDocs.out)),
+  rDogfoodDocs.out,
+);
+
+// The two nudges are independent: a diff that records a decision still owes
+// a dogfood report, and the exit code stays 0 either way.
+const rBothNudges = scope(filesHookPlusDecision, dogfoodIssue, prPlain);
+check(
+  'the dogfood nudge fires even when the diff records a decision, and the check still exits 0',
+  rBothNudges.status === 0 &&
+    JSON.stringify(scopeJson(rBothNudges.out).dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) &&
+    !('warning' in scopeJson(rBothNudges.out)),
+  rBothNudges.out,
+);
+
+// Direct unit cases for the pure `dogfoodTrigger`, through the namespace for
+// the same reason `decisionNudge` is imported that way above.
+const dogfoodTrigger = scopeLib.dogfoodTrigger as ((files: string[], prBody?: string | null) => string[]) | undefined;
+check('ci/lib/scope.mts exports dogfoodTrigger', typeof dogfoodTrigger === 'function');
+const dogfoodSensitive = ['hooks/protect-main.mts', 'ci/scope-check.mts', 'scripts/land.mts', 'skills/issue-and-pr/SKILL.md'];
+check(
+  'dogfoodTrigger returns every sensitive path, in diff order',
+  dogfoodTrigger !== undefined &&
+    JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) === JSON.stringify(dogfoodSensitive),
+  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) : 'not exported',
+);
+check(
+  'dogfoodTrigger returns nothing when the PR body names a docs/dogfood/<date>.md report',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], 'see `docs/dogfood/2026-09-17.md`').length === 0,
+);
+check(
+  'dogfoodTrigger returns nothing when the diff carries a docs/dogfood/<date>.md report',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/2026-09-17.md'], '').length === 0,
+);
+check(
+  'dogfoodTrigger ignores a docs/dogfood/ path that is not a dated report',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '').length === 1,
+  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '')) : 'not exported',
+);
+// Deliberately narrower than MECHANISM_GLOBS: a workflow file is a decision,
+// not a dogfood trigger (#182's and #181's acceptance criteria both list
+// `hooks/`, `ci/`, `scripts/` and `skills/**/SKILL.md` only).
+check(
+  'dogfoodTrigger does not treat .github/workflows/** as sensitive',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '').length === 0,
+  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '')) : 'not exported',
+);
+check(
+  'dogfoodTrigger does not treat tests/** or templates/** as sensitive',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['tests/scope.test.mts', 'templates/issue.md'], '').length === 0,
+);
+check(
+  'dogfoodTrigger treats only SKILL.md under skills/, not every file there',
+  dogfoodTrigger !== undefined && dogfoodTrigger(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md'], '').length === 0,
 );
 
 finish();

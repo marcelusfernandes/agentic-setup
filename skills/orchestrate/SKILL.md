@@ -440,6 +440,8 @@ in this order — the closeout lands **before** the close, never after it
     `origin/main`.
   - `evidence:issue-missing` — a closed issue of the milestone is neither a row in
     `## Issues` nor a `#N` in a `## Left out` bullet.
+  - `dogfood` — a pull request merged into the phase changed `hooks/`, `ci/`, `scripts/`
+    or a `skills/**/SKILL.md` and `## Dogfood` names no `docs/dogfood/<date>.md` report.
 
   On success it appends `Closed <UTC ISO-8601>, main <sha>, evidence
   docs/closeout/M<n>.md` to the milestone's description and sets `state: closed` in the
