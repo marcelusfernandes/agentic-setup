@@ -11,7 +11,8 @@ written in English; the language you talk to the agents in is your business.
   fails if the ref exists, so two orchestrators cannot claim the same issue.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
 - Two branch shapes lock an issue, one per route: `<type>/<number>-<slug>` here, and
-  `codex/task-<number>` on the Codex route (`docs/codex.md`). Neither namespace collides
+  `codex/task-<number>` on the Codex route (`.agents/skills/autonomous-loop/references/contract.md`,
+  "the canonical remote branch"). Neither namespace collides
   with the other, so each reads the other's shape instead: both are listed in
   `scripts/lib/issues.mts`, `scripts/reconcile.mts` reports an issue whose only remote
   branch is `codex/task-<n>` under that branch (and its PR) rather than as free, and
