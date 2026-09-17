@@ -41,10 +41,46 @@ const ALL_LABELS = [
 ];
 const ALL_LABELS_JSON = JSON.stringify(ALL_LABELS.map((name) => ({ name })));
 
+/**
+ * Every value each knob below accepts. A knob is a gate, and a gate read
+ * without checking what it was set to is no gate at all: `FAKE_GH_FAIL` with
+ * a typo used to fall through to the `*)` arm of each case and answer
+ * normally, so a case asking for a failure would pass while proving nothing.
+ * The empty string is listed explicitly — "unset" is a value the harness
+ * knows, not the absence of one.
+ */
+const KNOBS = {
+  FAKE_GH_FAIL: ['', 'repo', 'ruleset', 'labels', 'issue-list', 'issue-create', 'issue-url', 'label-create'],
+  FAKE_GH_RULES: ['', 'full', 'no-review'],
+  FAKE_GH_LABELS: ['', 'all'],
+};
+
+/** `knob NAME "$NAME" allowed...` lines, one per knob, in a stable order. */
+const KNOB_GUARDS = Object.entries(KNOBS)
+  .map(([name, values]) => `knob ${name} "\${${name}:-}" ${values.map((v) => `'${v}'`).join(' ')}`)
+  .join('\n');
+
 // --- a fake `gh` on PATH ----------------------------------------------------
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
+
+# Every knob is checked against its closed set before anything is answered.
+# The rejection goes to a marker file as well as to stderr: adopt.mts reports
+# a read that failed by its own named reason and never by gh's wording, so a
+# typo is invisible on stdout by design.
+knob() {
+  name="$1"
+  value="$2"
+  shift 2
+  for allowed in "$@"; do
+    if [ "$value" = "$allowed" ]; then return 0; fi
+  done
+  printf '%s=%s\\n' "$name" "$value" >> "$state/knob-error"
+  echo "fake-gh: $name=$value is not one of the values this harness knows" >&2
+  exit 64
+}
+${KNOB_GUARDS}
 
 case "\${1:-} \${2:-}" in
   "api repos/{owner}/{repo}")
@@ -465,10 +501,18 @@ check(
 
 const iCreate = adopt(['--plan-issue'], plannable, { FAKE_GH_FAIL: 'issue-create' });
 const iCreateOut = parse(iCreate.stdout);
+// The name is pinned, not merely "some named reason": callers branch on it,
+// `docs/adopt.md` lists it, and renaming it is a breaking change rather than
+// a rewording.
 check(
   "plan-issue: a failed issue create exits 1 with a stable { error } and gh's own message in { detail }",
   iCreate.status === 1 && iCreateOut?.error === 'plan-issue:not-created' && /could not create the issue/.test(iCreateOut?.detail ?? ''),
   `${iCreate.stdout}\n${iCreate.stderr}`,
+);
+check(
+  'plan-issue: the failed-create name is exactly plan-issue:not-created, and carries no gh wording',
+  iCreateOut?.error === 'plan-issue:not-created' && !/could not/.test(iCreateOut?.error ?? ''),
+  JSON.stringify(iCreateOut),
 );
 check('plan-issue: a failed issue create tried exactly once, never twice', created(iCreate.log) === 1, iCreate.log);
 
@@ -550,5 +594,20 @@ if (IS_ROOT) {
     jw.stdout,
   );
 }
+
+// --- K: a knob this harness does not know stops it, loudly ------------------
+// The gate on every case above. `FAKE_GH_FAIL=labls` used to be answered as
+// though nothing was meant to fail, which would turn a fail-closed case into
+// a green one that proved the opposite of what it claims.
+const kState = newStateDir();
+const k = adopt(['--inventory'], adopted, { FAKE_GH_RULES: 'full', FAKE_GH_FAIL: 'labls' }, kState);
+const kMarker = join(kState, 'knob-error');
+check('a knob value this harness does not know stops the run', k.status !== 0, `${k.status}: ${k.stdout}\n${k.stderr}`);
+check(
+  'a knob value this harness does not know is named, not silently treated as the default',
+  existsSync(kMarker) && /FAKE_GH_FAIL=labls/.test(readFileSync(kMarker, 'utf8')),
+  existsSync(kMarker) ? readFileSync(kMarker, 'utf8') : 'no knob-error file written',
+);
+check('a knob typo never yields a report', parse(k.stdout)?.gaps === undefined, k.stdout);
 
 finish();

@@ -136,6 +136,34 @@ check(
   never.includes(DOCTRINE),
 );
 
+// --- #146: one mechanism behind `test(red):`, named in both documents ---------
+// The convention had no mechanical consumer until #135 gave it one (the negative
+// control's `structural` outcome), and the two places that state it drifted apart while
+// it had none. docs/workflow.md must name that consumer and the reviewer's check that
+// reads it; agents/reviewer.md's check 3 must keep the requirement *and* carry the
+// reason. A sentence with no consumer drifts: this block is theirs.
+
+const workflow = readNormalized(join('docs', 'workflow.md'));
+
+check(
+  '#146 docs/workflow.md no longer calls the `test(red):` convention consumerless',
+  !workflow.includes('no mechanical consumer'),
+);
+check(
+  "#146 docs/workflow.md names the reviewer's check 3 as the other half of the mechanism",
+  /reviewer's check 3/.test(workflow) && workflow.includes('`agents/reviewer.md`'),
+);
+check(
+  '#146 reviewer.md check 3 keeps the `test(red):` requirement',
+  checkList.includes('`test(red):` commit'),
+  checkList.slice(-400),
+);
+check(
+  '#146 reviewer.md check 3 gives the reason — without the commit a structural red fails',
+  /`structural`/.test(checkList) && checkList.includes('`docs/workflow.md`'),
+  checkList.slice(-400),
+);
+
 // --- #205: docs/orchestration.md still describes what the loop and the reviewer do ---
 // Two omissions that read as the loop doing less than it does: step 0's field list
 // dropped `milestoneLint` (which `scripts/reconcile.mts` emits and which is how the

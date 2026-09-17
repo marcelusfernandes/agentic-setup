@@ -16,8 +16,13 @@
 // worked, #129 L13, used a fixed directory outside `.claude/`; `AGENTIC_WORKTREE_DIR` makes
 // that a knob instead of a hardcoded path). Symlinks `node_modules` from the toplevel into
 // the new worktree when the toplevel has one and the worktree does not, so `npm
-// test`/`npm run check` do not need a fresh install. Prints the absolute path on stdout —
-// nothing else — on success.
+// test`/`npm run check` do not need a fresh install. That symlink is covered by this
+// repository's own `.gitignore`, whose `node_modules` entry carries no trailing slash and so
+// matches the link as well as a directory: setting `AGENTIC_WORKTREE_DIR` to a path inside
+// the checkout — or running without this hook, where Claude Code's own default
+// `.claude/worktrees/agent-<id>` is inside it — stays safe, leaving no untracked entry for
+// `git status --porcelain` to print and nothing for a `git add -A` to commit as a link.
+// Prints the absolute path on stdout — nothing else — on success.
 //
 // Crash policy: REFUSE. Unlike the PreToolUse hooks in this directory, which fail open
 // because a later layer (the ruleset, `git-pre-push`) still catches what they miss, there

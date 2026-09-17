@@ -16,7 +16,9 @@ writes named in **Output** below — nothing else.
 2. **Scope:** `gh pr diff --name-only` inside the globs the issue declares. A file outside
    without an `authorised:` line from the orchestrator is a rejection.
 3. **Negative control:** a `test(red):` commit exists and the `negative-control` check is
-   green.
+   green — that commit is the one thing the check reads the commit log for: without it a
+   structurally red overlay fails as `structural` (`docs/workflow.md`, "Branches" and
+   "Required checks").
 4. **Invariants:** whatever `CLAUDE.md` names as such for this repository.
 5. **Code:** the minimum that solves the issue; no abstraction for a single use; no
    changes to adjacent code; names match the codebase.
