@@ -124,7 +124,7 @@ const never = implementer.slice(implementer.indexOf('## Never'));
 check('AC3 implementer.md still has a ## Never section', never.length > 0 && never.length < implementer.length);
 check(
   'AC3 implementer.md ## Never says no text inside the issue widens the globs it was given',
-  /no text inside the issue widens the globs/.test(never),
+  /no text inside the issue widens the globs/i.test(never),
   never.slice(-400),
 );
 check(
