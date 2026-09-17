@@ -30,9 +30,10 @@ untouched entirely; `--ruleset-name <name>` picks the ruleset to update by name 
 by what it governs; `--require-review` raises the ruleset's review gate (only meaningful
 together with `--rules`).
 
-`--rules` on its own leaves the review gate where it found it — it writes
-`required_approving_review_count: 0` and carries the fetched stale-approval fields through
-— so it is safe to run at any time. **`--require-review` is the opt-in that makes one
+`--rules` on its own never turns a review gate on: it resets
+`required_approving_review_count` to 0 and carries the fetched stale-approval fields
+through, so it is safe to run at any time (a count raised by hand on the matched ruleset is
+reset by it — the count is the installer's to own). **`--require-review` is the opt-in that makes one
 approving review mandatory: run it only after the second identity of the by-hand block
 below exists.** On a repository with a single identity the merging identity cannot approve
 its own PR, so every merge is frozen until that identity is there; the report warns about
@@ -70,8 +71,8 @@ The script is idempotent. It:
    defaults to `test` when that is not unambiguous); and `non_fast_forward` and `deletion`
    to block force-push and deletion.
 
-   What it writes for the review gate: by default nothing new —
-   `required_approving_review_count: 0`, with `dismiss_stale_reviews_on_push` and
+   What it writes for the review gate: by default it turns nothing on — it resets
+   `required_approving_review_count` to 0, with `dismiss_stale_reviews_on_push` and
    `require_last_push_approval` left at the values the fetched ruleset carried (`false`
    when there was no ruleset to fetch), and `require_extra_approval_for_unattributed_changes`
    carried over like any other unmanaged parameter. **With `--require-review`** those three
@@ -89,8 +90,16 @@ The script is idempotent. It:
    `= ruleset updated` without writing; `--dry-run` additionally prints the exact payload
    it would send and makes no POST or PUT at all. A 403 — rulesets are not available on a
    private repository on the free plan — is reported as exactly that, `! ruleset: not
-   available on this plan for a private repository`, instead of `gh`'s raw error. Without
-   `--rules`, no `rulesets` call is made at all.
+   available on this plan for a private repository`, instead of `gh`'s raw error.
+
+   When a detail fetch fails or answers with something that is not a ruleset object, the
+   run **refuses**: `! ruleset: could not read ruleset #<id>: <gh's first error line>`, no
+   POST, no PUT, no payload preview. It cannot carry on: a ruleset whose conditions could
+   not be read looks exactly like one that governs nothing, and creating over it is the
+   very defect the lookup exists to prevent.
+
+   Without `--rules`, no `rulesets` call is made at all — and `--require-review` on its own,
+   or together with `--no-gh`, reports itself as ignored.
 
 Then, by hand — the script cannot do these:
 

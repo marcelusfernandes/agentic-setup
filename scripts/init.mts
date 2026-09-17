@@ -25,13 +25,17 @@
 // bypass actor it does not manage over from the ruleset it found.
 // `--ruleset-name <name>` picks the ruleset by name instead. A 403 (rulesets
 // are not available on a private repository on the free plan) is reported
-// plainly instead of gh's raw error. Without --rules, no rulesets call is
-// made at all.
+// plainly instead of gh's raw error, and a ruleset whose detail cannot be
+// read refuses the run — no POST, no PUT — rather than letting a ruleset
+// with no readable conditions look like one that governs nothing. Without
+// --rules, no rulesets call is made at all.
 //
-// --rules leaves the review gate where it found it: the pull_request rule it
-// writes keeps required_approving_review_count at 0 and carries the fetched
-// dismiss_stale_reviews_on_push / require_last_push_approval through, so
-// --rules on its own is safe to run at any time.
+// --rules resets required_approving_review_count to 0 and carries the fetched
+// dismiss_stale_reviews_on_push / require_last_push_approval through (false
+// when there was no ruleset to fetch), so --rules on its own never turns a
+// review gate on and is safe to run at any time. A count an operator raised
+// by hand on the matched ruleset is reset by it — the count is the
+// installer's to own, and --require-review is how it is raised.
 //
 // --require-review is the explicit opt-in that raises those three (count 1,
 // stale approvals dismissed, last push approved). Run it only once a second
@@ -39,7 +43,8 @@
 // pull request, so on a repository with a single identity every merge is
 // frozen until the second one exists (scripts/land.mts's header and
 // docs/decisions.md item 13 name the trap). The report warns about exactly
-// that whenever AGENTIC_REVIEWER_TOKEN is unset in the environment.
+// that whenever AGENTIC_REVIEWER_TOKEN is unset in the environment, and says
+// the flag was ignored when it is passed without --rules or under --no-gh.
 //
 // What it does is listed in skills/init/SKILL.md. Node built-ins only.
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -96,6 +101,13 @@ const dryRun = flags.has('--dry-run');
 const report: string[] = [];
 const say = (line: string): number => report.push(line);
 if (dryRun) say('dry run — nothing written');
+// --require-review only ever changes the ruleset call --rules makes. Say so
+// rather than accept the flag in silence and write nothing it asked for.
+if (requireReview && !flags.has('--rules')) {
+  say('! --require-review ignored: it raises the ruleset review gate, which only --rules writes');
+} else if (requireReview && !useGh) {
+  say('! --require-review ignored: --no-gh skips the ruleset call it would change');
+}
 
 /**
  * The single gate every filesystem write goes through: performs the action,
@@ -146,28 +158,40 @@ function parseJson<T>(text: string, fallback: T): T {
  * Every branch ruleset of the repository, each merged with its own detail
  * fetch. `GET .../rulesets` answers with summaries only — no `conditions`,
  * no `rules`, no `bypass_actors` — so everything the lookup and the update
- * body need comes from `GET .../rulesets/<id>`. A detail fetch that fails or
- * answers with nothing usable leaves that summary as it was. Tag and push
- * rulesets share the endpoint and are dropped here: they can never govern a
- * branch.
+ * body need comes from `GET .../rulesets/<id>`. Tag and push rulesets share
+ * the endpoint and are dropped here: they can never govern a branch.
+ *
+ * A detail fetch that cannot be read is fatal to the whole run, not to that
+ * one ruleset: a summary with no `conditions` reads exactly like a ruleset
+ * that governs nothing, so carrying on would take the create path and POST a
+ * second ruleset over the branch the unreadable one already governs — the
+ * defect #143 exists to remove. `unreadable` carries the message for that
+ * refusal; the caller makes no POST or PUT when it is set.
  */
-function fetchBranchRulesets(repoRoot: string, listOutput: string): Ruleset[] {
+function fetchBranchRulesets(repoRoot: string, listOutput: string): { rulesets: Ruleset[]; unreadable: string | null } {
   const summaries = parseJson<Ruleset[]>(listOutput, []);
-  if (!Array.isArray(summaries)) return [];
-  return summaries
+  if (!Array.isArray(summaries)) return { rulesets: [], unreadable: null };
+  const fetched = summaries
     .filter((r) => typeof r?.id === 'number' && (r.target ?? 'branch') === 'branch')
-    .map((r) => {
-      const detail = detailOf(repoRoot, r.id);
-      return { ...r, ...detail };
-    });
+    .map((summary) => ({ summary, ...detailOf(repoRoot, summary.id) }));
+  const broken = fetched.find((f) => f.detail === null);
+  if (broken) return { rulesets: [], unreadable: `could not read ruleset #${broken.summary.id}: ${broken.err}` };
+  return { rulesets: fetched.map((f) => ({ ...f.summary, ...(f.detail ?? {}) })), unreadable: null };
 }
 
-/** One ruleset's detail as a plain object, or `{}` when it cannot be read. */
-function detailOf(repoRoot: string, id: number): Partial<Ruleset> {
+/**
+ * One ruleset's detail as a plain object. `detail` is null when the call
+ * failed or answered with something that is not a ruleset object, and `err`
+ * then says why (gh's first stderr line, or the parse complaint).
+ */
+function detailOf(repoRoot: string, id: number): { detail: Partial<Ruleset> | null; err: string } {
   const r = run('gh', ['api', `repos/{owner}/{repo}/rulesets/${id}`], repoRoot);
-  if (!r.ok) return {};
-  const parsed = parseJson<Partial<Ruleset>>(r.out, {});
-  return typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  if (!r.ok) return { detail: null, err: r.err.split('\n')[0] || 'gh gave no reason' };
+  const parsed = parseJson<unknown>(r.out, null);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { detail: null, err: 'the response is not a ruleset object' };
+  }
+  return { detail: parsed as Partial<Ruleset>, err: '' };
 }
 
 /**
@@ -211,14 +235,14 @@ function buildRulesetPayload(
       type: 'pull_request',
       parameters: {
         ...pullRequest,
-        // The default leaves the review gate exactly where this repository's
-        // own review model needs it (#143): the reviewer is an isolated agent
-        // whose verdict becomes the `review:approved` label, with no second
-        // GitHub identity to click Approve, so requiring one approving review
-        // by default would freeze every merge. The count is therefore 0 and
-        // the two stale-approval fields keep whatever the fetched ruleset
-        // carried; --require-review is the explicit opt-in that raises all
-        // three, for a repository that does have a second reviewing identity.
+        // The default resets the count to 0 and carries the two
+        // stale-approval fields through as the fetched ruleset had them
+        // (#143): the reviewer is an isolated agent whose verdict becomes the
+        // `review:approved` label, with no second GitHub identity to click
+        // Approve, so requiring one approving review by default would freeze
+        // every merge. --require-review is the explicit opt-in that raises
+        // all three, for a repository that does have a second reviewing
+        // identity.
         required_approving_review_count: requireReview ? 1 : 0,
         dismiss_stale_reviews_on_push: requireReview || fetchedFlag('dismiss_stale_reviews_on_push'),
         require_last_push_approval: requireReview || fetchedFlag('require_last_push_approval'),
@@ -398,8 +422,9 @@ if (useGh) {
     // 6. branch ruleset (--rules only): updates the ruleset that already
     // governs the default branch — found by its conditions, never by its
     // name (#143) — or creates one named "agentic-setup" when none does.
-    // It requires a pull request, with the review gate left where it found
-    // it unless --require-review raises it (buildRulesetPayload above), plus
+    // It requires a pull request, resets required_approving_review_count to 0
+    // and carries the fetched stale-approval fields through unless
+    // --require-review raises them (buildRulesetPayload above), plus
     // the three checks the merge model depends on
     // (docs/decisions.md item 9(a)): scope, negative-control, and this
     // repository's own test workflow's job (detectTestCheckName above); an
@@ -411,7 +436,8 @@ if (useGh) {
     // above, and the payload is printed instead. A 403 (rulesets are not
     // available on a private repository on the free plan,
     // docs/decisions.md item 9(a)) is reported plainly instead of gh's raw
-    // error either way.
+    // error either way, and so is a ruleset whose detail cannot be read —
+    // which refuses the run rather than guessing (fetchBranchRulesets above).
     if (flags.has('--rules')) {
       // The freeze this flag can cause is worth a line in the report even
       // when the ruleset call itself then fails: a repository whose agents
@@ -425,10 +451,14 @@ if (useGh) {
         say(/403/.test(err) ? '  ! ruleset: not available on this plan for a private repository' : `  ! ruleset: ${err.split('\n')[0]}`);
       };
       const list = run('gh', ['api', 'repos/{owner}/{repo}/rulesets'], root);
-      if (!list.ok) {
-        reportRulesetError(list.err);
+      const fetch = list.ok ? fetchBranchRulesets(root, list.out) : null;
+      // Either read failing stops the run here: acting on a half-read list
+      // is how a second ruleset ends up over an already governed branch.
+      const refusal = list.ok ? fetch?.unreadable ?? null : list.err || 'the rulesets list could not be read';
+      if (refusal) {
+        reportRulesetError(refusal);
       } else {
-        const rulesets = fetchBranchRulesets(root, list.out);
+        const rulesets = fetch?.rulesets ?? [];
 
         const repoView = run('gh', ['repo', 'view', '--json', 'defaultBranchRef'], root);
         const defaultBranch = parseJson<{ defaultBranchRef?: { name?: string } }>(repoView.out, {})?.defaultBranchRef?.name || 'main';
@@ -476,9 +506,9 @@ next, by hand:
     by name), or to create one when none does: a pull request required, squash as the only
     merge method, scope, negative-control and your test workflow's checks required, and
     force-push and deletion blocked; rules, parameters and bypass actors it does not manage
-    are kept. It leaves the review gate alone — required_approving_review_count stays 0 and
-    the fetched dismiss_stale_reviews_on_push / require_last_push_approval are carried
-    through — so \`--rules\` on its own is safe to run at any time. It reports "not available
+    are kept. It resets required_approving_review_count to 0 and carries the fetched
+    dismiss_stale_reviews_on_push / require_last_push_approval through, so \`--rules\` on its
+    own never turns a review gate on and is safe to run at any time. It reports "not available
     on this plan for a private repository" when your plan does not allow rulesets — make
     those three checks required by hand there instead, and keep the pre-push hook as the
     fallback
