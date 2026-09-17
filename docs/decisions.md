@@ -418,8 +418,17 @@ name, colour and description. The dictionary is JSON, not YAML, because invarian
 synchronisation writes it from verified GitHub state
 (`.agents/skills/autonomous-loop/scripts/github.mts`). Removing it is a behaviour change on
 that route, not a documentation fix, so the union records it and `docs/workflow.md` now says
-who writes it instead of denying it exists. The bare `human` is marked `legacy: true` and
-seeded by nothing this decision owns.
+who writes it instead of denying it exists. The bare `human` is marked `legacy: true`,
+which is a statement about this route only: `scripts/init.mts` never seeds it, while the
+Codex helper still does from its own inline list (`github.mts`, asserted by
+`tests/codex-loop.test.mts`).
+
+The union is less symmetric than #145's "everything else is both" reads: only the five
+`state:` labels and the two `human:` states are marked for both routes. The seven `type:`
+values and `review:approved` are `["claude"]`, because the Codex helper has never seeded
+them — it labels state, and `type:`/`review:` are written by `scripts/claim.mts` and the
+orchestrator on this route. Marking them `["claude", "codex"]` would have made the drift
+test demand eight labels the Codex route does not seed.
 
 *Why:* two lists kept identical by a comment is the shape this repository has already paid
 for (item 15 names it as the reason the adoption record is generated). A union with a
@@ -430,12 +439,18 @@ fails on drift is what makes the file load-bearing rather than decorative.
 someone reading `labels.json` sees `state:done` and has to read the marker to learn it is
 not theirs. Second, one value per label means the five labels the two routes described
 differently now carry the Codex route's colour and description, because `github.mts` is a
-standalone file this issue does not touch: `state:ready` (`0e8a16` → `1d76db`, "Ready to be
-picked up by an agent" → "Ready for the next authorized transition"), `state:in-review`
-(`1d76db` → `5319e7`), `state:qa-failed` (`d93f0b` → `d73a4a`), and the descriptions of
-`state:in-progress` and `state:blocked`. `init` passes `--force`, so the next run rewrites
-those five in an adopting repository; the names, which is what every parser matches on, do
-not change. Third, `scripts/lib/adopt/inventory.mts` still restates the seeded names in its
+standalone file this issue does not touch. Three change both: `state:ready`
+(`0e8a16` → `1d76db`, "Ready to be picked up by an agent" → "Ready for the next authorized
+transition"), `state:in-review` (`1d76db` → `5319e7`, "PR open, waiting for CI and the
+reviewer" → "Awaiting review, checks, or objective verification") and `state:qa-failed`
+(`d93f0b` → `d73a4a`, "Sent back by CI or the reviewer" → "Review or required checks need
+repair"); two change description only, `state:in-progress` ("An agent holds the branch
+lock" → "Implementation is in progress") and `state:blocked` ("Two failed rounds; needs a
+person" → "Blocked by specification, dependency, cancellation, or decision"). `init` passes
+`--force`, so the next run rewrites those five in an adopting repository. What survives is
+the names, which is what every parser, hook and script matches on; the one test that reads a
+colour (`tests/codex-loop.test.mts`, on `human:pending` and `human:decided`) reads two this
+change leaves untouched. Third, `scripts/lib/adopt/inventory.mts` still restates the seeded names in its
 own `SEEDED_LABELS`; it is outside this issue's `## Files` and reading the dictionary there
 is a separate change.
 

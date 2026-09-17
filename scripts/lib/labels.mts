@@ -4,16 +4,19 @@
 // The file is the union of what the two routes seed, one entry per label
 // name, each entry marked with the routes that seed it:
 //
-//   { "name": "state:done", "color": "0e8a16", "description": "…",
+//   { "name": "human", "color": "c5def5", "description": "…",
 //     "routes": ["codex"], "legacy": true }
 //
 // `routes` is what makes a union possible without a second dictionary:
 // `state:done` is written by the Codex route's state synchronisation and by
 // nothing on the Claude route, and the bare `human` label predates the
-// `human:pending` / `human:decided` split. `legacy: true` marks a name kept
-// so it can still be *read* — `scripts/init.mts` never seeds one.
+// `human:pending` / `human:decided` split. `legacy: true` marks a name the
+// Claude route keeps so it can still be *read*: `scripts/init.mts` never
+// seeds one. It says nothing about the Codex route, which seeds its own
+// inline list — `human` included.
 //
-// The Codex helper (`.agents/skills/autonomous-loop/scripts/github.mts`)
+// This module is the Claude route's reader: `scripts/init.mts` is its only
+// caller. The Codex helper (`.agents/skills/autonomous-loop/scripts/github.mts`)
 // ships as a standalone file inside the plugin package, so it cannot import
 // this module: it keeps its list inline and `tests/labels.test.mts` fails
 // when the two drift apart.
@@ -25,8 +28,10 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
-export const ROUTES = ['claude', 'codex'] as const;
-export type Route = (typeof ROUTES)[number];
+const ROUTES = ['claude', 'codex'] as const;
+type Route = (typeof ROUTES)[number];
+/** The route this module reads for: the one `scripts/init.mts` installs. */
+const CLAUDE: Route = 'claude';
 
 /** One label: its name, its GitHub colour, its description and who seeds it. */
 export type LabelEntry = {
@@ -34,7 +39,7 @@ export type LabelEntry = {
   color: string;
   description: string;
   routes: Route[];
-  /** Kept for reading only — never seeded by any route this repository installs. */
+  /** Kept on the Claude route for reading only; `scripts/init.mts` never seeds it. */
   legacy?: boolean;
 };
 
@@ -42,7 +47,7 @@ const KEYS = ['name', 'color', 'description', 'routes', 'legacy'];
 const COLOR = /^[0-9a-f]{6}$/;
 
 /** Parses and validates a dictionary; `source` names the file in every message. */
-export function parseLabels(text: string, source: string): LabelEntry[] {
+function parseLabels(text: string, source: string): LabelEntry[] {
   const fail = (reason: string): never => {
     throw new Error(`${source}: ${reason}`);
   };
@@ -111,12 +116,13 @@ export function loadLabels(file: string): LabelEntry[] {
   return parseLabels(text, basename(file));
 }
 
-/** Every entry a route reads, legacy names included, in dictionary order. */
-export function labelsForRoute(labels: LabelEntry[], route: Route): LabelEntry[] {
-  return labels.filter((entry) => entry.routes.includes(route));
-}
-
-/** Every entry a route seeds: what it reads, minus the legacy names. */
-export function seededLabels(labels: LabelEntry[], route: Route): LabelEntry[] {
-  return labelsForRoute(labels, route).filter((entry) => !entry.legacy);
+/**
+ * The labels `scripts/init.mts` seeds: the `claude`-routed entries in
+ * dictionary order, minus the legacy names this route only reads. There is
+ * deliberately no route parameter — what the Codex route seeds is decided by
+ * its own inline list, not by this function, and `tests/labels.test.mts` is
+ * what holds that list to the dictionary.
+ */
+export function labelsSeededByInit(labels: LabelEntry[]): LabelEntry[] {
+  return labels.filter((entry) => entry.routes.includes(CLAUDE) && !entry.legacy);
 }

@@ -58,7 +58,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, st
 import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadLabels, seededLabels, type LabelEntry } from './lib/labels.mts';
+import { labelsSeededByInit, loadLabels, type LabelEntry } from './lib/labels.mts';
 
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const LABELS_FILE = join(PLUGIN, 'labels.json');
@@ -273,7 +273,7 @@ const root = top.out;
  */
 function labelsToSeed(): LabelEntry[] {
   try {
-    return seededLabels(loadLabels(LABELS_FILE), 'claude');
+    return labelsSeededByInit(loadLabels(LABELS_FILE));
   } catch (err) {
     console.error(`init: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
