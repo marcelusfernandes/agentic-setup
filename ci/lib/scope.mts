@@ -1,8 +1,10 @@
 // Parses the `## Files` sections of an issue and a PR body, and checks a
 // list of changed files against them. See docs/workflow.md, "Issue" and
-// "PR": only bullet lines count in the issue; only `authorised:` lines
-// count in the PR; only backtick-quoted spans are globs when any are
-// present, otherwise the first whitespace-delimited token is.
+// "PR": only bullet lines count as the issue's globs; only `authorised:`
+// lines grant anything, and only in the **issue** body (#155 — the
+// implementer writes the PR body, so a grant there would be a self-grant);
+// only backtick-quoted spans are globs when any are present, otherwise the
+// first whitespace-delimited token is.
 import { matchesAny } from './globs.mts';
 
 /**
@@ -57,12 +59,15 @@ export function parseIssueGlobs(issueBody: string): string[] {
 }
 
 /**
- * Only `authorised:` lines (bullet or bare) grant globs; the rest of the
- * PR's `## Files` section is prose. Trailing prose on an `authorised:` line
- * is ignored when the glob is backticked; otherwise the first token wins.
+ * The globs granted by `authorised:` lines (bullet or bare) in a body's
+ * `## Files` section; every other line there is prose. One glob per line
+ * (invariant 5): trailing prose is ignored when the glob is backticked,
+ * otherwise the first whitespace-delimited token wins. Shared by the issue
+ * and PR parsers below so the two read a grant identically — what differs
+ * is only whose body is allowed to carry one.
  */
-export function parseAuthorisedGlobs(prBody: string): string[] {
-  const section = extractSection(prBody, 'Files');
+function authorisedGlobsIn(body: string): string[] {
+  const section = extractSection(body, 'Files');
   if (section === null) return [];
   const globs: string[] = [];
   for (const raw of section.split(/\r?\n/)) {
@@ -78,6 +83,28 @@ export function parseAuthorisedGlobs(prBody: string): string[] {
     if (bare) globs.push(bare);
   }
   return globs;
+}
+
+/**
+ * The grants that actually widen the scope check: `authorised:` lines in
+ * the `## Files` section of an issue the PR closes. The orchestrator writes
+ * the issue at dispatch and the implementer has no reason to edit it, so a
+ * grant here cannot be a self-grant (#155). A bare (non-bullet) line is
+ * accepted too — `parseIssueGlobs` reads bullets only, so the two parsers
+ * never disagree about which line is a grant.
+ */
+export function parseIssueAuthorisedGlobs(issueBody: string): string[] {
+  return authorisedGlobsIn(issueBody);
+}
+
+/**
+ * The `authorised:` lines in the PR's own `## Files` section. These grant
+ * nothing since #155 — the implementer writes that body — but `scope`
+ * still parses them so it can report a grant written in the wrong place as
+ * ignored, with the reason, instead of failing on the file in silence.
+ */
+export function parseAuthorisedGlobs(prBody: string): string[] {
+  return authorisedGlobsIn(prBody);
 }
 
 /**
@@ -163,12 +190,47 @@ export function parseLinkedIssues(prBody: string | null | undefined): number[] {
   return result;
 }
 
-export type LinkedIssueGlobs = { issue: number | null; globs: string[] };
+// The mechanism of the loop: a hook, a CI check, a script, a skill card or
+// a workflow. A change here changes the contract the next agent runs under,
+// which is what `docs/decisions/README.md` says earns a numbered decision.
+// `tests/**` and `templates/**` are deliberately out — they follow a
+// mechanism change rather than deciding one (#180).
+export const MECHANISM_GLOBS = ['hooks/**', 'ci/**', 'scripts/**', 'skills/**/SKILL.md', '.github/workflows/**'];
+
+// Any of these in the same diff means the decision was recorded: item 1-13
+// live in `docs/decisions.md`, everything after them is one dated file
+// under `docs/decisions/`.
+export const DECISION_GLOBS = ['docs/decisions.md', 'docs/decisions/**'];
 
 /**
- * Parses the `## Files` globs of several linked issues, keeping each
- * glob's source issue so the job summary can attribute it.
+ * The mechanism files a diff changes while recording no decision — empty
+ * when the same diff also touches `docs/decisions.md` or anything under
+ * `docs/decisions/`. Order follows the diff, so the warning reads in the
+ * order `git diff --name-only` printed.
+ *
+ * A nudge, never a verdict: the caller reports it as a `warning:` and still
+ * exits 0. A required check cannot tell from a file name whether a change
+ * deserves a decision entry, and failing on that guess would gate every
+ * mechanism PR on a judgement it cannot make (the decision on #180). The
+ * binding half stays where a judgement is possible: the reviewer's
+ * checklist and the milestone closeout.
+ */
+export function decisionNudge(files: string[]): string[] {
+  if (files.some((f) => matchesAny(f, DECISION_GLOBS))) return [];
+  return files.filter((f) => matchesAny(f, MECHANISM_GLOBS));
+}
+
+export type LinkedIssueGlobs = { issue: number | null; globs: string[]; authorised: string[] };
+
+/**
+ * Parses the `## Files` globs and `authorised:` grants of several linked
+ * issues, keeping each one's source issue so the job summary can attribute
+ * both.
  */
 export function collectLinkedGlobs(issues: Array<{ issue: number | null; body: string }>): LinkedIssueGlobs[] {
-  return issues.map(({ issue, body }) => ({ issue, globs: parseIssueGlobs(body) }));
+  return issues.map(({ issue, body }) => ({
+    issue,
+    globs: parseIssueGlobs(body),
+    authorised: parseIssueAuthorisedGlobs(body),
+  }));
 }

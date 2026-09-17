@@ -96,3 +96,4 @@ not a detail of item 8:
 | 11 | [Every mutating orchestrator step is a script with a refusal path](../decisions.md#11-every-mutating-orchestrator-step-is-a-script-with-a-refusal-path) | accepted |
 | 12 | [Issue-time entry-point warnings are advisory, not a gate](../decisions.md#12-issue-time-entry-point-warnings-are-advisory-not-a-gate-superseded--see-item-13) | superseded by item 13 |
 | 13 | [The 2026-09-06 audit: trim to the core, and a separate reviewer identity](../decisions.md#13-the-2026-09-06-audit-trim-to-the-core-and-a-separate-reviewer-identity) | accepted |
+| 0001 | [The decision nudge stays a warning, over five mechanism globs](0001-decision-nudge-strength.md) | accepted |

@@ -106,6 +106,24 @@ gets comma-split too and becomes a bogus glob that matches nothing — the `scop
 then reports a false violation on every real file. Put the reason on its own
 non-bullet line under the glob.
 
+**`authorised:` is written only by the orchestrator, in the issue's `## Files`, and the
+glob stands alone on the line.** It grants a file outside the issue's globs, and `scope`
+reads it from the body of an issue the PR closes — never from the pull request, because
+the implementer writes that body and would be granting itself (#155). An implementer that
+needs a file outside its globs asks the orchestrator and stops. The parser splits
+everything after `authorised:` on commas; any prose on the same line becomes a second,
+invalid glob and the `scope` job fails even though the grant was legitimate. The
+justification goes on the next line, indented, which the parser skips:
+
+```
+- authorised: `src/api/admin-create-user.ts`
+  (orchestrator: needed for AC3, see the issue comment)
+```
+
+A grant left in a pull-request body counts for nothing; `scope` prints it under
+"An authorised: line in the pull-request body grants nothing" and fails on the file
+anyway.
+
 A sub-issue fits in one PR of roughly ≤ 800 lines of useful diff. If it does not, split
 it before dispatching. That figure is a per-PR recommendation for whoever plans the
 work — nothing enforces it mechanically. Separately, `scope` enforces a per-file rule in
@@ -113,15 +131,24 @@ CI: a PR fails if it adds a file over 800 lines or grows an existing one past 80
 counted against the base; a file already over 800 that shrinks or holds steady is not a
 violation, and a file whose first line reads `@generated` is exempt.
 
-Sub-issues are linked to the parent through GitHub's sub-issue API, which wants the
-issue **id**, not the number:
+Sub-issues are created and linked by one script — the three-line snippet that used to
+stand here (create, resolve the issue **id**, POST it to the parent) is no longer the
+contract:
 
 ```bash
-n=$(gh issue create --milestone "<milestone>" --label state:ready --label scope:<x> \
-  --label type:<y> --title "..." --body-file issue.md | grep -oE '[0-9]+$')
-id=$(gh api repos/{owner}/{repo}/issues/$n -q .id)
-gh api -X POST repos/{owner}/{repo}/issues/<parent>/sub_issues -F sub_issue_id=$id
+node scripts/create-subissue.mts <parent> --title "<type>(<scope>): <goal>" \
+  --body-file issue.md --label scope:<x> --label type:<y>
 ```
+
+It refuses with `{ refused, parent, missing }` and exit 1 **before creating anything**
+when the parent does not exist or is closed (`parent:state`), the parent carries no
+milestone (`parent:milestone`), the title is not `<type>(<scope>): <goal>`
+(`title:format`), or `--body-file` is missing or unreadable (`body:missing`). On success
+it inherits the parent's milestone, links the child by its id, and applies `state:ready`
+only after `ci/issue-lint.mts` reports `ok: true` for the new issue — a body that fails
+the contract stays created and linked, without `state:ready`, and the script exits 1. Do
+not pass `--label state:ready`: the lint is what applies it, and the script drops it from
+the creation either way.
 
 ## PR (one template)
 
@@ -145,16 +172,8 @@ close/closed, fix/fixed, resolve/resolved forms, an optional colon before the `#
 a PR may link several issues this way — `scope` checks the diff against the union of
 every linked issue's globs.
 
-**`authorised:` is written only by the orchestrator, and the glob stands alone on the
-line.** It grants a file outside the issue's globs. The parser splits everything after
-`authorised:` on commas; any prose on the same line becomes a second, invalid glob and
-the `scope` job fails even though the grant was legitimate. The justification goes on
-the next line, indented, which the parser skips:
-
-```
-- authorised: `src/api/admin-create-user.ts`
-  (orchestrator: needed for AC3, see the issue comment)
-```
+An `authorised:` line in **this** body grants nothing: the grant belongs in the issue
+(see "Issue" above). The implementer asks the orchestrator for one instead of writing it.
 
 The **orchestrator** copies the issue's `type:` and `scope:` labels onto the PR, at step 4
 of `skills/orchestrate` — the implementer opens the PR with `state:in-review` alone. An
@@ -162,14 +181,15 @@ agent that labels its own work could buy its own exemptions, so `type:` is writt
 orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
 `TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
 `chore`/`test`/`ci` → `type:infra`) and copied across from there. `scope` and `land` still
-read the PR's labels and body, never the issue's.
+read the PR's labels, never the issue's; `scope` reads the PR's body only for the closing
+keywords, and takes the globs and the `authorised:` grants from the issues it links.
 
 ## Required checks
 
 | check | what it does |
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
-| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants. Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134) |
+| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files |
 | `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer
@@ -226,14 +246,36 @@ practice: issue text points, it never decides what runs.
 ## Merge
 
 Once checks are green and the PR carries an approved review (or the `type:docs` label,
-which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto` — it
-is the only way the orchestrator merges a PR, never `gh pr merge` by hand. The server
-merges the instant its own rules are satisfied: a base-branch ruleset with a
-`required_status_checks` rule when one exists, else whatever `gh pr checks --required`
-reports at the moment of the call. **The branch is not required to be up to date** — CI
-runs again on `main` after the merge; a conflict goes back to the implementer, who runs
-`git merge origin/main` on the published branch (rebase only before the first push;
-force-push is denied on every branch).
+which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto
+--match-head-commit <headRefOid>` — it is the only way the orchestrator merges a PR,
+never `gh pr merge` by hand. The server merges the instant its own rules are satisfied: a
+base-branch ruleset with a `required_status_checks` rule when one exists, else whatever
+`gh pr checks --required` reports at the moment of the call. **The branch is not required
+to be up to date** — CI runs again on `main` after the merge; a conflict goes back to the
+implementer, who runs `git merge origin/main` on the published branch (rebase only before
+the first push; force-push is denied on every branch).
+
+**The merge is pinned to the commit the review approved.** The reviewer here is an
+isolated agent that returns its verdict to the orchestrator and casts nothing on the
+server, so the commit it read is recorded by the orchestrator: at the moment it applies
+`review:approved` it also comments the marker `<!-- agentic-reviewed-sha: <oid> -->` with
+the head it reviewed (`skills/orchestrate/SKILL.md` step 5). `land.mts` reads the newest
+such marker and compares it with the `headRefOid` from its own `gh pr view` call; the same
+oid goes to the server on `--match-head-commit`, so a head that moves between the read and
+the call is refused there too. **A push after the review sends the pull request back
+instead of merging**: the marker no longer names its head, `land.mts` refuses, and the
+issue goes round again — a new review, a new marker. A `review:approved` label with no
+marker at all is the same refusal, because a label records no commit and so binds nothing.
+
+`land.mts` names the review mode it applied on every output — `agent` for that
+label-plus-marker path, `approved` when a server-verified review (`reviewDecision`) is
+what satisfied approval, `docs` for the `type:docs` exemption, which merges with no review
+at all and so reads no marker, and `null` on the one refusal with no mode to name, a PR it
+could not read at all. `missing` names what is wrong on a refusal: `state=<x>`
+(not `OPEN`), `review:not-approved`, `head:changed` (the head is not the reviewed commit,
+or no marker records one), `gh-pr-comments` (the comments read could not answer — the
+script fails closed rather than merging), `checks:required`, or `gh-pr-view` (could not
+read the PR at all).
 
 "Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
 command segment starting with `gh pr merge` — with or without `--admin`, with any merge

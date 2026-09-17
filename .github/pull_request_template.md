@@ -8,6 +8,5 @@ Test command, counts, duration. Paste the summary, not the whole log.
 
 ## Files
 Globs touched (must match the issue).
-<!-- authorised: `glob` — orchestrator-only; a grant here counts only inside this ## Files section. -->
 
 ## Risks

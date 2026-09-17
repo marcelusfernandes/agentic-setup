@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 // Cases for ci/scope-check.mts: the PR diff must stay inside the issue's
-// `## Files` globs, unless the PR body grants extra files with `authorised:`.
+// `## Files` globs, unless an `authorised:` line in the **linked issue's**
+// `## Files` grants extra files. A grant in the pull-request body is
+// ignored and reported as such (#155): the implementer writes that body.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
 import { fileGrowth, findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
+// #177's `decisionNudge` comes in through the namespace, not the named
+// import above: a named import of an export the base checkout does not have
+// kills this whole file at load time, which reads as a structural red
+// ("does not provide an export named") rather than an assertion — exactly
+// what `ci/negative-control.mts` warns about. Through the namespace the
+// base fails on the assertion instead.
+import * as scopeLib from '../ci/lib/scope.mts';
 
 const dir = mkdtempSync(join(tmpdir(), 'agentic-scope-'));
 cleanup(() => rmSync(dir, { recursive: true, force: true }));
@@ -20,6 +29,18 @@ const issueBare = file('issue-bare.md', '## Files\n- src/**\n');
 const prPlain = file('pr-plain.md', 'Closes #1\n\n## Files\nGlobs touched (must match the issue).\n');
 const prGrant = file('pr-grant.md', 'Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n- authorised: `src/lib/b.ts` — see issue comment\n');
 const prNoClose = file('pr-noclose.md', '## What changed\nstuff\n');
+// #155: the grant travels on the issue. Written on bare (non-bullet) lines
+// on purpose — `parseIssueGlobs` reads bullets only, so a bare line is a
+// glob the *authorised* parser alone can find, which is what makes the
+// "grant in the issue" cases below discriminate.
+const issueLibGrant = file(
+  'issue-lib-grant.md',
+  '## Files\n- `lib/**`, `docs/*.md`\nauthorised: `src/a.ts`\n  (orchestrator: needed for AC3)\nauthorised: `src/lib/b.ts` — see issue comment\n',
+);
+const issueLibGrantBullet = file(
+  'issue-lib-grant-bullet.md',
+  '## Files\n- `lib/**`, `docs/*.md`\n- authorised: src/a.ts\n  (orchestrator: needed for AC3)\n- authorised: src/lib/b.ts — see issue comment\n',
+);
 const scope = (f: string, i: string | null, p: string) => ci('scope-check.mts', ['--files-file', f, ...(i ? ['--issue-body-file', i] : []), '--pr-body-file', p]);
 // The script's stdout is the JSON block (indented, so its top-level closing
 // `}` is the first line that is exactly `}`) followed by the job summary
@@ -34,10 +55,69 @@ const scopeJson = (out: string): any => {
 check('scope passes inside the issue globs', scope(files, issueSrc, prPlain).status === 0);
 check('scope passes with bare (unquoted) globs', scope(files, issueBare, prPlain).status === 0);
 check('scope fails outside the issue globs', scope(files, issueLib, prPlain).status === 1);
-check('scope passes when the PR grants the files with authorised:', scope(files, issueLib, prGrant).status === 0);
 check('scope fails without Closes #N', scope(files, null, prNoClose).status === 1);
 const r = scope(files, issueLib, prPlain);
 check('scope names the violations', /src\/a\.ts/.test(r.out) && /src\/lib\/b\.ts/.test(r.out), r.out);
+
+// #155: an `authorised:` grant counts only in the body of an issue the PR
+// closes. The implementer writes the PR body, so a grant there would be a
+// self-grant: it is ignored, and the check says so instead of silently
+// passing the file.
+const IGNORED_PR_GRANT = "An authorised: line in the pull-request body grants nothing — the grant is read from the linked issue's ## Files.";
+
+const rPrOnlyGrant = scope(files, issueLib, prGrant);
+check(
+  'scope fails when the only authorised: grant is in the pull-request body',
+  rPrOnlyGrant.status === 1,
+  rPrOnlyGrant.out,
+);
+check(
+  'scope reports the pull-request grant as ignored, with the reason',
+  rPrOnlyGrant.out.includes(IGNORED_PR_GRANT) &&
+    JSON.stringify(scopeJson(rPrOnlyGrant.out).ignoredPrGrants) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']),
+  rPrOnlyGrant.out,
+);
+
+const rIssueGrant = scope(files, issueLibGrant, prPlain);
+check(
+  'scope passes the same diff when the authorised: grant is in the linked issue',
+  rIssueGrant.status === 0,
+  rIssueGrant.out,
+);
+check(
+  'scope attributes the issue grant in the summary and prints no ignored-grant line',
+  /Authorised by #1: [^\n]*`src\/a\.ts`[^\n]*`src\/lib\/b\.ts`/.test(rIssueGrant.out) && !rIssueGrant.out.includes(IGNORED_PR_GRANT),
+  rIssueGrant.out,
+);
+check(
+  'scope reads the issue grant with the same strictness: bullet or bare, backticked glob wins, trailing prose ignored',
+  scope(files, issueLibGrantBullet, prPlain).status === 0,
+  scope(files, issueLibGrantBullet, prPlain).out,
+);
+
+// AC3: both `--issue-body-file` and `--pr-body-file` given — only the
+// issue's grant applies, and the pull request's is named as ignored.
+const issueLibGrantA = file('issue-lib-grant-a.md', '## Files\n- `lib/**`\nauthorised: `src/a.ts`\n  (orchestrator: only this one counts)\n');
+const prGrantB = file('pr-grant-b.md', 'Closes #1\n\n## Files\n- authorised: `src/lib/b.ts`\n  (implementer: this must not count)\n');
+const rBothBodies = scope(files, issueLibGrantA, prGrantB);
+check(
+  'scope with both bodies applies only the issue grant and names the pull request one as ignored',
+  rBothBodies.status === 1 &&
+    JSON.stringify(scopeJson(rBothBodies.out).violations) === JSON.stringify(['src/lib/b.ts']) &&
+    JSON.stringify(scopeJson(rBothBodies.out).ignoredPrGrants) === JSON.stringify(['src/lib/b.ts']) &&
+    scopeJson(rBothBodies.out).globs.includes('src/a.ts'),
+  rBothBodies.out,
+);
+
+// A stale grant left in a pull-request body is reported even when the
+// check passes on the issue's globs alone — it did nothing, and silence
+// would read as acceptance.
+const rPassingWithStaleGrant = scope(files, issueSrc, prGrant);
+check(
+  'scope reports an ignored pull-request grant even when the check passes',
+  rPassingWithStaleGrant.status === 0 && rPassingWithStaleGrant.out.includes(IGNORED_PR_GRANT),
+  rPassingWithStaleGrant.out,
+);
 
 // AC1: parseLinkedIssues accepts Closes/Fixes/Resolves and their forms,
 // in order, deduplicated, and ignores a bare #N with no keyword before it.
@@ -145,6 +225,10 @@ const danglingHead = git(['rev-parse', 'HEAD'], danglingRepo);
 
 const issueTestsOnly = file('issue-tests-only.md', '## Files\n- `tests/**`\n');
 const issueTestsAndWorkflow = file('issue-tests-and-workflow.md', '## Files\n- `tests/**`, `.github/workflows/**`\n');
+const issueTestsAuthorised = file(
+  'issue-tests-authorised.md',
+  '## Files\n- `tests/**`\nauthorised: `.github/workflows/test.yml`\n  (orchestrator: needed for the rename)\n',
+);
 const prClosesOnly = file('pr-closes-only.md', 'Closes #1\n\n## Files\nGlobs touched.\n');
 const prClosesAuthorised = file(
   'pr-closes-authorised.md',
@@ -186,11 +270,20 @@ check(
   rWorkflowInGlobs.out,
 );
 
-const rAuthorised = scopeReal(issueTestsOnly, prClosesAuthorised);
+const rAuthorised = scopeReal(issueTestsAuthorised, prClosesOnly);
 check(
-  'scope passes the same rename when the PR authorises the referencing workflow file',
+  'scope passes the same rename when the linked issue authorises the referencing workflow file',
   rAuthorised.status === 0,
   rAuthorised.out,
+);
+
+// #155: the dangling-reference check reads the issue's grants too — a
+// grant for the same file in the pull-request body does not clear it.
+const rAuthorisedInPr = scopeReal(issueTestsOnly, prClosesAuthorised);
+check(
+  'scope still fails the rename when the workflow file is authorised only in the pull-request body',
+  rAuthorisedInPr.status === 1 && rAuthorisedInPr.out.includes(IGNORED_PR_GRANT),
+  rAuthorisedInPr.out,
 );
 
 // #89: `checkScope` can pass (every changed file sits inside the linked
@@ -278,22 +371,22 @@ check(
   rMisplaced.out,
 );
 check(
-  'scope summary explains that an authorised: line outside ## Files does not count',
-  /An authorised: line outside ## Files does not count — move it into that section\./.test(rMisplaced.out) &&
+  'scope summary explains that an authorised: line outside ## Files is not parsed at all',
+  /An authorised: line outside ## Files is not parsed at all — and a grant in the pull-request body grants nothing either\./.test(rMisplaced.out) &&
     /authorised: `src\/a\.ts`/.test(rMisplaced.out),
   rMisplaced.out,
 );
 
-const rGrantOk = scope(files, issueLib, prGrant);
+const rGrantOk = scope(files, issueLibGrant, prPlain);
 check(
-  'scope JSON has no misplacedAuthorised key when the grant is inside ## Files and the check passes',
+  'scope JSON has no misplacedAuthorised key when the issue grants the files and the check passes',
   (() => {
     const json = scopeJson(rGrantOk.out);
     return json.ok === true && !('misplacedAuthorised' in json);
   })(),
   rGrantOk.out,
 );
-check('scope prints no misplacedAuthorised text when the grant is inside ## Files and the check passes', !/misplacedAuthorised/.test(rGrantOk.out), rGrantOk.out);
+check('scope prints no misplacedAuthorised text when the issue grants the files and the check passes', !/misplacedAuthorised/.test(rGrantOk.out), rGrantOk.out);
 
 const rPlainPass = scope(files, issueSrc, prPlain);
 check(
@@ -478,6 +571,91 @@ check(
 check(
   'fileGrowth: @generated on the first line exempts a file that would otherwise violate',
   fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: true }]).length === 0,
+);
+
+// #177: the decision nudge. A PR that changes a mechanism file (a hook, a
+// CI check, a script, a skill card, a workflow) without recording a
+// decision in the same diff is named in a `warning:` line — and the check
+// still exits 0, because a required check cannot make that judgement from
+// file names alone (the decision on #180). The issue globs below have to
+// cover the sensitive files, or the glob check would fail the run before
+// the nudge is ever visible.
+const nudgeIssue = file(
+  'issue-nudge.md',
+  '## Files\n- `hooks/**`, `ci/**`, `scripts/**`, `skills/**`, `.github/**`, `docs/**`\n',
+);
+const nudgeSensitive = [
+  'hooks/protect-main.mts',
+  'ci/scope-check.mts',
+  'scripts/land.mts',
+  'skills/issue-and-pr/SKILL.md',
+  '.github/workflows/ci.yml',
+];
+const filesHookOnly = file('files-nudge-hook.txt', 'hooks/protect-main.mts\n');
+const filesHookPlusDecision = file('files-nudge-decision.txt', 'hooks/protect-main.mts\ndocs/decisions/0001-nudge-strength.md\n');
+const filesDocsOnly = file('files-nudge-docs.txt', 'docs/workflow.md\n');
+const filesAllSensitive = file('files-nudge-all.txt', `${nudgeSensitive.join('\n')}\n`);
+
+const rNudge = scope(filesHookOnly, nudgeIssue, prPlain);
+check(
+  'scope warns and still exits 0 on a mechanism file with no decision record in the diff',
+  rNudge.status === 0 &&
+    /warning:/.test(rNudge.out) &&
+    JSON.stringify(scopeJson(rNudge.out).decisionNudge) === JSON.stringify(['hooks/protect-main.mts']),
+  rNudge.out,
+);
+
+const rNudgeDecided = scope(filesHookPlusDecision, nudgeIssue, prPlain);
+check(
+  'scope does not warn when the same diff also touches docs/decisions/',
+  rNudgeDecided.status === 0 &&
+    !/warning:/.test(rNudgeDecided.out) &&
+    !('decisionNudge' in scopeJson(rNudgeDecided.out)) &&
+    !('warning' in scopeJson(rNudgeDecided.out)),
+  rNudgeDecided.out,
+);
+
+const rNudgeDocs = scope(filesDocsOnly, nudgeIssue, prPlain);
+check(
+  'scope does not warn for a diff touching only docs/',
+  rNudgeDocs.status === 0 && !/warning:/.test(rNudgeDocs.out) && !('decisionNudge' in scopeJson(rNudgeDocs.out)),
+  rNudgeDocs.out,
+);
+
+const rNudgeAll = scope(filesAllSensitive, nudgeIssue, prPlain);
+check(
+  'the warning names every sensitive path it found',
+  rNudgeAll.status === 0 && nudgeSensitive.every((p) => String(scopeJson(rNudgeAll.out).warning ?? '').includes(p)),
+  rNudgeAll.out,
+);
+
+// Direct unit cases for the pure decisionNudge, which invariant 6 allows
+// for `ci/lib/` — including the boundary the owner drew on #180:
+// `tests/**` and `templates/**` are deliberately not sensitive.
+const decisionNudge = scopeLib.decisionNudge as ((files: string[]) => string[]) | undefined;
+check('ci/lib/scope.mts exports decisionNudge', typeof decisionNudge === 'function');
+check(
+  'decisionNudge returns every sensitive path, in diff order',
+  decisionNudge !== undefined &&
+    JSON.stringify(decisionNudge(['docs/workflow.md', ...nudgeSensitive])) === JSON.stringify(nudgeSensitive),
+  decisionNudge ? JSON.stringify(decisionNudge(['docs/workflow.md', ...nudgeSensitive])) : 'not exported',
+);
+check(
+  'decisionNudge returns nothing when the diff touches docs/decisions.md',
+  decisionNudge !== undefined && decisionNudge(['ci/scope-check.mts', 'docs/decisions.md']).length === 0,
+);
+check(
+  'decisionNudge returns nothing when the diff touches a file under docs/decisions/',
+  decisionNudge !== undefined && decisionNudge(['ci/scope-check.mts', 'docs/decisions/0001-x.md']).length === 0,
+);
+check(
+  'decisionNudge does not treat tests/** or templates/** as sensitive',
+  decisionNudge !== undefined && decisionNudge(['tests/scope.test.mts', 'templates/issue.md']).length === 0,
+  decisionNudge ? JSON.stringify(decisionNudge(['tests/scope.test.mts', 'templates/issue.md'])) : 'not exported',
+);
+check(
+  'decisionNudge treats only SKILL.md under skills/, not every file there',
+  decisionNudge !== undefined && decisionNudge(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md']).length === 0,
 );
 
 finish();

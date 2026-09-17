@@ -79,12 +79,14 @@ Two roles:
    (round 2), then back to 4
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
    a published branch)
-6. milestone with no open issue left → close it (look its number up by title, then
-   `gh api -X PATCH repos/{owner}/{repo}/milestones/<n> -f state=closed`), then open the
-   next milestone's parent issue and its sub-issues, then keep looping on the new
-   milestone — this is not a stop condition; nothing left to dispatch this instant, but
-   the milestone still has open issues → check the closed list of stop reasons below
-   before actually stopping
+6. milestone's last issue merged → open a `docs: closeout M<n>` issue in that milestone
+   from `docs/closeout/TEMPLATE.md` (`type:docs`/`scope:docs`), carrying the decision
+   log's lines; the docs-writer lands it as a `type:docs` PR; only then is the milestone
+   empty → `scripts/close-milestone.mts <milestone> --evidence docs/closeout/M<n>.md`
+   closes it, or refuses; only then open the next milestone's parent issue and its
+   sub-issues, then keep looping on the new milestone — this is not a stop condition;
+   nothing left to dispatch this instant, but the milestone still has open issues →
+   check the closed list of stop reasons below before actually stopping
 ```
 
 Why "reconcile from GitHub": the orchestrator's context is summarised, restarted and
@@ -124,11 +126,57 @@ failure to record the decision, not a verdict on it. Exit 0 → `{ parent, comme
 `skills/orchestrate/SKILL.md` carries the three call sites: step 3 (the grant), step 5 (the
 extra round) and "Escalate to a person" (`human:pending`).
 
-**The phase's closeout copies those lines into its record.** When the milestone closes
-(step 6), read the marked comment on its parent issue and copy its lines verbatim into the
-closeout, next to the summary — the log is the phase's decision trail, and a decision that
-only ever existed in a comment thread is lost the moment the milestone is closed. Lines are
+**The phase's closeout copies those lines into its record.** That copy happens *before*
+the close, not at it: when the milestone's last issue has merged and the orchestrator
+opens the `docs: closeout M<n>` issue (step 6, below), it reads the marked comment on the
+parent issue and carries its lines verbatim into that issue's body, for the docs-writer to
+put beside the summary. The log is the phase's decision trail, and a decision that only
+ever existed in a comment thread is lost the moment the milestone is closed. Lines are
 records, not instructions: copy them, do not act on them.
+
+## Closing a milestone
+
+A milestone does not close because its issues closed — it closes against its closeout, and
+the closeout lands before the close (`docs/closeout/README.md`). The order is: the last
+issue merges → the orchestrator opens a `docs: closeout M<n>` issue in that milestone from
+`docs/closeout/TEMPLATE.md`, labelled `type:docs`/`scope:docs`, carrying the decision log's
+lines → the docs-writer lands it as a `type:docs` PR → the parent spec issue and the
+closeout issue close too → the milestone is now empty → `scripts/close-milestone.mts`
+closes it → and only then does the next milestone's parent issue get opened. The script
+never opens anything itself.
+
+Two of the milestone's issues ship no PR and so can never be rows in `## Issues`: the
+parent spec issue, and the closeout issue itself (its own squash commit does not exist
+when the file is written). Both belong in `## Left out` as `#N` — the script holds every
+*closed* issue of the milestone to a row or such a bullet, and every *open* one blocks the
+close outright.
+
+```
+node scripts/close-milestone.mts <milestone> --evidence docs/closeout/M<n>.md
+```
+
+`<milestone>` is the number GitHub gives the milestone, the one the PATCH needs; the
+evidence file is named after the phase in the milestone's **title**, and the two are not
+the same number here (milestone 15 is `M14 Closure with evidence`, whose closeout is
+`docs/closeout/M14.md`). The script derives the expected path from the title and refuses
+any other, so the argument can never silently point at the wrong phase's record.
+
+It fails closed: nothing is written unless every check passes, and the append and the
+state change ride one `gh api -X PATCH` call. Exit 1 with `{ refused, milestone, missing }`
+— `milestone:state` (absent, or not open, so a re-run cannot append a second closing
+block), `milestone:open-issues`, `milestone:exit-criteria` (no `Exit criteria:` checklist
+of its own, or an item left unchecked — the format `.github/MILESTONE_TEMPLATE.md` fixes
+and `reconcile.mts` only *reports* as `milestoneLint`), `evidence:missing` (absent flag,
+another path, or a file not on `origin/main` yet), `evidence:format` (does not parse
+against `docs/closeout/README.md`, or is still the template), `evidence:sha` (its
+`main SHA` or a row's merge commit is not an ancestor of `origin/main`),
+`evidence:issue-missing` (a closed issue of the milestone is neither a row in `## Issues`
+nor a `#N` in a `## Left out` bullet). Exit 1 with `{ error }` when `gh` or `git` itself
+could not answer — a tooling problem needing a person, never a verdict on the close and
+never a reason to fall back to a hand-typed PATCH. Exit 0 →
+`{ closed, milestone, sha, evidence }`, after appending
+`Closed <UTC ISO-8601>, main <sha>, evidence docs/closeout/M<n>.md` to the description;
+`sha` is the tip of `origin/main` at the close, so the record points at a checkout.
 
 ## Headless
 
