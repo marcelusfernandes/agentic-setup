@@ -7,6 +7,11 @@ labels: ["state:ready"]
 
 ## Context
 Why it exists. Links to the spec, the report, or the code it changes (`file:line`).
+Optional: a line `Origin: <where this came from>` — the report, review or run this issue
+came out of (`Origin: docs/dogfood/2026-01-31.md, "the wait loop spins on a conflicting PR"`).
+A finding from a dogfood report is opened directly as its own `state:ready` issue carrying
+that line, never parked as a bullet in a mother issue. No lint rule reads it: `## Context`
+is required and non-empty already.
 
 ## Goal
 One verifiable sentence.
