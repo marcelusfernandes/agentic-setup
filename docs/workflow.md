@@ -279,6 +279,39 @@ to be up to date** — CI runs again on `main` after the merge; a conflict goes 
 implementer, who runs `git merge origin/main` on the published branch (rebase only before
 the first push; force-push is denied on every branch).
 
+**Two review modes, each complete, neither reached by falling out of the other** (#156).
+`land.mts` declares the mode before it judges any condition, and merges only when every
+condition of that mode is met:
+
+- `agent`, the default and what this repository runs: the `review:approved` label, the
+  `<!-- agentic-reviewed-sha: <oid> -->` marker equal to the head, and **every required
+  check in bucket `pass`**.
+- `approved`, opt-in: everything `agent` requires *plus* `reviewDecision === 'APPROVED'`
+  from the server. It is selected by `node scripts/land.mts <pr> --require-review`, or by
+  a base branch whose effective rules already carry a `pull_request` rule with
+  `required_approving_review_count > 0` — **never** by whether `AGENTIC_REVIEWER_TOKEN`
+  happens to be set, which selects nothing at all (it only gives the reviewer the second
+  identity to cast a review with). The mode costs that second identity: a repository whose
+  only login is the one running `land.mts` cannot cast the review it asks for, and freezes
+  at its first merge — which is why `agent` is the default and this is opt-in
+  (`docs/decisions.md` items 18 and 20).
+- `docs`, the `type:docs` exemption: no review at all, and so no marker to read. It is an
+  exemption from the *review*, never from the checks.
+
+The base branch's effective rules are read first, because one selector lives in them and
+because the gate does too; a rules read that cannot answer refuses with
+`missing: ['gh-rules']` and `mode: null` rather than settling for the mode left over when a
+read fails.
+
+**Required checks are verified, not assumed.** In both gates `land.mts` reads `gh pr checks
+<pr> --required --json name,bucket` and refuses unless that list is non-empty and every
+bucket is `pass`. An empty list is not "nothing is red", it is "nothing held the line"; a
+`pending` or `skipping` bucket is not `pass`; and `gh` prints the JSON while exiting
+non-zero, so the buckets are read from its output rather than guessed from its exit code.
+`gate` names who *else* holds the line — `ruleset` when the base branch's effective rules
+include `required_status_checks`, `client-checks` otherwise — never whether the buckets
+were read.
+
 **The merge is pinned to the commit the review approved.** The reviewer here is an
 isolated agent that returns its verdict to the orchestrator and casts nothing on the
 server, so the commit it read is recorded by the orchestrator: at the moment it applies
@@ -290,16 +323,34 @@ the call is refused there too. **A push after the review sends the pull request 
 instead of merging**: the marker no longer names its head, `land.mts` refuses, and the
 issue goes round again — a new review, a new marker. A `review:approved` label with no
 marker at all is the same refusal, because a label records no commit and so binds nothing.
+The marker is read in mode `approved` as well: that mode adds the server's review to
+everything `agent` requires, it does not replace it.
 
 `land.mts` names the review mode it applied on every output — `agent` for that
-label-plus-marker path, `approved` when a server-verified review (`reviewDecision`) is
-what satisfied approval, `docs` for the `type:docs` exemption, which merges with no review
-at all and so reads no marker, and `null` on the one refusal with no mode to name, a PR it
-could not read at all. `missing` names what is wrong on a refusal: `state=<x>`
-(not `OPEN`), `review:not-approved`, `head:changed` (the head is not the reviewed commit,
-or no marker records one), `gh-pr-comments` (the comments read could not answer — the
-script fails closed rather than merging), `checks:required`, or `gh-pr-view` (could not
-read the PR at all).
+label-plus-marker path, `approved` when the server's own review is required on top of it,
+`docs` for the `type:docs` exemption, which merges with no review at all and so reads no
+marker, and `null` on the refusals with no mode to name: a PR it could not read at all, and
+a base branch whose rules it could not read. `missing` names what is wrong on a refusal:
+`state=<x>` (not `OPEN`), `review:not-approved` (the label, or in mode `approved` the
+server's `APPROVED` decision), `head:changed` (the head is not the reviewed commit, or no
+marker records one), `gh-pr-comments` (the comments read could not answer — the script
+fails closed rather than merging), `merge:not-mergeable` (GitHub reports the head as
+`CONFLICTING`, or as `UNKNOWN`, which is not a mergeability this script may assume),
+`checks:required` (a required check outside bucket `pass`, an empty list, or a bucket read
+that could not answer), `merge:not-clean` (mode `agent` only, below), `gh-rules` (the base
+branch's effective rules could not be read) or `gh-pr-view` (could not read the PR at all).
+
+**In mode `agent` nothing is left queued.** `--match-head-commit` is checked by GitHub when
+auto-merge is *enabled*, not when it later fires, so a queue left armed merges whatever the
+branch carries by then — which is how #191 landed a merge commit nobody reviewed, and why
+#241 armed `--auto` on a pull request that could not merge at all. So `land.mts` refuses
+outright when GitHub does not report the head as `MERGEABLE`, and when the post-merge state
+read says the PR is still open it runs `gh pr merge <pr> --disable-auto` and refuses with
+`missing: ['merge:not-clean']`: mode `agent` binds the review to one commit on the client,
+so it merges *that* commit or nothing — clear what blocks it and run `land` again. Modes
+`approved` and `docs` still print `{ queued }` when GitHub queues the merge: there the
+server's own review requirement, or the absence of any review to outrun, is what the queue
+answers to.
 
 "Never `gh pr merge` by hand" is enforced, not asked for. `protect-main.mts` denies **any**
 command segment that invokes `gh pr merge` — with or without `--admin`, with any merge

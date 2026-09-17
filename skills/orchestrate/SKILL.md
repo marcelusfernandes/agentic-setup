@@ -309,41 +309,58 @@ Then act on the verdict:
   the record of an agent review, not a stand-in for a token nobody set. By default (mode
   `agent`) approval *is* that label plus the `<!-- agentic-reviewed-sha: <oid> -->` marker
   you commented above: it reads the newest marker on the PR and compares it with the PR's
-  current `headRefOid`. In the opt-in `approved` mode — `AGENTIC_REVIEWER_TOKEN` set in the
-  orchestrator's own environment, or a PR GitHub already reports as approved — approval is
-  `reviewDecision === 'APPROVED'` from the server instead and no marker is read
-  (`docs/decisions.md` item 18). Either way it passes the head it read to the server on
-  `--match-head-commit`, so the merge lands the reviewed commit or nothing. `missing` names
-  what is wrong: `state=<x>` (not `OPEN`), `review:not-approved`, `head:changed` (someone
+  current `headRefOid`. The opt-in `approved` mode adds `reviewDecision === 'APPROVED'`
+  from the server **on top of everything `agent` requires**, marker included; it is
+  selected by `node "$LAND" <pr> --require-review`, or by a base branch whose effective
+  rules already require an approving review — never by whether `AGENTIC_REVIEWER_TOKEN` is
+  set in your environment, which selects no mode at all and only gives the reviewer the
+  second identity to cast with (`docs/decisions.md` items 18 and 20). Either way it passes
+  the head it read to the server on `--match-head-commit`, so the merge lands the reviewed
+  commit or nothing. `missing` names
+  what is wrong: `state=<x>` (not `OPEN`), `review:not-approved` (the label, or in mode
+  `approved` the server's decision as well), `head:changed` (someone
   pushed after the review, or no marker records which head was reviewed — write one and
   review again; a push after the review sends the PR back instead of merging),
   `gh-pr-comments` (the comments read could not answer, so the reviewed head is unknown and
-  nothing is merged), or `gh-pr-view` (could not even read the PR). `mode` names which
-  review binding ran: `agent` for that label-plus-marker path, `approved` when a
-  server-verified review satisfied approval, `docs` for the `type:docs` exemption, which
-  merges with no review at all and so reads no marker — and `null` on the one refusal that
-  has no mode to name, the PR it could not read at all.
+  nothing is merged), `merge:not-mergeable` (GitHub does not report the head as
+  `MERGEABLE` — a conflict to send back, or a mergeability it has not computed yet, which
+  simply means running `land` again in a moment), `checks:required` (a required check
+  outside bucket `pass`, or no required check at all), `merge:not-clean` (mode `agent`
+  only: GitHub queued the merge instead of performing it, so `land` disarmed the queue —
+  see below), `gh-rules` (the base branch's effective rules could not be read, so no mode
+  could be selected) or `gh-pr-view` (could not even read the PR). `mode` names which
+  review binding ran: `agent` for that label-plus-marker path, `approved` when the server's
+  own review is required on top of it, `docs` for the `type:docs` exemption, which
+  merges with no review at all and so reads no marker — and `null` on the refusals that
+  have no mode to name, the PR it could not read and the rules it could not read.
 
-  On a refusal that clears, it re-reads the base branch's *effective* rules (`gh api
-  repos/{owner}/{repo}/rules/branches/<base>`). When they include a
-  `required_status_checks` rule, that ruleset is the gate and `land.mts` queues the merge
-  straight away — there is no separate check read to go stale between being taken and the
-  merge happening. Otherwise (no such rule on this base branch) it falls back to `gh pr
-  checks <pr> --required` itself and refuses (`{ refused, pr, missing: ['checks:required'],
-  gate: 'client-checks' }`) if that is not green.
+  It reads the base branch's *effective* rules (`gh api
+  repos/{owner}/{repo}/rules/branches/<base>`) before anything else, because the mode and
+  the gate both live there: `gate: 'ruleset'` when they include a `required_status_checks`
+  rule, `gate: 'client-checks'` otherwise. **Both gates read the checks themselves** — `gh
+  pr checks <pr> --required --json name,bucket` — and refuse (`{ refused, pr, missing:
+  ['checks:required'], gate }`) unless that list is non-empty and every bucket is `pass`; a
+  `pending` check is not a green one, and an empty list means nothing held the line at all.
+  The `gate` field says who *else* is holding it, not whether it was read.
 
   On success it runs `gh pr merge <pr> --squash --auto --match-head-commit <headRefOid>`
   (it never asks `gh` itself to
   delete the branch, and never `--admin`) and prints `{ merged: pr, gate, mode }` if the PR is already `MERGED` by the time it
   reads `gh pr view` back, or `{ queued: pr, gate, mode }` if GitHub will merge it once its own
-  rules are satisfied — either way, nothing left to label or remove by hand: `Closes #N`
+  rules are satisfied. A queue is only left standing in modes `approved` and `docs`: in mode
+  `agent` a merge that did not happen is disarmed at once (`gh pr merge <pr> --disable-auto`)
+  and refused with `missing: ['merge:not-clean']`, because GitHub checks the pinned
+  `--match-head-commit` when auto-merge is enabled and not when it later fires — a queue
+  left armed merges whatever the branch carries by then (#191), including the commit that
+  resolves a conflict `land` should never have queued on (#241). Clear what blocks the PR
+  and run `land` again. Either way, nothing left to label or remove by hand: `Closes #N`
   closes the issue once the merge happens, and the repository's `delete_branch_on_merge`
   setting removes the branch (the worktree turns up in a later pass's `orphanWorktrees`).
   If `gh pr merge` itself fails with "is in clean status" (a stale read that chose
   "enable auto-merge" a moment after GitHub already considered the PR clean, #81),
   `land.mts` retries once with a plain `gh pr merge <pr> --squash --match-head-commit
-  <headRefOid>` (still pinned to the reviewed commit); any other failure, or a
-  PR that still is not `MERGED` after a successful-looking merge call, prints `{ error }`
+  <headRefOid>` (still pinned to the reviewed commit); any other failure, and a disarm call
+  that itself fails, prints `{ error }`
   and exits 1 — a `gh`/`git` problem, not a verdict. **Never a signal to retry with
   `--admin`, either way.**
 

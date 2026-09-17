@@ -473,3 +473,67 @@ note under item 13 do: #148's `## Files` lists `docs/decisions.md` and no path u
 [`decisions/README.md`](decisions/README.md) all the same, under the orchestrator's
 `authorised:` grant on that file; relocating this item and item 16 to dated files is its
 own issue, as it was for items 14 and 15 (#211).
+
+## 20. 2026-09-17: `land` declares its review mode — `agent` by default, `approved` opt-in
+
+Status: accepted — written OK: #156 under the standing M11–M16 delegation recorded on #161,
+specifying the merge half of the M12 spec (#153). Numbered 20 and not 19: #150's open pull
+request carries an item 19, and two items may not share a number.
+
+`scripts/land.mts` **declares the review mode it is in before it judges any condition**, and
+each mode carries its own complete set of conditions:
+
+- `agent`, the default: the `review:approved` label, the `<!-- agentic-reviewed-sha: <oid> -->`
+  marker equal to `headRefOid`, and every required check in bucket `pass`.
+- `approved`, opt-in: everything `agent` requires *plus* `reviewDecision === 'APPROVED'` from
+  the server. It is selected by `--require-review` or by a base branch whose effective rules
+  already carry `required_approving_review_count > 0`.
+- `docs`, the `type:docs` exemption: no review, and so no marker — an exemption from the
+  review, never from the checks.
+
+**The silent fallback is gone.** Until this item the mode was chosen by the absence of a
+variable: `land` treated the `review:approved` label as approval whenever
+`AGENTIC_REVIEWER_TOKEN` was unset — the state of this repository — and said nothing about
+which of the two paths had run, so a reader of a `land` result could not tell a
+server-verified review from a label the merging identity wrote itself. `AGENTIC_REVIEWER_TOKEN`
+now selects no mode at all; it only gives the reviewer the second identity to cast with. A
+read that cannot answer selects nothing either: unreadable base-branch rules refuse with
+`missing: ['gh-rules']` and `mode: null` rather than settling for the mode left over when a
+read fails (invariant 3).
+
+*Why:* the defect item 18 left open was the silence, not the label. The gate this workflow
+runs is an agent review (item 18), and requiring a review this workflow does not use would
+only freeze the repository. What can be made honest is the *declaration* — and what holds
+the line either way is the set of required checks, which no label can satisfy. So `land`
+also stopped assuming them: it reads `gh pr checks <pr> --required --json name,bucket` in
+**both** gates and refuses unless the list is non-empty and every bucket is `pass`. Under the
+`ruleset` gate it previously asked only whether a `required_status_checks` rule existed and
+left the rest to `--auto`, so "the checks held the line" was an assumption; an empty required
+list, and a merely-not-red `pending` bucket, both passed it.
+
+*Cost accepted:* `approved` mode needs a second identity, and a repository whose only login
+is the one running `land` cannot cast the review it asks for — with
+`required_approving_review_count: 1` and nobody to review, it freezes at its first merge and
+every pull request refuses with no way to satisfy it. That is why `agent` is the default and
+`approved` is opt-in, and why the refusal in that mode names the cost instead of quietly
+downgrading to `agent`. Item 18's setup order (ruleset first, then the token) still applies.
+
+*Two things beyond the acceptance criteria, closed here because this run produced the
+evidence for them* (the owner's comment on #156): `--match-head-commit` is checked by GitHub
+when auto-merge is *enabled*, not when it later fires, so a queued `--auto` merges whatever
+the branch carries by then. #191 landed that way — approved at one commit, a merge commit
+behind it — and #241 armed `--auto` on a `CONFLICTING` pull request, where the very commit
+resolving the conflict would have merged itself unreviewed. So `land` refuses any head
+GitHub does not report as `MERGEABLE` (`missing: ['merge:not-mergeable']`; `UNKNOWN` refuses
+too, because a mergeability GitHub has not computed is not one this script may assume), and
+in mode `agent` a merge that did not happen is disarmed at once with `gh pr merge
+<pr> --disable-auto` and refused with `missing: ['merge:not-clean']`. Mode `agent` binds the
+review to one commit on the client, so it merges that commit or nothing; modes `approved`
+and `docs` still report `{ queued }`, where the server's own review requirement — or the
+absence of any review to outrun — is what the queue answers to. `--auto` itself is kept:
+it is still what removes the stale-read race of item 13 for the merge that does happen.
+
+Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
+under `decisions/`. This item lives here for the same reason items 16 and 18 do: #156's
+`## Files` lists `docs/decisions.md` and no path under `decisions/`, and an implementer
+never widens its own globs. Relocating it, with them, is the job of #211's successor.
