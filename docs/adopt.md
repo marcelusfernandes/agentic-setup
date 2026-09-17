@@ -56,8 +56,8 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   "workflows": ["agentic-checks.yml", "guard-main.yml", "issue-lint.yml"],
   "autoMerge": true,
   "deleteBranchOnMerge": false,
-  "record": null,
-  "gaps": []
+  "gaps": [],
+  "record": null
 }
 ```
 
@@ -227,6 +227,7 @@ the cause.
 | `record:unknown-key` | it holds a key the shape does not define; `field` names it |
 | `record:missing-field` | a required field is absent; `field` names it |
 | `record:wrong-type` | a field is not the type the shape defines, or the file does not hold one JSON object; `field` names it when there is one |
+| `record:unknown-version` | its `version` is not the one this reader knows; a future shape is refused, never read with today's rules |
 | `record:not-written` | the record could not be written to the repository root |
 
 The `record:*` names carry a `field` alongside `error` whenever the problem has one

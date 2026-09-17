@@ -87,7 +87,8 @@ export type RecordReason =
   | 'record:unparsable'
   | 'record:unknown-key'
   | 'record:missing-field'
-  | 'record:wrong-type';
+  | 'record:wrong-type'
+  | 'record:unknown-version';
 
 /**
  * The one way out on a bad record: a named `reason` a caller can branch on,
@@ -192,6 +193,18 @@ export function parseRecord(text: string): AdoptionRecord {
   }
   if (!isPlainObject(parsed)) throw new RecordError('record:wrong-type', `${RECORD_FILE} must hold one JSON object`);
   validateObject(parsed, SHAPE, '');
+  // The shape is checked before the version, so a file that is not a record
+  // at all is reported as what it is rather than as a version problem. A
+  // version this reader does not know is refused rather than guessed at:
+  // reading a future shape with today's rules is exactly the silent default
+  // this file exists to prevent.
+  if (parsed.version !== RECORD_VERSION) {
+    throw new RecordError(
+      'record:unknown-version',
+      `${RECORD_FILE} is version ${String(parsed.version)}; this reader knows version ${RECORD_VERSION}`,
+      'version',
+    );
+  }
   return parsed as unknown as AdoptionRecord;
 }
 
