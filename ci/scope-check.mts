@@ -27,6 +27,12 @@
 // (`decisionNudge` in lib/scope.mts) — the shape negative-control.mts uses
 // for its structural-red warning.
 //
+// A second, independent warning of the same shape covers the dogfood loop
+// (`dogfoodTrigger` in lib/scope.mts, #182): a diff that changes `hooks/`,
+// `ci/`, `scripts/` or a `skills/**/SKILL.md` while the PR points at no
+// `docs/dogfood/<date>.md` report is named the same way, and the check still
+// exits 0. The binding half is `scripts/close-milestone.mts`, once per phase.
+//
 // In CI it reads the pull_request event (body, base, head), diffs with git
 // and fetches each linked issue's body with `gh` (GH_TOKEN from the
 // workflow). For a dry run, every input can come from flags instead:
@@ -45,7 +51,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, decisionNudge, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, decisionNudge, dogfoodTrigger, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import type { FileLinesEntry } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
@@ -229,6 +235,13 @@ const nudged = decisionNudge(files);
 const decisionWarning = nudged.length
   ? `${nudged.length} mechanism file(s) changed and no decision recorded in the same diff — add an entry under docs/decisions/ if this changes the contract (docs/decisions/README.md says what earns one): ${nudged.join(', ')}`
   : null;
+// The same shape for the dogfood loop (#182), computed independently: a diff
+// can owe a decision entry, a dogfood report, both or neither, and neither
+// answer is ever folded into `ok`.
+const owedDogfood = dogfoodTrigger(files, prBody);
+const dogfoodWarning = owedDogfood.length
+  ? `${owedDogfood.length} mechanism file(s) changed and this pull request names no dogfood report — name a \`docs/dogfood/<date>.md\` report, or expect scripts/close-milestone.mts to refuse the phase: ${owedDogfood.join(', ')}`
+  : null;
 
 let firstLine: string;
 if (!result.ok) {
@@ -256,6 +269,7 @@ console.log(JSON.stringify({
   ...(ignoredPrGrants.length ? { ignoredPrGrants } : {}),
   ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}),
   ...(decisionWarning ? { decisionNudge: nudged, warning: decisionWarning } : {}),
+  ...(dogfoodWarning ? { dogfoodTrigger: owedDogfood, dogfoodWarning } : {}),
 }, null, 2));
 appendSummary(
   [
@@ -301,6 +315,7 @@ appendSummary(
         ]
       : []),
     ...(decisionWarning ? ['', `> warning: ${decisionWarning}`] : []),
+    ...(dogfoodWarning ? ['', `> warning: ${dogfoodWarning}`] : []),
   ].join('\n'),
 );
 if (!ok) process.exit(1);

@@ -33,8 +33,8 @@
 // That is why the failure detail passed to check() is the child's *stdout*
 // only: the child's ERR_MODULE_NOT_FOUND on stderr stays in a captured
 // variable and never reaches the suite's output, where
-// `ci/negative-control.mts:52-56` would read it as a structural red
-// (skill `safe-worktree` §B7).
+// `ci/negative-control.mts`'s structural-red warning would read it as a
+// structural red (skill `safe-worktree` §B7).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

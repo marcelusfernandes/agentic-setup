@@ -55,6 +55,21 @@
 //                          the check is deliberately generous: it catches an
 //                          issue nobody wrote down, not a bullet worded
 //                          loosely.
+//   dogfood                a pull request merged into the phase changed the
+//                          mechanism the loop runs on — `hooks/`, `ci/`,
+//                          `scripts/` or a `skills/**/SKILL.md` — and the
+//                          `## Dogfood` section of the closeout names no
+//                          `docs/dogfood/<date>.md` report (#182). The files
+//                          of the phase are the diff of each `## Issues` row's
+//                          merge commit against its first parent. This is the
+//                          binding half of the nudge `scope` prints per pull
+//                          request: a required check cannot judge from a file
+//                          name whether a run was owed, and the close can,
+//                          because by then the whole phase is visible. A phase
+//                          that touched nothing sensitive closes with no
+//                          report. Undeterminable, and therefore skipped, when
+//                          a row's sha is not an ancestor of `origin/main` —
+//                          `evidence:sha` has already refused that closeout.
 // Every determinable code is collected, so one run names everything that is
 // wrong instead of one thing per run.
 //
@@ -76,6 +91,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { matchesAny } from '../ci/lib/globs.mts';
+import { DOGFOOD_GLOBS, DOGFOOD_REPORT_RE } from '../ci/lib/scope.mts';
 
 const USAGE = 'usage: node scripts/close-milestone.mts <milestone> --evidence docs/closeout/M<n>.md';
 // Fully qualified, same reason as `reconcile.mts`'s #48 note: a local branch
@@ -104,7 +121,7 @@ const CHECKBOX_ITEM = /^\s*[-*+]\s*\[([ xX])\]/;
 const HEADING_LINE = /^\s{0,3}#{1,6}\s/;
 
 type Row = { issue: number; sha: string };
-type Closeout = { errors: string[]; phase: string; sha: string; rows: Row[]; leftOut: number[] };
+type Closeout = { errors: string[]; phase: string; sha: string; rows: Row[]; leftOut: number[]; dogfood: string[] };
 
 function out(shape: Record<string, unknown>, code: number): never {
   console.log(JSON.stringify(shape));
@@ -154,7 +171,7 @@ function cells(line: string): string[] | null {
 function parseCloseout(raw: string): Closeout {
   const errors: string[] = [];
   const lines = raw.replace(/<!--[\s\S]*?-->/g, '').split('\n');
-  const parsed: Closeout = { errors, phase: '', sha: '', rows: [], leftOut: [] };
+  const parsed: Closeout = { errors, phase: '', sha: '', rows: [], leftOut: [], dogfood: [] };
 
   const headingIndex = lines.findIndex((l) => l.trim() !== '');
   const heading = headingIndex === -1 ? '' : lines[headingIndex].trim();
@@ -207,6 +224,7 @@ function parseCloseout(raw: string): Closeout {
   for (const bullet of leftOut) {
     for (const ref of bullet.matchAll(ISSUE_REF)) parsed.leftOut.push(Number(ref[1]));
   }
+  parsed.dogfood = dogfood.map((b) => b.trim());
 
   if (parsed.rows.length === 0 && errors.length === 0) {
     errors.push('a closeout must be filled in: no row in `## Issues` means it is still the empty template');
@@ -277,6 +295,26 @@ const normalisePath = (path: string): string => path.trim().replace(/^\.\//, '')
 
 /** `git merge-base --is-ancestor <sha> origin/main`, with "not a commit here" folded into false. */
 const isAncestor = (sha: string): boolean => git(['merge-base', '--is-ancestor', sha, MAIN]).status === 0;
+
+/**
+ * The paths one merged pull request changed: its commit against its first
+ * parent, which is the squash commit's parent and a real merge's `main` side
+ * alike. A `git` failure here is `{ error }`, never a refusal — the shas have
+ * already been held to `origin/main`, so a diff that cannot be read is a
+ * broken repository, not a verdict on the close.
+ */
+function filesOf(sha: string): string[] {
+  const r = git(['diff', '--no-renames', '--name-only', `${sha}^1`, sha]);
+  if (r.status !== 0) fail({ error: why(r, `git diff ${sha}^1 ${sha} failed`) });
+  return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+/** At most `MAX_NAMED_PATHS` paths, the rest counted, so one reason stays readable. */
+const MAX_NAMED_PATHS = 3;
+function named(paths: string[]): string {
+  const head = paths.slice(0, MAX_NAMED_PATHS).join(', ');
+  return paths.length > MAX_NAMED_PATHS ? `${head} (+${paths.length - MAX_NAMED_PATHS} more)` : head;
+}
 
 // --- 1. arguments ------------------------------------------------------------
 const args = parseArgs(process.argv.slice(2));
@@ -371,6 +409,22 @@ if (closeout && closeout.errors.length === 0) {
     ...closeout.rows.filter((r) => !isAncestor(r.sha)).map((r) => `merge commit ${r.sha} for #${r.issue}`),
   ];
   if (strays.length > 0) refuse('evidence:sha', `${evidence}: ${strays.join(', ')} is not an ancestor of ${MAIN}`);
+
+  // #182: the dogfood refusal. Only when every sha is an ancestor — the diff
+  // of a commit that is not on `origin/main` says nothing about this phase,
+  // and `evidence:sha` has already refused the closeout for it.
+  if (strays.length === 0 && !closeout.dogfood.some((bullet) => DOGFOOD_REPORT_RE.test(bullet))) {
+    const sensitive = closeout.rows
+      .map((row) => ({ issue: row.issue, paths: filesOf(row.sha).filter((f) => matchesAny(f, DOGFOOD_GLOBS)) }))
+      .filter((r) => r.paths.length > 0);
+    if (sensitive.length > 0) {
+      refuse(
+        'dogfood',
+        `${evidence}: ${sensitive.map((r) => `#${r.issue} (${named(r.paths)})`).join(', ')} changed the mechanism the loop runs on, ` +
+          'and `## Dogfood` names no `docs/dogfood/<date>.md` report',
+      );
+    }
+  }
 
   // Every closed issue of the milestone is accounted for: a row when it
   // shipped, a `## Left out` bullet when it did not.
