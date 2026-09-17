@@ -45,11 +45,23 @@ const ALL_LABELS = [
 ];
 const ALL_LABELS_JSON = JSON.stringify(ALL_LABELS.map((name) => ({ name })));
 
+/**
+ * The page `gh label list` is asked for. A repository with at least this many
+ * labels answers with exactly this many and says nothing about the ones it
+ * left out, which is the whole point of the case below.
+ */
+const LABEL_LIST_LIMIT = 200;
+
+/** A full page of labels: what a repository with more than the limit returns. */
+const FULL_PAGE_JSON = JSON.stringify(
+  Array.from({ length: LABEL_LIST_LIMIT }, (_, i) => ({ name: `topic/${String(i).padStart(3, '0')}` })),
+);
+
 /** Every value each knob accepts; anything else is a typo and is refused. */
 const KNOBS = {
   FAKE_GH_FAIL: ['', 'repo', 'issue-list', 'issue-create'],
   FAKE_GH_RULES: ['', 'full'],
-  FAKE_GH_LABELS: ['', 'all'],
+  FAKE_GH_LABELS: ['', 'all', 'full-page'],
 };
 
 /** `knob NAME "$NAME" allowed...` lines, one per knob, in a stable order. */
@@ -93,6 +105,10 @@ case "\${1:-} \${2:-}" in
   "label list")
     case "\${FAKE_GH_LABELS:-}" in
       all) echo '${ALL_LABELS_JSON}' ;;
+      # A page kept beside this script rather than inlined: 200 entries of
+      # JSON in a case arm is unreadable, and the file is what a repository
+      # with more labels than the limit would hand back.
+      full-page) cat "$(dirname "$0")/labels-full-page.json" ;;
       *) echo '[]' ;;
     esac
     ;;
@@ -120,6 +136,7 @@ const fakeGhDir = mkdtempSync(join(tmpdir(), 'agentic-fakegh-hardening-'));
 cleanup(() => rmSync(fakeGhDir, { recursive: true, force: true }));
 const FAKE_GH_PATH = join(fakeGhDir, 'gh');
 writeFileSync(FAKE_GH_PATH, FAKE_GH);
+writeFileSync(join(fakeGhDir, 'labels-full-page.json'), `${FULL_PAGE_JSON}\n`);
 chmodSync(FAKE_GH_PATH, 0o755);
 const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 
@@ -249,10 +266,65 @@ check(
 check('zero-gap --plan-issue never reports { error }: nothing failed', bOut !== null && bOut.error === undefined, b.stdout);
 check('zero-gap --plan-issue leaves the working tree byte-identical', git(['status', '--porcelain'], whole) === '', git(['status', '--porcelain'], whole));
 
-// --- C: a gh issue create that fails is named, with gh's own message ---------
+/** A repository with gaps left, so `--plan-issue` has a question to ask. */
+const gappy = fixture({ 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node t.mjs' } }) });
+
+// --- C: a label list that came back full is reported as possibly truncated --
+// `gh label list` is asked for one page. A repository whose answer fills that
+// page may have more labels the read never saw, and `labels:missing` is then
+// a guess — so the report says so rather than letting the reader assume the
+// list is the whole vocabulary.
+check('a label list well under the limit is not reported as truncated', aOut?.labelsTruncated === false, a.stdout);
+check(
+  'the report always carries labelsTruncated, so a reader never has to infer it',
+  aOut !== null && Object.prototype.hasOwnProperty.call(aOut, 'labelsTruncated'),
+  a.stdout,
+);
+
+const cTrunc = adopt(['--inventory'], whole, { FAKE_GH_RULES: 'full', FAKE_GH_LABELS: 'full-page' });
+const cTruncOut = parse(cTrunc.stdout);
+check('a full page of labels still exits 0', cTrunc.status === 0 && cTruncOut !== null, `${cTrunc.stdout}\n${cTrunc.stderr}`);
+check(
+  'a label list that returned exactly the limit is reported as labelsTruncated: true',
+  cTruncOut?.labelsTruncated === true && Array.isArray(cTruncOut?.labels) && cTruncOut.labels.length === LABEL_LIST_LIMIT,
+  `${cTruncOut?.labelsTruncated} / ${cTruncOut?.labels?.length}`,
+);
+check(
+  'the label read asks for an explicit limit, never gh’s default page of 30',
+  new RegExp(`^label list .*--limit ${LABEL_LIST_LIMIT}\\b`, 'm').test(cTrunc.log),
+  cTrunc.log,
+);
+
+// The note is only worth having if the person reading the plan issue sees it:
+// the checklist there says which labels are missing, and that list is exactly
+// what a truncated read cannot be trusted about.
+const truncState = newStateDir();
+const cPlan = adopt(['--plan-issue'], gappy, { FAKE_GH_LABELS: 'full-page' }, truncState);
+const truncArgs = existsSync(join(truncState, 'issue-create.args'))
+  ? readFileSync(join(truncState, 'issue-create.args'), 'utf8').split('\0').filter((s) => s.length > 0)
+  : [];
+const truncBody = truncArgs.indexOf('--body') === -1 ? '' : truncArgs[truncArgs.indexOf('--body') + 1];
+check('--plan-issue with a truncated label read still opens the issue', cPlan.status === 0 && truncBody.length > 0, `${cPlan.stdout}\n${cPlan.stderr}`);
+check(
+  'the plan issue says the label list may be truncated, and names the limit it asked for',
+  /truncat/i.test(truncBody) && new RegExp(`\\b${LABEL_LIST_LIMIT}\\b`).test(truncBody),
+  truncBody.split('\n').filter((l) => /label/i.test(l)).join('\n'),
+);
+
+const cPlanWhole = adopt(['--plan-issue'], gappy, { FAKE_GH_LABELS: 'all' }, newStateDir());
+const wholeArgs = existsSync(join(cPlanWhole.stateDir, 'issue-create.args'))
+  ? readFileSync(join(cPlanWhole.stateDir, 'issue-create.args'), 'utf8').split('\0').filter((s) => s.length > 0)
+  : [];
+const wholeBody = wholeArgs.indexOf('--body') === -1 ? '' : wholeArgs[wholeArgs.indexOf('--body') + 1];
+check(
+  'a label read that was not truncated says nothing about truncation',
+  wholeBody.length > 0 && !/truncat/i.test(wholeBody),
+  wholeBody.split('\n').filter((l) => /label/i.test(l)).join('\n'),
+);
+
+// --- D: a gh issue create that fails is named, with gh's own message ---------
 // The refusal shape the rest of the script uses: a stable name a caller
 // branches on, and the tool's wording kept out of it and in `detail`.
-const gappy = fixture({ 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node t.mjs' } }) });
 const c = adopt(['--plan-issue'], gappy, { FAKE_GH_FAIL: 'issue-create' });
 const cOut = parse(c.stdout);
 check(
@@ -263,7 +335,7 @@ check(
 check('a failed gh issue create never leaks gh wording into the name', cOut !== null && !/could not create/.test(cOut?.error ?? ''), c.stdout);
 check('a failed gh issue create tried exactly once, never twice', ran(c.log, 'issue create') === 1, c.log);
 
-// --- D: a knob typo stops the harness instead of behaving like the default ---
+// --- E: a knob typo stops the harness instead of behaving like the default ---
 // `FAKE_GH_FAIH` is not the knob; `FAKE_GH_FAIL=issue-creat` is the knob with
 // a typed value. Without validation the fake would answer normally and the
 // case that asked for a failure would pass while proving nothing.
@@ -286,7 +358,7 @@ check(
 const dOk = adopt(['--inventory'], whole, { ...WHOLE_ENV, FAKE_GH_FAIL: '' });
 check('the empty value of a knob is a value the harness knows, not a typo', dOk.status === 0, `${dOk.stdout}\n${dOk.stderr}`);
 
-// --- E: the git shim survives a path with a space in it ----------------------
+// --- F: the git shim survives a path with a space in it ----------------------
 const e = adopt(['--inventory'], whole, { ...WHOLE_ENV, PATH: PATH_WITH_SPACED_GIT });
 const eOut = parse(e.stdout);
 check(
@@ -296,7 +368,7 @@ check(
 );
 check('the spaced git path is quoted in the shim it is interpolated into', readFileSync(FAKE_GIT_PATH, 'utf8').includes(`exec "${SPACED_GIT}" "$@"`), readFileSync(FAKE_GIT_PATH, 'utf8'));
 
-// --- F: shellcheck, when this machine has it ---------------------------------
+// --- G: shellcheck, when this machine has it ---------------------------------
 // The acceptance criterion asks for shellcheck over the touched file's shell
 // text when it is available. It is not a dependency of this repository, so an
 // absent shellcheck is a skip and never a failure.
