@@ -23,6 +23,11 @@
 // (`scripts/reconcile.mts`, `scripts/claim.mts` and the Codex route's
 // `github.mts`) are already in place. A second run never opens a second
 // issue: it refuses with `{ refused, reason: 'plan-issue:already-open' }`.
+// A repository whose report names no gap gets no issue either: there is no
+// question to ask, and it refuses with
+// `{ refused, reason: 'plan-issue:nothing-to-plan', gaps: [] }` before it
+// searches for an open one, so that run makes no `gh` call beyond the
+// inventory's own reads.
 //
 // `--record` is the second mutation, and it writes exactly one file:
 // `agentic.config.json` at the repository root, the adoption record of
@@ -192,7 +197,28 @@ if (wantRecord) {
   process.exit(0);
 }
 
-// --- 6. --plan-issue: render the plan ---------------------------------------
+// --- 6. --plan-issue: a repository with nothing to plan is not asked --------
+// The plan issue is a question ("should adoption do these things?"), and a
+// repository whose report names no gap has none to answer: the issue would
+// carry an empty checklist, and a person would have to open it to find that
+// out. `report.gaps`, not `inventory.gaps` — a stale record is worth
+// planning even when the repository itself is whole. Refused here, before
+// the open-issue search and before the label, so this run makes no `gh`
+// call at all beyond the reads the inventory already did.
+if (report.gaps.length === 0) {
+  console.log(
+    JSON.stringify({
+      refused:
+        'this repository already has everything the loop reads; there is nothing to plan, and an issue with an ' +
+        'empty checklist asks nothing. Run `--inventory` to see the report it was decided from.',
+      reason: 'plan-issue:nothing-to-plan',
+      gaps: [],
+    }),
+  );
+  process.exit(1);
+}
+
+// --- 7. --plan-issue: render the plan ---------------------------------------
 const show = (value: string | null): string => (value === null ? 'none' : `\`${value}\``);
 
 /** What adoption would do about each gap, in the gap's own words. */
@@ -272,7 +298,7 @@ function renderPlan(report: Report): string {
   ].join('\n');
 }
 
-// --- 7. --plan-issue: refuse when one is already open -----------------------
+// --- 8. --plan-issue: refuse when one is already open -----------------------
 const search = gh(['issue', 'list', '--search', `"${PLAN_ISSUE_TITLE}" in:title`, '--state', 'open', '--json', 'number,title']);
 if (search.status !== 0 || !search.stdout.trim()) fail('plan-issue:unreadable');
 let open: Array<{ number?: number; title?: string }>;
@@ -294,7 +320,7 @@ if (already) {
   process.exit(1);
 }
 
-// --- 8. --plan-issue: the one mutation --------------------------------------
+// --- 9. --plan-issue: the one mutation --------------------------------------
 // The label has to exist before it can be applied; the inventory already
 // says whether it does, so this costs no extra read.
 if (!inventory.labels.includes(PENDING_LABEL)) {
