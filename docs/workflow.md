@@ -103,6 +103,24 @@ gets comma-split too and becomes a bogus glob that matches nothing — the `scop
 then reports a false violation on every real file. Put the reason on its own
 non-bullet line under the glob.
 
+**`authorised:` is written only by the orchestrator, in the issue's `## Files`, and the
+glob stands alone on the line.** It grants a file outside the issue's globs, and `scope`
+reads it from the body of an issue the PR closes — never from the pull request, because
+the implementer writes that body and would be granting itself (#155). An implementer that
+needs a file outside its globs asks the orchestrator and stops. The parser splits
+everything after `authorised:` on commas; any prose on the same line becomes a second,
+invalid glob and the `scope` job fails even though the grant was legitimate. The
+justification goes on the next line, indented, which the parser skips:
+
+```
+- authorised: `src/api/admin-create-user.ts`
+  (orchestrator: needed for AC3, see the issue comment)
+```
+
+A grant left in a pull-request body counts for nothing; `scope` prints it under
+"An authorised: line in the pull-request body grants nothing" and fails on the file
+anyway.
+
 A sub-issue fits in one PR of roughly ≤ 800 lines of useful diff. If it does not, split
 it before dispatching. That figure is a per-PR recommendation for whoever plans the
 work — nothing enforces it mechanically. Separately, `scope` enforces a per-file rule in
@@ -142,16 +160,8 @@ close/closed, fix/fixed, resolve/resolved forms, an optional colon before the `#
 a PR may link several issues this way — `scope` checks the diff against the union of
 every linked issue's globs.
 
-**`authorised:` is written only by the orchestrator, and the glob stands alone on the
-line.** It grants a file outside the issue's globs. The parser splits everything after
-`authorised:` on commas; any prose on the same line becomes a second, invalid glob and
-the `scope` job fails even though the grant was legitimate. The justification goes on
-the next line, indented, which the parser skips:
-
-```
-- authorised: `src/api/admin-create-user.ts`
-  (orchestrator: needed for AC3, see the issue comment)
-```
+An `authorised:` line in **this** body grants nothing: the grant belongs in the issue
+(see "Issue" above). The implementer asks the orchestrator for one instead of writing it.
 
 The **orchestrator** copies the issue's `type:` and `scope:` labels onto the PR, at step 4
 of `skills/orchestrate` — the implementer opens the PR with `state:in-review` alone. An
@@ -159,14 +169,15 @@ agent that labels its own work could buy its own exemptions, so `type:` is writt
 orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
 `TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
 `chore`/`test`/`ci` → `type:infra`) and copied across from there. `scope` and `land` still
-read the PR's labels and body, never the issue's.
+read the PR's labels, never the issue's; `scope` reads the PR's body only for the closing
+keywords, and takes the globs and the `authorised:` grants from the issues it links.
 
 ## Required checks
 
 | check | what it does |
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
-| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line grants. Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134) |
+| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134) |
 | `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `*.md` (root-level Markdown — `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer

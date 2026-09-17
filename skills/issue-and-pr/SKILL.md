@@ -77,9 +77,14 @@ it back, the implementer fixes in the same worktree.
   (`` `src/**` ``) or bare, comma-separated. Prose on a non-bullet line is ignored; prose
   inside a bullet becomes a bogus glob and fails every real file. Put the reason on its own
   line under the bullet.
-- PR `## Files`: only lines starting with `authorised:` grant anything, and **only the
-  orchestrator writes them**. The glob stands alone on the line (backticked, or the first
-  token); the justification goes on the next line, indented.
+- Issue `## Files`, `authorised:` lines: a line starting `authorised:` (bullet or bare)
+  grants one glob outside those bullets, and **only the orchestrator writes it**. The glob
+  stands alone on the line (backticked, or the first token); the justification goes on the
+  next line, indented.
+- PR `## Files`: prose. It grants nothing — the implementer writes that body, so a grant
+  there would be a self-grant, and since #155 `scope` reports it as ignored and fails on
+  the file anyway. An implementer that needs a file outside its globs asks the
+  orchestrator for a grant **on the issue** and stops.
 
 ```
 - authorised: `src/api/admin-create-user.ts`
