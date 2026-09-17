@@ -162,11 +162,20 @@ writeFileSync(join(fakeGhDir, 'gh'), FAKE_GH);
 chmodSync(join(fakeGhDir, 'gh'), 0o755);
 const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 
+// AGENTIC_REVIEWER_TOKEN decides whether --require-review warns (#143 AC3),
+// so the base environment of every fake-gh run drops it: the cases below say
+// what it is, never the shell the suite happens to run in.
+const { AGENTIC_REVIEWER_TOKEN: _reviewerTokenOfThisShell, ...ENV_WITHOUT_REVIEWER_TOKEN } = process.env;
+
 function initWithGh(dir: string, stateDir: string, ...extra: string[]) {
+  return initWithGhEnv(dir, stateDir, {}, ...extra);
+}
+/** The same run with `env` laid over that reviewer-token-free base environment. */
+function initWithGhEnv(dir: string, stateDir: string, env: Record<string, string>, ...extra: string[]) {
   return spawnSync(RUNTIME, [join(ROOT, 'scripts', 'init.mts'), ...extra], {
     cwd: dir,
     encoding: 'utf8',
-    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir },
+    env: { ...ENV_WITHOUT_REVIEWER_TOKEN, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: stateDir, ...env },
   });
 }
 function ghLog(stateDir: string): string {
@@ -219,9 +228,9 @@ check('init --dry-run never actually calls gh repo edit', !/repo edit/.test(ghLo
 // --- --rules: creates, or updates, the branch ruleset that governs the
 // default branch — matched by what it governs, never by its name (#143) —
 // with the checks the merge model depends on (docs/decisions.md item 9(a))
-// and the review requirement `land.mts` and the Codex route both read off
-// the server. `ghRepo` carries no workflow files of its own, so the third
-// required check falls back to its default, "test".
+// and the review gate left off unless `--require-review` asks for it (#143).
+// `ghRepo` carries no workflow files of its own, so the third required check
+// falls back to its default, "test".
 check('init without --rules never touches the rulesets endpoint', !/rulesets/.test(ghLog(state1)), ghLog(state1));
 
 /** The body the fake gh recorded for a POST or a PUT, or null when none was sent. */
@@ -231,9 +240,27 @@ function ruleBody(stateDir: string, kind: 'post' | 'put'): any {
 }
 /** One rule of a recorded payload by type, or null. */
 const ruleOfType = (body: any, type: string): any => body?.rules?.find((r: { type: string }) => r.type === type) ?? null;
-/** The four review fields the merge model needs on the `pull_request` rule (#143 AC2). */
+/** The `pull_request` rule's parameters of a recorded payload, or null. */
+const prParameters = (body: any): any => ruleOfType(body, 'pull_request')?.parameters ?? null;
+/**
+ * The default `--rules` writes (#143 AC2): the review gate stays off — count
+ * 0, and the two stale-approval fields exactly as the fetched ruleset carried
+ * them (`false` when there was nothing to fetch) — with squash as the only
+ * merge method.
+ */
+function leavesReviewGateOff(body: any, fetched = { dismiss: false, lastPush: false }): boolean {
+  const p = prParameters(body);
+  return (
+    !!p &&
+    p.required_approving_review_count === 0 &&
+    p.dismiss_stale_reviews_on_push === fetched.dismiss &&
+    p.require_last_push_approval === fetched.lastPush &&
+    JSON.stringify(p.allowed_merge_methods) === JSON.stringify(['squash'])
+  );
+}
+/** What `--require-review` adds on top (#143 AC3): the three fields raised together. */
 function requiresOneApprovingReview(body: any): boolean {
-  const p = ruleOfType(body, 'pull_request')?.parameters;
+  const p = prParameters(body);
   return (
     !!p &&
     p.required_approving_review_count === 1 &&
@@ -272,8 +299,8 @@ check(
   JSON.stringify(postBody),
 );
 check(
-  'the created ruleset requires one approving review, dismisses stale approvals, requires last-push approval and allows squash only',
-  requiresOneApprovingReview(postBody),
+  'the created ruleset leaves the review gate off by default and allows squash only',
+  leavesReviewGateOff(postBody),
   JSON.stringify(postBody),
 );
 
@@ -326,7 +353,11 @@ check(
   ghLog(stateRulesLive),
 );
 const liveBody = ruleBody(stateRulesLive, 'put');
-check('the updated ruleset requires one approving review with stale approvals dismissed', requiresOneApprovingReview(liveBody), JSON.stringify(liveBody));
+check(
+  'the update keeps the review gate off: count 0 and the fetched dismiss_stale_reviews_on_push: false left alone',
+  leavesReviewGateOff(liveBody),
+  JSON.stringify(liveBody),
+);
 check(
   'the update keeps a pull_request parameter the installer does not set',
   ruleOfType(liveBody, 'pull_request')?.parameters?.require_extra_approval_for_unattributed_changes === true,
@@ -347,6 +378,64 @@ check(
   'the update sends back none of the read-only fields the detail fetch carries',
   !!liveBody && !('node_id' in liveBody) && !('_links' in liveBody) && !('created_at' in liveBody) && !('source_type' in liveBody),
   JSON.stringify(liveBody),
+);
+
+// --- --require-review: the only way --rules raises the review gate (#143
+// AC3). Both cases run against the live-shaped fixture, whose fetched
+// pull_request rule carries the three fields at 0/false/false — so the flag
+// is shown overriding fetched values, not just the installer's own default.
+const REVIEW_OPT_IN_RULES = [
+  { type: 'deletion' },
+  {
+    type: 'pull_request',
+    parameters: {
+      required_approving_review_count: 0,
+      dismiss_stale_reviews_on_push: false,
+      require_last_push_approval: false,
+      require_extra_approval_for_unattributed_changes: true,
+      allowed_merge_methods: ['squash'],
+    },
+  },
+];
+const FREEZE_WARNING = /! --require-review: AGENTIC_REVIEWER_TOKEN is unset/;
+
+const stateRequireReview = rulesState('require-review', [
+  { id: 51, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: REVIEW_OPT_IN_RULES, bypass_actors: [] },
+]);
+const requireReview = initWithGhEnv(ghRepo, stateRequireReview, {}, '--rules', '--require-review');
+check('init --rules --require-review exits 0', requireReview.status === 0, `${requireReview.stdout}${requireReview.stderr}`);
+const requireReviewBody = ruleBody(stateRequireReview, 'put');
+check(
+  'init --rules --require-review raises the count to 1, dismisses stale approvals and requires last-push approval',
+  requiresOneApprovingReview(requireReviewBody),
+  JSON.stringify(requireReviewBody),
+);
+check(
+  'init --rules --require-review still carries the unmanaged pull_request parameters through',
+  prParameters(requireReviewBody)?.require_extra_approval_for_unattributed_changes === true,
+  JSON.stringify(requireReviewBody),
+);
+check(
+  'init --rules --require-review with AGENTIC_REVIEWER_TOKEN unset warns that a single identity freezes every merge',
+  FREEZE_WARNING.test(requireReview.stdout) && /freez/.test(requireReview.stdout),
+  requireReview.stdout,
+);
+
+const stateRequireReviewToken = rulesState('require-review-token', [
+  { id: 52, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: REVIEW_OPT_IN_RULES, bypass_actors: [] },
+]);
+const requireReviewToken = initWithGhEnv(ghRepo, stateRequireReviewToken, { AGENTIC_REVIEWER_TOKEN: 'ghp_fixture' }, '--rules', '--require-review');
+check('init --rules --require-review (token set) exits 0', requireReviewToken.status === 0, `${requireReviewToken.stdout}${requireReviewToken.stderr}`);
+const requireReviewTokenBody = ruleBody(stateRequireReviewToken, 'put');
+check(
+  'init --rules --require-review writes the same three fields whether or not the token is set',
+  requiresOneApprovingReview(requireReviewTokenBody),
+  JSON.stringify(requireReviewTokenBody),
+);
+check(
+  'init --rules --require-review with AGENTIC_REVIEWER_TOKEN set prints no freeze warning',
+  !FREEZE_WARNING.test(requireReviewToken.stdout),
+  requireReviewToken.stdout,
 );
 
 // The other spelling of the same condition: a ruleset whose include list
@@ -443,7 +532,7 @@ check(
 );
 check(
   'init --rules --dry-run prints the payload it would POST',
-  /"required_approving_review_count": 1/.test(rulesDry.stdout) && /POST repos\/\{owner\}\/\{repo\}\/rulesets/.test(rulesDry.stdout),
+  /"required_approving_review_count": 0/.test(rulesDry.stdout) && /POST repos\/\{owner\}\/\{repo\}\/rulesets/.test(rulesDry.stdout),
   rulesDry.stdout,
 );
 
@@ -465,8 +554,8 @@ check('init --rules --dry-run against an existing ruleset reports the update', /
 check(
   'init --rules --dry-run prints the payload it would PUT and sends nothing',
   new RegExp(`PUT repos/\\{owner\\}/\\{repo\\}/rulesets/${LIVE_ID}`).test(rulesDryLive.stdout) &&
-    /"required_approving_review_count": 1/.test(rulesDryLive.stdout) &&
-    /"dismiss_stale_reviews_on_push": true/.test(rulesDryLive.stdout),
+    /"required_approving_review_count": 0/.test(rulesDryLive.stdout) &&
+    /"dismiss_stale_reviews_on_push": false/.test(rulesDryLive.stdout),
   rulesDryLive.stdout,
 );
 check(
