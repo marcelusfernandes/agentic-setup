@@ -1,9 +1,6 @@
 # 0001. The decision nudge stays a warning, over five mechanism globs
 
-Status: accepted — written OK: the owner's decision comment on issue #180
-(<https://github.com/marcelusfernandes/agentic-setup/issues/180#issuecomment-5708342223>),
-recorded by the orchestrator under the standing M11–M16 delegation on #161, which the
-owner may veto by reopening the issue.
+Status: accepted — written OK: the owner's decision comment on issue #180 (https://github.com/marcelusfernandes/agentic-setup/issues/180#issuecomment-5708342223), recorded by the orchestrator under the standing M11–M16 delegation on #161, which the owner may veto by reopening the issue.
 Date: 2026-09-17
 
 ## Decision
