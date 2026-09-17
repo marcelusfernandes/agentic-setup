@@ -34,10 +34,23 @@
 // directory genuinely is not there — reads as absent; every other errno
 // (EACCES above all) fails closed.
 //
-// Node built-ins only.
+// **This tool's own files are the one exception, deliberately.** The two
+// lists it compares a repository against are read from this plugin's own
+// checkout — `labels.json` and `templates/.github/workflows` — when the
+// module is imported, and a read that cannot answer throws there instead of
+// becoming an `{ error }`. A dictionary or a template directory this tool
+// cannot read is a broken installation of agentic-setup, not a fact about
+// the repository being described, and reporting it as one would put the
+// blame on someone else's tree. The throw happens before the first read of
+// that tree (#233).
+//
+// Node built-ins only; `../labels.mts` is a module of this repository and
+// has no side effect on import.
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { detectCommands } from '../../../ci/lib/detect.mts';
+import { labelsSeededByInit, loadLabels } from '../labels.mts';
 
 export type CommandResult = { status: number; stdout: string; stderr: string };
 /** Runs `gh` with the given argv and reports what it printed. */
@@ -45,32 +58,53 @@ export type GhRunner = (args: string[]) => CommandResult;
 /** Runs `git` with the given argv, inside the repository, and reports what it printed. */
 export type GitRunner = (args: string[]) => CommandResult;
 
-/** The workflows `scripts/init.mts` copies from `templates/.github/workflows`. */
-export const OWNED_WORKFLOWS = ['agentic-checks.yml', 'guard-main.yml', 'issue-lint.yml'];
+/**
+ * This plugin's own checkout, three directories above this file: the tree
+ * `scripts/init.mts` installs from. Both lists below are read out of it.
+ */
+const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+/** What counts as a workflow file — here and in `.github/workflows` below. */
+const WORKFLOW_FILE = /\.ya?ml$/;
+
+/** An error's message, whatever was thrown. */
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /**
- * The label vocabulary `scripts/init.mts` seeds (its `LABELS`, names only)
- * and `.agents/skills/autonomous-loop/scripts/github.mts` mirrors. Kept as
- * names here because both of those are executable scripts, not modules:
- * importing either to reuse its list would run an installer.
+ * The workflows `scripts/init.mts` copies, read from the directory it copies
+ * them from rather than restated: a fourth template workflow is a gap this
+ * inventory reports the day it is added.
  */
-export const SEEDED_LABELS = [
-  'state:ready',
-  'state:in-progress',
-  'state:in-review',
-  'state:qa-failed',
-  'state:blocked',
-  'type:feature',
-  'type:bug',
-  'type:refactor',
-  'type:infra',
-  'type:spec',
-  'type:docs',
-  'type:deps',
-  'review:approved',
-  'human:pending',
-  'human:decided',
-];
+function ownedWorkflows(): string[] {
+  const dir = join(PLUGIN_ROOT, 'templates', '.github', 'workflows');
+  try {
+    return readdirSync(dir).filter((name) => WORKFLOW_FILE.test(name)).sort();
+  } catch (err) {
+    throw new Error(`inventory: the template workflows at ${dir} cannot be listed (${messageOf(err)})`);
+  }
+}
+
+/**
+ * The label vocabulary `scripts/init.mts` seeds, names only: the entries
+ * `labels.json` routes to this installer. Derived rather than restated, and
+ * through the same module and the same filter `scripts/init.mts` itself uses
+ * (`scripts/lib/labels.mts` — a module with no side effect on import, which
+ * is what makes deriving it possible at all), so the installer and this
+ * inventory cannot disagree about what a complete repository has. The Codex
+ * route's own inline copy in
+ * `.agents/skills/autonomous-loop/scripts/github.mts` is held to the same
+ * dictionary by `tests/labels.test.mts`.
+ */
+function seededLabels(): string[] {
+  try {
+    return labelsSeededByInit(loadLabels(join(PLUGIN_ROOT, 'labels.json'))).map((entry) => entry.name);
+  } catch (err) {
+    throw new Error(`inventory: the label dictionary cannot be read (${messageOf(err)})`);
+  }
+}
+
+export const OWNED_WORKFLOWS = ownedWorkflows();
+export const SEEDED_LABELS = seededLabels();
 
 /**
  * The page `gh label list` is asked for. `gh` defaults to 30, which a real
@@ -199,7 +233,7 @@ function installedHooks(dir: string): Read<string[]> {
 function workflowFiles(root: string): Read<string[]> {
   const dir = join(root, '.github', 'workflows');
   try {
-    return { ok: true, value: readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)).sort() };
+    return { ok: true, value: readdirSync(dir).filter((name) => WORKFLOW_FILE.test(name)).sort() };
   } catch (err) {
     if (isMissing(err)) return { ok: true, value: [] };
     return { ok: false, error: 'workflows:unreadable' };
