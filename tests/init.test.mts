@@ -109,7 +109,9 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // (default `[]`), and a GET on `.../rulesets/<id>` echoes
 // `$state/ruleset-<id>.json` (default `{}`) — the live list endpoint answers
 // with summaries only, so conditions, rules and bypass actors live in the
-// per-id fixture, exactly as the real API serves them.
+// per-id fixture, exactly as the real API serves them. A
+// `$state/ruleset-<id>-fail` marker makes that one detail GET fail instead —
+// the refusal path of the lookup.
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
@@ -140,6 +142,9 @@ case "\${1:-} \${2:-}" in
       id="\${2##*/rulesets/}"
       if [ "$id" = "\${2:-}" ]; then
         cat "$state/rulesets-list.json" 2>/dev/null || echo '[]'
+      elif [ -f "$state/ruleset-$id-fail" ]; then
+        echo "gh: HTTP 500: Internal Server Error (https://api.github.invalid/rulesets/$id)" >&2
+        exit 1
       else
         cat "$state/ruleset-$id.json" 2>/dev/null || echo '{}'
       fi
@@ -165,7 +170,9 @@ const PATH_WITH_FAKE_GH = `${fakeGhDir}:${process.env.PATH ?? ''}`;
 // AGENTIC_REVIEWER_TOKEN decides whether --require-review warns (#143 AC3),
 // so the base environment of every fake-gh run drops it: the cases below say
 // what it is, never the shell the suite happens to run in.
-const { AGENTIC_REVIEWER_TOKEN: _reviewerTokenOfThisShell, ...ENV_WITHOUT_REVIEWER_TOKEN } = process.env;
+const ENV_WITHOUT_REVIEWER_TOKEN = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => name !== 'AGENTIC_REVIEWER_TOKEN'),
+);
 
 function initWithGh(dir: string, stateDir: string, ...extra: string[]) {
   return initWithGhEnv(dir, stateDir, {}, ...extra);
@@ -436,6 +443,121 @@ check(
   'init --rules --require-review with AGENTIC_REVIEWER_TOKEN set prints no freeze warning',
   !FREEZE_WARNING.test(requireReviewToken.stdout),
   requireReviewToken.stdout,
+);
+check(
+  'init --rules --require-review never calls itself ignored',
+  !/--require-review ignored/.test(requireReview.stdout) && !/--require-review ignored/.test(requireReviewToken.stdout),
+  requireReview.stdout,
+);
+
+// Without --rules there is no ruleset call for --require-review to change,
+// and --no-gh skips that call entirely: say so rather than accept the flag
+// silently and write nothing.
+const ignoredNoRules = init('--require-review');
+check('init --require-review without --rules exits 0', ignoredNoRules.status === 0, `${ignoredNoRules.stdout}${ignoredNoRules.stderr}`);
+check(
+  'init --require-review without --rules reports the flag as ignored',
+  /! --require-review ignored: it raises the ruleset review gate, which only --rules writes/.test(ignoredNoRules.stdout),
+  ignoredNoRules.stdout,
+);
+const ignoredNoGh = init('--rules', '--require-review');
+check('init --no-gh --rules --require-review exits 0', ignoredNoGh.status === 0, `${ignoredNoGh.stdout}${ignoredNoGh.stderr}`);
+check(
+  'init --rules --require-review under --no-gh reports the flag as ignored',
+  /! --require-review ignored: --no-gh skips the ruleset call it would change/.test(ignoredNoGh.stdout),
+  ignoredNoGh.stdout,
+);
+
+// The default carries the fetched stale-approval fields through as they are:
+// a ruleset already dismissing stale approvals keeps doing so, even though
+// --require-review was not passed and the count is reset to 0.
+const stateRulesCarry = rulesState('carry', [
+  {
+    id: 71,
+    name: 'main',
+    target: 'branch',
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+    rules: [
+      {
+        type: 'pull_request',
+        parameters: { required_approving_review_count: 2, dismiss_stale_reviews_on_push: true, require_last_push_approval: true },
+      },
+    ],
+    bypass_actors: [],
+  },
+]);
+const rulesCarry = initWithGh(ghRepo, stateRulesCarry, '--rules');
+check('init --rules against a ruleset that dismisses stale approvals exits 0', rulesCarry.status === 0, `${rulesCarry.stdout}${rulesCarry.stderr}`);
+const carryBody = ruleBody(stateRulesCarry, 'put');
+check(
+  'init --rules resets the count to 0 but carries a fetched dismiss_stale_reviews_on_push / require_last_push_approval: true through',
+  leavesReviewGateOff(carryBody, { dismiss: true, lastPush: true }),
+  JSON.stringify(carryBody),
+);
+
+// --- the refusal path of the lookup: a ruleset detail that cannot be read.
+// `GET .../rulesets` answers with summaries only, so a failed or unparsable
+// `GET .../rulesets/<id>` leaves a ruleset with no conditions — which reads
+// exactly like a ruleset governing nothing and would send the run down the
+// create path, POSTing a second ruleset over the branch the unreadable one
+// already governs (#143 B1 all over again). The run has to refuse instead.
+const UNREADABLE = (id: number) => new RegExp(`! ruleset: could not read ruleset #${id}: `);
+
+const stateDetail500 = rulesState('detail-500', [
+  { id: 61, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateDetail500, 'ruleset-61-fail'), '');
+const detail500 = initWithGh(ghRepo, stateDetail500, '--rules');
+check('init --rules exits 0 when a ruleset detail cannot be read', detail500.status === 0, `${detail500.stdout}${detail500.stderr}`);
+check(
+  'init --rules reports the ruleset whose detail it could not read, with gh first error line',
+  UNREADABLE(61).test(detail500.stdout) && /HTTP 500/.test(detail500.stdout),
+  detail500.stdout,
+);
+check(
+  'init --rules never reports a ruleset created when a detail fetch failed',
+  !/\+ ruleset created/.test(detail500.stdout) && !/= ruleset updated/.test(detail500.stdout),
+  detail500.stdout,
+);
+check(
+  'init --rules makes no mutating call when a detail fetch failed',
+  !ghLog(stateDetail500).includes('-X POST') &&
+    !ghLog(stateDetail500).includes('-X PUT') &&
+    ruleBody(stateDetail500, 'post') === null &&
+    ruleBody(stateDetail500, 'put') === null,
+  ghLog(stateDetail500),
+);
+
+// The same refusal when the detail GET succeeds but answers with something
+// that is not a ruleset object.
+const stateDetailJunk = rulesState('detail-junk', [
+  { id: 62, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateDetailJunk, 'ruleset-62.json'), 'not json at all');
+const detailJunk = initWithGh(ghRepo, stateDetailJunk, '--rules');
+check('init --rules exits 0 when a ruleset detail does not parse', detailJunk.status === 0, `${detailJunk.stdout}${detailJunk.stderr}`);
+check(
+  'init --rules reports a ruleset detail that is not a ruleset object and creates nothing',
+  UNREADABLE(62).test(detailJunk.stdout) && !/\+ ruleset created/.test(detailJunk.stdout),
+  detailJunk.stdout,
+);
+check(
+  'init --rules makes no mutating call when a ruleset detail does not parse',
+  !ghLog(stateDetailJunk).includes('-X POST') && !ghLog(stateDetailJunk).includes('-X PUT'),
+  ghLog(stateDetailJunk),
+);
+
+// --dry-run previews the same refusal: no payload, no outcome line.
+const stateDetailDry = rulesState('detail-dry', [
+  { id: 63, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateDetailDry, 'ruleset-63-fail'), '');
+const detailDry = initWithGh(ghRepo, stateDetailDry, '--rules', '--dry-run');
+check('init --rules --dry-run exits 0 when a ruleset detail cannot be read', detailDry.status === 0, `${detailDry.stdout}${detailDry.stderr}`);
+check(
+  'init --rules --dry-run previews the same refusal and no payload',
+  UNREADABLE(63).test(detailDry.stdout) && !/payload for /.test(detailDry.stdout) && !/\+ ruleset created/.test(detailDry.stdout),
+  detailDry.stdout,
 );
 
 // The other spelling of the same condition: a ruleset whose include list
