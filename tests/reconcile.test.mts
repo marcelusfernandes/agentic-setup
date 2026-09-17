@@ -16,11 +16,27 @@ import { check, cleanup, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harn
 const FAKE_GH = `#!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
   "api repos/{owner}/{repo}/milestones")
+    case "\${FAKE_GH_MILESTONES:-ok}" in
+      fail)
+        echo "fake-gh: milestones unavailable" >&2
+        exit 1
+        ;;
+      notjson)
+        echo "gh: something went wrong"
+        exit 0
+        ;;
+      object)
+        echo '{"message":"Not Found"}'
+        exit 0
+        ;;
+    esac
     cat <<'JSON'
 [
   {"number":2,"title":"M2","state":"open","description":"Only an objective sentence, and nothing else.\\n"},
   {"number":1,"title":"M1","state":"open","description":"The loop reports what a phase still owes.\\n\\nOut of this phase:\\n- anything a person must decide\\n\\nExit criteria:\\n- [ ] every sub-issue closed\\n- [ ] docs equal code\\n\\nDepends on: none\\n"},
-  {"number":3,"title":"M3","state":"open","description":null}
+  {"number":3,"title":"M3","state":"open","description":null},
+  {"number":4,"title":"M4","state":"open","description":"An objective.\\n\\nOut of this phase:\\n- [ ] a checkbox that is not an exit criterion\\n\\nExit criteria:\\nthe phase is done when it feels done\\n\\nDepends on: none\\n"},
+  {"number":5,"title":"M5","state":"open","description":"An objective.\\nDepends on the day the upstream API lands.\\n\\n**Out of this phase:**\\n- none\\n\\n## Exit criteria\\n- [ ] one\\n"}
 ]
 JSON
     ;;
@@ -56,7 +72,7 @@ JSON
 ]
 JSON
         ;;
-      *"--milestone M2"*|*"--milestone M3"*)
+      *"--milestone M2"*|*"--milestone M3"*|*"--milestone M4"*|*"--milestone M5"*)
         echo '[]'
         ;;
       *)
@@ -314,12 +330,16 @@ git(
 // range would run from #70's tip to itself), not a coincidentally right one.
 git(['branch', 'origin/main', 'feat/70-resumable-ahead'], repo);
 
-function reconcile(...args: string[]) {
+function reconcileWithEnv(extraEnv: Record<string, string>, ...args: string[]) {
   return spawnSync(RUNTIME, [join(ROOT, 'scripts', 'reconcile.mts'), ...args], {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...process.env, PATH: PATH_WITH_FAKE_GH },
+    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, ...extraEnv },
   });
+}
+
+function reconcile(...args: string[]) {
+  return reconcileWithEnv({}, ...args);
 }
 
 // --- happy path: --milestone M1 ---------------------------------------------
@@ -597,6 +617,68 @@ check(
   outNoDescription?.milestoneLint?.ok === false &&
     JSON.stringify(outNoDescription?.milestoneLint?.missing) === JSON.stringify(['objective', 'out-of-phase', 'exit-criteria', 'depends-on']),
   JSON.stringify(outNoDescription?.milestoneLint),
+);
+
+// A label needs its colon (or a `#` heading) to count: prose that merely
+// starts with the words of a label is prose. `**Out of this phase:**` and
+// `## Exit criteria` are labels; `Depends on the day …` is not, so M5 misses
+// depends-on and nothing else.
+const outColon = parseJson(reconcile('--milestone', 'M5').stdout);
+check(
+  'a line that only starts with a label\'s words, with no colon, is prose and not a label',
+  outColon?.milestoneLint?.ok === false &&
+    JSON.stringify(outColon?.milestoneLint?.missing) === JSON.stringify(['depends-on']),
+  JSON.stringify(outColon?.milestoneLint),
+);
+
+// The checklist is what says when the phase is finished, so an `Exit
+// criteria:` label with no `- [ ]` item *under it* misses exit-criteria —
+// even though M4 does have a checkbox elsewhere (under `Out of this phase:`),
+// which a document-wide search would wrongly accept.
+const outNoCheckbox = parseJson(reconcile('--milestone', 'M4').stdout);
+check(
+  'an Exit criteria label with no checkbox under it misses exit-criteria, and only that',
+  outNoCheckbox?.milestoneLint?.ok === false &&
+    JSON.stringify(outNoCheckbox?.milestoneLint?.missing) === JSON.stringify(['exit-criteria']),
+  JSON.stringify(outNoCheckbox?.milestoneLint),
+);
+
+// The soft milestones read behind milestoneLint under --milestone: a failing,
+// unparseable or non-array `gh api .../milestones` degrades that one field to
+// "all four parts missing" and never fails a pass whose milestone the caller
+// already named (the Crash policy exception in the script's header).
+const ALL_FOUR = JSON.stringify(['objective', 'out-of-phase', 'exit-criteria', 'depends-on']);
+for (const [mode, what] of [
+  ['fail', 'exits non-zero'],
+  ['notjson', 'prints non-JSON'],
+  ['object', 'prints JSON that is not an array'],
+]) {
+  const rDegraded = reconcileWithEnv({ FAKE_GH_MILESTONES: mode }, '--milestone', 'M1');
+  const outDegraded = parseJson(rDegraded.stdout);
+  check(
+    `--milestone still exits 0 when the milestones call ${what}`,
+    rDegraded.status === 0,
+    `${rDegraded.stdout}\n${rDegraded.stderr}`,
+  );
+  check(
+    `the milestone named on the command line is unchanged when the milestones call ${what}`,
+    outDegraded?.milestone === 'M1' && Array.isArray(outDegraded?.ready),
+    JSON.stringify(outDegraded?.milestone),
+  );
+  check(
+    `an unreadable description reads as all four parts missing when the milestones call ${what}`,
+    outDegraded?.milestoneLint?.ok === false && JSON.stringify(outDegraded?.milestoneLint?.missing) === ALL_FOUR,
+    JSON.stringify(outDegraded?.milestoneLint),
+  );
+}
+
+// The same call is *not* soft when it is what picks the milestone: with no
+// --milestone there is nothing to reconcile against, so it fails the pass.
+const rNoPick = reconcileWithEnv({ FAKE_GH_MILESTONES: 'fail' });
+check(
+  'the milestones call still fails the pass when no --milestone is given and it is what picks the milestone',
+  rNoPick.status === 1 && typeof parseJson(rNoPick.stdout)?.error === 'string',
+  `${rNoPick.stdout}\n${rNoPick.stderr}`,
 );
 
 // --- default milestone: lowest-numbered open milestone, no --milestone -----
