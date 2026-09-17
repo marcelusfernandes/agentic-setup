@@ -311,19 +311,20 @@ for (const other of others) blockedByGraph.set(other.number, blockedBy(other.bod
 
 /**
  * Whether `from` reaches `to` by following `Blocked by:` edges, at any
- * depth. A visited set bounds the walk, so a cycle terminates here instead
- * of recurring; the cycle itself is reported separately, below.
+ * depth. Depth first over an explicit stack, and a visited set bounds the
+ * walk, so a cycle terminates here instead of recurring; the cycle itself is
+ * reported separately, below.
  */
 function reaches(from: number, to: number): boolean {
   const seen = new Set<number>([from]);
-  const queue = [...(blockedByGraph.get(from) ?? [])];
-  while (queue.length > 0) {
-    const n = queue.pop();
+  const stack = [...(blockedByGraph.get(from) ?? [])];
+  while (stack.length > 0) {
+    const n = stack.pop();
     if (n === undefined) break;
     if (n === to) return true;
     if (seen.has(n)) continue;
     seen.add(n);
-    queue.push(...(blockedByGraph.get(n) ?? []));
+    stack.push(...(blockedByGraph.get(n) ?? []));
   }
   return false;
 }
@@ -353,7 +354,7 @@ function findCycle(start: number): number[] | null {
 
 const blockedByCycle = findCycle(issueNumber);
 if (blockedByCycle !== null) {
-  failures.push(`"Blocked by:" forms a cycle: ${blockedByCycle.map((n) => `#${n}`).join(' -> ')} — no order exists, so neither issue can be dispatched`);
+  failures.push(`"Blocked by:" forms a cycle: ${blockedByCycle.map((n) => `#${n}`).join(' -> ')} — a cycle is no order at all, so none of these issues can be dispatched`);
 }
 
 // --- AC3: disjointness against issues in flight in the same milestone -----

@@ -150,8 +150,9 @@ something (or are `new`), globs disjoint from the other issues already in flight
 every `Blocked by:` number exists — it never reads a diff, so there is no entry-point
 warning to read here any more (`docs/decisions.md` item 12, superseded by item 13). A
 `failures` entry (a missing section, a wildcard glob that matches no tracked file, a
-`Blocked by:` number `gh` cannot find, or a `{ issue, files }` overlap with another issue
-in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
+`Blocked by:` number `gh` cannot find, a `Blocked by:` cycle among the milestone's issues
+— a string naming every issue in it, since a cycle is no order at all — or a
+`{ issue, files }` overlap with another issue in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
 that matches no tracked file is reported as `new` in `globs`, not a failure (the issue is
 expected to create it), and so is a wildcard glob whose fixed prefix (the part before its
 first `*` or `?`) names a directory with no tracked file anywhere — the way an issue
