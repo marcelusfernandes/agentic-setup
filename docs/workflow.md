@@ -53,6 +53,7 @@ description as part of the phase.
 | group | values | who changes it |
 |---|---|---|
 | `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
+| `state:done` | Codex route only | the Codex route's state synchronisation |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
 | `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | seeded by whoever writes the issue; re-derived from the branch type (`TYPE_LABELS`) and written by `scripts/claim.mts` at claim time |
 | `review:approved` | the reviewer returned approved | orchestrator |
@@ -64,11 +65,23 @@ The two human states are exclusive and matched by exact name. `reconcile.mts` li
 refuses them. Agents never add, remove or replace `human:decided`. A bare `human` label
 from a repository initialized before the split is read exactly like `human:pending`.
 
-`/agentic-setup:init` seeds `state:`, `type:`, `review:approved`, `human:pending` and
-`human:decided`; you add the
-`scope:` values that match your repository. The `state:` set above has no `done` value:
-`Closes #N` closes the linked issue when its PR merges, and a closed issue is a done
-issue — nothing left to relabel.
+[`labels.json`](../labels.json) at the plugin root is the one dictionary both routes
+read: one entry per label, each carrying its colour, its description and the `routes`
+that seed it. `/agentic-setup:init` seeds exactly the `claude`-routed entries of that
+file — `state:` (without `done`), `type:`, `review:approved`, `human:pending` and
+`human:decided` — and refuses the whole run, naming the reason, when the dictionary does
+not validate; you add the `scope:` values that match your repository. Editing the label
+set means editing that file, not a list inside a script.
+
+`state:done` is in the dictionary marked `["codex"]`, and `human` is marked legacy:
+both are read here, neither is seeded or written by anything on the Claude route.
+`state:done` is written by the Codex route's state synchronisation
+(`.agents/skills/autonomous-loop/scripts/github.mts`), which derives every task's state
+from verified GitHub state and labels a finished one `state:done`. On this route the
+`state:` set has no `done` value and needs none: `Closes #N` closes the linked issue when
+its PR merges, and a closed issue is a done issue — nothing left to relabel. Whether
+`state:done` is retired on both routes is an open owner question, recorded as item 16 of
+[`decisions.md`](decisions.md).
 
 ## Issue (one template)
 

@@ -58,16 +58,30 @@ export function parseLabels(text: string, source: string): LabelEntry[] {
   const entries: LabelEntry[] = [];
   const seen = new Set<string>();
   parsed.forEach((raw, index) => {
-    const at = (reason: string): never => fail(`entry ${index + 1}${typeof (raw as LabelEntry)?.name === 'string' ? ` (${(raw as LabelEntry).name})` : ''}: ${reason}`);
+    const named = typeof raw?.name === 'string' ? ` ("${raw.name}")` : '';
+    const at = (reason: string): never => fail(`entry ${index + 1}${named}: ${reason}`);
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return at('is not an object');
+
     const entry = raw as Record<string, unknown>;
-    for (const key of Object.keys(entry)) if (!KEYS.includes(key)) at(`unknown key "${key}" (allowed: ${KEYS.join(', ')})`);
-    if (typeof entry.name !== 'string' || entry.name.trim() === '' || entry.name.trim() !== entry.name) at('"name" must be a non-empty string with no surrounding space');
-    if (typeof entry.color !== 'string' || !COLOR.test(entry.color)) at('"color" must be six lowercase hexadecimal digits, with no "#"');
-    if (typeof entry.description !== 'string') at('"description" must be a string (empty is allowed, absent is not)');
+    for (const key of Object.keys(entry)) {
+      if (!KEYS.includes(key)) at(`unknown key "${key}" (allowed: ${KEYS.join(', ')})`);
+    }
+    if (typeof entry.name !== 'string' || entry.name === '' || entry.name.trim() !== entry.name) {
+      at('"name" must be a non-empty string with no surrounding space');
+    }
+    if (typeof entry.color !== 'string' || !COLOR.test(entry.color)) {
+      at('"color" must be six lowercase hexadecimal digits, with no "#"');
+    }
+    if (typeof entry.description !== 'string') {
+      at('"description" must be a string (empty is allowed, absent is not)');
+    }
     if (!Array.isArray(entry.routes) || entry.routes.length === 0) at('"routes" must list at least one route');
     const routes = entry.routes as unknown[];
-    for (const route of routes) if (typeof route !== 'string' || !ROUTES.includes(route as Route)) at(`unknown route "${String(route)}" (known: ${ROUTES.join(', ')})`);
+    for (const route of routes) {
+      if (typeof route !== 'string' || !ROUTES.includes(route as Route)) {
+        at(`unknown route "${String(route)}" (known: ${ROUTES.join(', ')})`);
+      }
+    }
     if (new Set(routes).size !== routes.length) at('"routes" repeats a route');
     if ('legacy' in entry && typeof entry.legacy !== 'boolean') at('"legacy" must be true or false when present');
 

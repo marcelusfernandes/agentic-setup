@@ -391,3 +391,57 @@ for M13. The milestone's draft kept that path out of every sub-issue's `## Files
 this answer existed; from #163 onwards an issue may list it, sequenced after #143 and #145,
 which also touch it. #163 itself still does not — its own acceptance criteria say so, and
 the `adopt` → `init` call is a separate issue in this milestone.
+
+## 16. 2026-09-17: one label dictionary, a union with a per-route marker
+
+Status: accepted — written OK: issue #145 (the owner's specification of this change),
+under the standing M11–M16 delegation recorded on #161.
+
+Two dictionaries held the same vocabulary and disagreed about it: `scripts/init.mts`
+seeded 15 labels with no `state:done`, `.agents/skills/autonomous-loop/scripts/github.mts`
+seeded 9 including `state:done` and the legacy `human`, and `docs/workflow.md` stated that
+the `state:` set "has no `done` value" while `gh label list` showed one. Only a comment
+kept the two lists together, and it had already failed.
+
+There is now one file, [`../labels.json`](../labels.json): one entry per label, each with
+its name, colour, description and the `routes` that seed it. `scripts/init.mts` seeds the
+`claude`-routed entries through `scripts/lib/labels.mts` and refuses the run — before it
+writes anything — when the file does not validate. The Codex helper ships as a standalone
+file inside the plugin package (`scripts/sync-codex-plugin.mts` copies `github.mts`
+alone), so it cannot import a module: its list stays inline and `tests/labels.test.mts`
+reads it out of the source and fails when it drifts from the dictionary's `codex` entries,
+name, colour and description. The dictionary is JSON, not YAML, because invariant 1 allows
+`node:` built-ins only and there is no YAML parser among them; the precedent is
+`templates/agents/index.json`.
+
+`state:done` stays, marked `["codex"]`. It is not dead vocabulary: the Codex route's state
+synchronisation writes it from verified GitHub state
+(`.agents/skills/autonomous-loop/scripts/github.mts`). Removing it is a behaviour change on
+that route, not a documentation fix, so the union records it and `docs/workflow.md` now says
+who writes it instead of denying it exists. The bare `human` is marked `legacy: true` and
+seeded by nothing this decision owns.
+
+*Why:* two lists kept identical by a comment is the shape this repository has already paid
+for (item 15 names it as the reason the adoption record is generated). A union with a
+per-route marker is the only form that is true of both routes at once, and a test that
+fails on drift is what makes the file load-bearing rather than decorative.
+
+*Cost accepted:* three of them. First, the Claude route reads a label it never writes —
+someone reading `labels.json` sees `state:done` and has to read the marker to learn it is
+not theirs. Second, one value per label means the five labels the two routes described
+differently now carry the Codex route's colour and description, because `github.mts` is a
+standalone file this issue does not touch: `state:ready` (`0e8a16` → `1d76db`, "Ready to be
+picked up by an agent" → "Ready for the next authorized transition"), `state:in-review`
+(`1d76db` → `5319e7`), `state:qa-failed` (`d93f0b` → `d73a4a`), and the descriptions of
+`state:in-progress` and `state:blocked`. `init` passes `--force`, so the next run rewrites
+those five in an adopting repository; the names, which is what every parser matches on, do
+not change. Third, `scripts/lib/adopt/inventory.mts` still restates the seeded names in its
+own `SEEDED_LABELS`; it is outside this issue's `## Files` and reading the dictionary there
+is a separate change.
+
+*Open, for the owner (deferred):* whether `state:done` is retired altogether — the Codex
+route stopping writing it, the entry leaving the dictionary — and whether the 30 closed
+issues that carry it today, and the 83 closed issues that still carry some `state:` label,
+are cleaned. Both are behaviour, not documentation: the first changes what the Codex loop
+writes, the second rewrites history that is no longer read. Nothing in this item decides
+them, and the veto is to reopen #145.
