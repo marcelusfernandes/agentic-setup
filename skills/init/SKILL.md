@@ -25,7 +25,7 @@ Pass the flags the user gave you (`$ARGUMENTS`). Flags: `--dry-run` previews wit
 writing anything; `--milestone "<title>"` creates the first milestone (optional); `--no-gh`
 skips labels, milestone and the ruleset (offline, or no `gh` auth); `--force` overwrites
 files you edited before (it never overwrites silently); `--rules` updates (or creates) the
-branch ruleset over the default branch (see step 7 below) — omit it to leave rulesets
+branch ruleset over the default branch (see step 8 below) — omit it to leave rulesets
 untouched entirely; `--ruleset-name <name>` picks the ruleset to update by name instead of
 by what it governs; `--require-review` raises the ruleset's review gate (only meaningful
 together with `--rules`).
@@ -51,13 +51,19 @@ The script is idempotent. It:
    entries stay);
 4. installs `hooks/git-pre-push` as `.git/hooks/pre-push` (a foreign pre-push is reported,
    not replaced);
-5. turns on the repository's `allow_auto_merge` and `delete_branch_on_merge` settings
+5. reads the repository's default branch (`gh repo view`, so `--no-gh` skips it) and,
+   when it is neither `main` nor `master`, says so in one `!` line naming it — the
+   workflow templates, the pre-push hook and `hooks/protect-main.mts` it installs are all
+   written around `main`/`master`, and that assumption is otherwise invisible until the
+   first refused push (#261). It is a read, so the line is printed under `--dry-run` too;
+   a `main` or `master` default branch prints nothing;
+6. turns on the repository's `allow_auto_merge` and `delete_branch_on_merge` settings
    (`gh repo edit`; skipped, reported only, under `--dry-run`) — `land.mts` depends on
    both: the first for `gh pr merge --auto` to have anything to enable, the second so a
    merged branch is deleted for it;
-6. seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:decided`
+7. seeds the `state:`, `type:`, `review:approved`, `human:pending` and `human:decided`
    labels, and the milestone. An existing bare `human` label is left as found;
-7. **with `--rules`:** reads `repos/{owner}/{repo}/rulesets` and, for each branch ruleset
+8. **with `--rules`:** reads `repos/{owner}/{repo}/rulesets` and, for each branch ruleset
    in it, `repos/{owner}/{repo}/rulesets/<id>` — the list endpoint answers with summaries
    only, so conditions, rules and bypass actors come from the per-id fetch. The ruleset it
    updates (PUT) is the one that **governs the default branch**, found by its conditions
