@@ -1,7 +1,7 @@
-# <nnnn>. <One line: the decision, not the topic>
+# NNNN. One line: the decision, not the topic
 
 Status: proposed
-Date: <YYYY-MM-DD>
+Date: YYYY-MM-DD
 
 <!--
 Copy this file to `<nnnn>-<slug>.md`, four-digit number, continuing the register's
@@ -37,5 +37,5 @@ is not written at all.
 
 Dated lines, newest last, in the shape item 8 of `../decisions.md` already uses:
 
-*<YYYY-MM-DD> (#<issue>, #<pr>):* what changed and what still holds. The decision above
+*YYYY-MM-DD (#issue, #PR):* what changed and what still holds. The decision above
 keeps its original wording; an update never rewrites it.

@@ -48,8 +48,8 @@ Every item carries one `Status:` line directly under its heading.
 | `accepted` | in force. Hooks, skills, checks and docs are expected to match it. | a person only, by an explicit written OK (item 8). An agent may make the edit, but only citing that OK by issue comment or review. |
 | `superseded by <item>` | replaced. Kept with its reason, because the history is the point. | the PR that lands the replacing decision, in the same diff, naming the item that replaces it. |
 
-A decision starts `proposed` and never skips a status. `accepted` is not a state a PR
-can reach on its own; see below.
+A new decision starts `proposed`. `accepted` is not a state a PR can reach on its own;
+see below.
 
 ## Silence never accepts
 
