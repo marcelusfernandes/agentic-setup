@@ -11,10 +11,17 @@
 // writes (label create, milestone POST, ruleset POST/PUT) are instead
 // skipped by an explicit `if (dryRun)` and their report line names the
 // outcome a fully successful write would reach (e.g. "N/N labels present")
-// — reading gh state (auth status, milestone listing, the rulesets list and
-// each ruleset's detail) still happens so the report can say "=" (exists) vs
-// "+" (would be created). The one line a dry run does not share with a real
-// run is the --rules payload preview, printed only under --dry-run.
+// — reading gh state (auth status, the default branch, milestone listing,
+// the rulesets list and each ruleset's detail) still happens so the report
+// can say "=" (exists) vs "+" (would be created). The one line a dry run
+// does not share with a real run is the --rules payload preview, printed
+// only under --dry-run.
+//
+// Whenever that default branch is neither main nor master the report carries
+// one "! default branch is ..." line (#261): the workflow templates, the
+// pre-push hook and hooks/protect-main.mts this installer copies are all
+// written around main/master, and that assumption is otherwise invisible
+// until the first refused push.
 //
 // --rules updates the branch ruleset that already governs the repository's
 // default branch — the one whose conditions name it, whatever it is called
@@ -389,6 +396,22 @@ if (useGh) {
     const skipped = flags.has('--rules') ? 'labels, milestone and ruleset' : 'labels and milestone';
     say(`  ! gh is not authenticated; skipped ${skipped} (run again, or --no-gh)`);
   } else {
+    // The repository's real default branch, read once for the whole run:
+    // the report line below names it, and --rules matches the ruleset that
+    // governs it further down. It is a read, so it happens in --dry-run too.
+    // A `repo view` that fails falls back to "main" and says nothing — a
+    // guess is not a finding worth printing.
+    const repoView = run('gh', ['repo', 'view', '--json', 'defaultBranchRef'], root);
+    const defaultBranch = parseJson<{ defaultBranchRef?: { name?: string } }>(repoView.out, {})?.defaultBranchRef?.name || 'main';
+    // #261: everything this installer copies — the workflow templates, the
+    // pre-push hook, hooks/protect-main.mts — is written around main/master.
+    // On a repository whose default branch is called something else, that
+    // assumption stays invisible until the first refused push, so name it at
+    // install time instead (dogfood 2026-09-06, finding F2).
+    if (defaultBranch !== 'main' && defaultBranch !== 'master') {
+      say(`  ! default branch is "${defaultBranch}", not main or master: the installed workflow templates and hooks/protect-main.mts are written around main/master`);
+    }
+
     // auto-merge and delete-branch-on-merge: reading is allowed even in
     // dry-run (it decides "=" vs "+"); the write itself is skipped under
     // --dry-run, same gate as the milestone below. `repo view --json` has
@@ -480,9 +503,6 @@ if (useGh) {
         reportRulesetError(refusal);
       } else {
         const rulesets = listed?.rulesets ?? [];
-
-        const repoView = run('gh', ['repo', 'view', '--json', 'defaultBranchRef'], root);
-        const defaultBranch = parseJson<{ defaultBranchRef?: { name?: string } }>(repoView.out, {})?.defaultBranchRef?.name || 'main';
 
         // --ruleset-name overrides the choice; otherwise the match is by
         // what the ruleset governs. Several matches are a real state of the

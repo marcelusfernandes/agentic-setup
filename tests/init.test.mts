@@ -115,8 +115,8 @@ check('the real run actually wrote the pre-push hook', existsSync(dryPrePush));
 // NUL-separated, one record per line, to `$state/gh-label-argv.log`, so a
 // label seeded with an empty `--description` (every `type:` label) can still
 // be read back argument by argument — the space-joined `gh-argv.log` above
-// cannot show one. `repo view --json
-// defaultBranchRef` (the ruleset's target) always answers "main". Every
+// cannot show one. `repo view --json defaultBranchRef` answers with
+// `$state/default-branch`, defaulting to "main" when no fixture is there. Every
 // call touching `.../rulesets` (list, detail, POST, PUT) is handled by one
 // case arm keyed on the endpoint prefix: a 403 fixture
 // (`$state/rulesets-403`) wins over everything; otherwise `-X POST`/`-X PUT`
@@ -133,7 +133,7 @@ state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
 case "\${1:-} \${2:-}" in
   "auth status") exit 0 ;;
-  "repo view") echo '{"defaultBranchRef":{"name":"main"}}' ;;
+  "repo view") printf '{"defaultBranchRef":{"name":"%s"}}\\n' "$(cat "$state/default-branch" 2>/dev/null || echo main)" ;;
   "api repos/{owner}/{repo}")
     case "$4" in
       .allow_auto_merge)
@@ -287,6 +287,19 @@ const ghDry = initWithGh(ghRepo, state2, '--dry-run');
 check('init --dry-run (with gh) exits 0', ghDry.status === 0, `${ghDry.stdout}${ghDry.stderr}`);
 check('init --dry-run reports it would enable auto-merge and delete-branch-on-merge', /\+ auto-merge enabled/.test(ghDry.stdout) && /\+ delete-branch-on-merge enabled/.test(ghDry.stdout), ghDry.stdout);
 check('init --dry-run never actually calls gh repo edit', !/repo edit/.test(ghLog(state2)), ghLog(state2));
+
+// #261: a default branch that is neither main nor master earns one line in the
+// report; main and master print nothing new, and the read that finds it happens
+// under --dry-run too. `$state/default-branch` is what the fake gh's
+// `repo view --json defaultBranchRef` answers with.
+const oddBranchLine = (b: string) => `  ! default branch is "${b}", not main or master: the installed workflow templates and hooks/protect-main.mts are written around main/master`;
+for (const [branch, named, mode] of [['claude/x', true, '--dry-run'], ['claude/x', true, ''], ['main', false, '--dry-run'], ['master', false, '--dry-run']] as Array<[string, boolean, string]>) {
+  const st = mkdtempSync(join(tmpdir(), 'agentic-init-defaultbranch-'));
+  cleanup(() => rmSync(st, { recursive: true, force: true }));
+  writeFileSync(join(st, 'default-branch'), branch);
+  const r = initWithGh(ghRepo, st, ...(mode ? [mode] : []));
+  check(`init ${mode || '(real run)'} ${named ? 'names' : 'says nothing about'} a "${branch}" default branch`, r.status === 0 && r.stdout.includes(oddBranchLine(branch)) === named, r.stdout);
+}
 
 // --- --rules: creates, or updates, the branch ruleset that governs the
 // default branch — matched by what it governs, never by its name (#143) —
