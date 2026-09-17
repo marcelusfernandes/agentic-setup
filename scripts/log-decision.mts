@@ -4,6 +4,9 @@
 //
 //   node scripts/log-decision.mts <parent> --kind <k> --ref <#N> "<line>"
 //
+// `<parent>` and `--ref` are the same shape of value and read the same way:
+// `#12` and `12` are both accepted, `#0` and anything else is not.
+//
 // The orchestrator takes three kinds of decision that change no file and so
 // leave no durable trace: granting an `authorised:` glob on a PR
 // (`docs/workflow.md`, "authorised: is written only by the orchestrator"),
@@ -27,7 +30,8 @@
 // A response that does not parse is treated the same way.
 //
 // Exit 1 with `{ refused, parent, missing }` when the parent issue does not
-// exist or is closed (`parent:state`), `--kind` is outside
+// exist or is closed (`parent:state`), the parent number is a pull request
+// and not an issue (`parent:type`), `--kind` is outside
 // `grant|extra-round|human-pending` (`kind:unknown`), `--ref` is not an
 // issue or PR number (`ref:format`), or the text is empty (`text:empty`).
 // Exit 1 with `{ error }` on a usage problem or a `gh`/filesystem failure.
@@ -36,9 +40,10 @@
 //
 // The text is a record, not an instruction: it is trimmed, its whitespace
 // runs collapsed to single spaces so one decision is one line, and it is
-// never interpreted. Appending is literal — the existing body is kept
-// byte for byte and the new line added after it — so a line a person
-// edited or added by hand is never rewritten or dropped.
+// never interpreted. Appending only adds: trailing whitespace on the
+// existing body is trimmed, the new line is added after it, and nothing
+// else about the body is touched — so a line a person edited or added by
+// hand is never rewritten or dropped.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,30 +111,31 @@ function parseArgs(argv: string[]): Args | null {
     positional.push(a);
   }
   if (positional.length !== 2) return null;
-  const parent = Number(positional[0]);
-  if (!Number.isInteger(parent) || parent <= 0) return null;
+  const parent = issueNumber(positional[0]);
+  if (parent === null) return null;
   return { parent, kind: flags.get('kind') ?? '', ref: flags.get('ref') ?? '', text: positional[1] };
+}
+
+/**
+ * The one reader for an issue or PR number, used by both `<parent>` and
+ * `--ref` so the same script never takes two formats for the same shape of
+ * value: `#12` and `12` both give 12; anything else (including `#0`) is null.
+ */
+function issueNumber(value: string): number | null {
+  const m = value.trim().match(/^#?(\d+)$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n > 0 ? n : null;
 }
 
 /** `#12` and `12` both normalise to `#12`; anything else (including `#0`) is null. */
 function normaliseRef(ref: string): string | null {
-  const m = ref.trim().match(/^#?(\d+)$/);
-  if (!m || Number(m[1]) <= 0) return null;
-  return `#${Number(m[1])}`;
+  const n = issueNumber(ref);
+  return n === null ? null : `#${n}`;
 }
 
 /** One decision is one line: trimmed, with every whitespace run collapsed to a space. */
 const normaliseText = (text: string): string => text.trim().replace(/\s+/g, ' ');
-
-/** Writes the comment body to a staging file; returns the failure message, or null on success. */
-function stage(path: string, body: string): string | null {
-  try {
-    writeFileSync(path, body);
-    return null;
-  } catch (e) {
-    return (e as Error).message;
-  }
-}
 
 const args = parseArgs(process.argv.slice(2));
 if (!args) fail({ error: USAGE });
@@ -160,6 +166,17 @@ if (parentRead.status !== 0) {
 
 const parentJson = safeParse<{ state?: unknown }>(parentRead.stdout);
 if (!parentJson) fail({ error: `could not parse gh's answer for issue #${args.parent}.` });
+// The issues endpoint answers for a pull request too, and only a pull
+// request's answer carries `pull_request`. The log belongs on the
+// milestone's parent issue, so a PR number is refused here — before the
+// comments are read, and long before one is written.
+if (Object.hasOwn(parentJson, 'pull_request')) {
+  fail({
+    refused: `#${args.parent} is a pull request, not an issue.`,
+    parent: args.parent,
+    missing: ['parent:type'],
+  });
+}
 const parentState = String(parentJson.state ?? '');
 if (parentState !== 'open') {
   fail({
@@ -199,12 +216,21 @@ const body = existing ? `${existing.body.replace(/\s+$/, '')}\n\n${line}\n` : `$
 
 // `-F body=@<file>` rather than an inline value: the body grows with every
 // line and carries newlines, which an argument does not survive cleanly.
-const dir = mkdtempSync(join(tmpdir(), 'agentic-decision-'));
+// The staging directory itself can fail (no TMPDIR, a read-only one, a full
+// disk); like every other filesystem failure here it is an { error } and an
+// exit 1, never an uncaught crash.
+let dir: string;
+try {
+  dir = mkdtempSync(join(tmpdir(), 'agentic-decision-'));
+} catch (e) {
+  fail({ error: `could not create the staging directory: ${(e as Error).message}` });
+}
 const bodyFile = join(dir, 'body.md');
-const staging = stage(bodyFile, body);
-if (staging) {
+try {
+  writeFileSync(bodyFile, body);
+} catch (e) {
   rmSync(dir, { recursive: true, force: true });
-  fail({ error: `could not stage the comment body: ${staging}` });
+  fail({ error: `could not stage the comment body: ${(e as Error).message}` });
 }
 const written = existing
   ? gh(['api', '-X', 'PATCH', `repos/{owner}/{repo}/issues/comments/${existing.id}`, '-F', `body=@${bodyFile}`])
