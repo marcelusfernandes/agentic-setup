@@ -53,7 +53,7 @@ description as part of the phase.
 | group | values | who changes it |
 |---|---|---|
 | `state:` | `ready`, `in-progress`, `in-review`, `qa-failed`, `blocked` | agents |
-| `state:done` | Codex route only | the Codex route's state synchronisation |
+| `state:done` | `done` — Codex route only; read here, never written | the Codex route's state synchronisation |
 | `scope:` | project-defined (`web`, `api`, `db`, `ops`, `docs`, …) | whoever writes the issue |
 | `type:` | `feature`, `bug`, `refactor`, `infra`, `spec`, `docs`, `deps` | seeded by whoever writes the issue; re-derived from the branch type (`TYPE_LABELS`) and written by `scripts/claim.mts` at claim time |
 | `review:approved` | the reviewer returned approved | orchestrator |
