@@ -116,8 +116,8 @@ a purely mechanical rejection the one extra round it earns, and applying `human:
 comment on the milestone's **parent** issue, found by its `<!-- agentic-decision-log -->`
 marker, so the whole phase's decisions accumulate in one place instead of scattering.
 `<parent>` and `--ref` are the same shape of value and are read the same way: `#12` and
-`12` are both accepted, `#0` and anything else is not. The
-log is a comment and not a tracked file on purpose: GitHub is the durable state here
+`12` are both accepted, `#0` and anything else is not. The log is a comment and not a
+tracked file on purpose: GitHub is the durable state here
 (`docs/decisions.md` item 7) and the orchestrator cannot push to `main`, so a tracked log
 would need a PR per line.
 
