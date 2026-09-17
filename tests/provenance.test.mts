@@ -26,10 +26,18 @@
 // history, which is why `.github/workflows/test.yml` checks out with
 // `fetch-depth: 0`.
 //
-// Negative control: on the base checkout there is no `docs/closeout/` at all,
-// so the TEMPLATE and README cases below fail as assertions (a missing file is
-// reported, not thrown). The synthetic cases pass there, as they build their
-// own repositories -- one failing assertion is the red.
+// One more fail-open, stated here so it is not discovered in a log: the
+// shallow-checkout case below needs `git clone --depth 1` to work in the
+// environment running the suite. Where it does not (no file:// transport, a
+// sandbox that refuses the clone), that one case skips itself with a note on
+// stderr rather than failing -- the environment could not run it, which is not
+// the same as the pin being wrong. Every other case builds its repository with
+// plain `git init` and never skips.
+//
+// Negative control: the TEMPLATE, README and workflow cases below assert on
+// files outside this one, so prose or format this file pins and the base does
+// not carry is a red the overlay reproduces. The synthetic cases carry their
+// own parser and repositories, so they prove the parser, not the base.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,6 +57,15 @@ const ISSUE = /^#(\d+)$/;
 const DELIMITER = /^:?-{3,}:?$/;
 const TABLE_HEADER = ['issue', 'title', 'PR', 'merge commit'];
 const SECTIONS = ['## Issues', '## Left out', '## Dogfood'];
+
+/**
+ * The refusal for two rows that are not in ascending issue order, naming both.
+ * Exported with the two pin messages below so a case -- here or in another
+ * file -- asserts on the one string instead of retyping it and drifting.
+ */
+export function outOfOrderMessage(before: number, after: number): string {
+  return `rows must be in ascending issue order: #${before} is listed before #${after}`;
+}
 
 type Row = { issue: number; title: string; pr: number; sha: string };
 type Parsed = {
@@ -153,6 +170,13 @@ function parseCloseout(raw: string): Parsed {
       if (!SHA.test(sha)) errors.push(`row merge commit cell must be a 40-character sha: ${sha}`);
       if (i && p && title !== '' && SHA.test(sha)) out.rows.push({ issue: Number(i[1]), title, pr: Number(p[1]), sha });
     }
+    // "One row per issue, in issue order" (docs/closeout/README.md and
+    // TEMPLATE.md): strictly ascending, so a repeated issue fails too.
+    for (let i = 1; i < out.rows.length; i++) {
+      const before = out.rows[i - 1].issue;
+      const after = out.rows[i].issue;
+      if (after <= before) errors.push(outOfOrderMessage(before, after));
+    }
   }
 
   // Both prose sections carry at least one bullet; "none" is written out, not omitted.
@@ -174,6 +198,11 @@ function parseCloseout(raw: string): Parsed {
 // --- the pin ---------------------------------------------------------------
 type Env = Record<string, string | undefined>;
 type Audit = { errors: string[]; notes: string[]; files: string[] };
+
+/** The pin's refusal for an `M<n>.md` still left as the template; `audit` prefixes the filename. */
+export const EMPTY_TEMPLATE_MESSAGE = "still the empty template — a milestone's closeout must be filled in";
+/** The pin's note when there is no closeout file to check at all. */
+export const NO_CLOSEOUT_MESSAGE = 'no docs/closeout/M<n>.md yet — the provenance pin has nothing to check';
 
 /** Runs git in a repository without throwing: returns its status and output. */
 function run(cmd: string, args: string[], cwd: string, env: Env) {
@@ -208,7 +237,7 @@ function audit(repo: string, env: Env = process.env): Audit {
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => /^M\d+\.md$/.test(f)).sort() : [];
 
   if (files.length === 0) {
-    notes.push('no docs/closeout/M<n>.md yet — the provenance pin has nothing to check');
+    notes.push(NO_CLOSEOUT_MESSAGE);
     return { errors, notes, files };
   }
 
@@ -230,17 +259,17 @@ function audit(repo: string, env: Env = process.env): Audit {
     for (const e of parsed.errors) errors.push(`${file}: ${e}`);
     if (parsed.errors.length > 0) continue;
     if (parsed.empty) {
-      errors.push(`${file}: still the empty template — a milestone's closeout must be filled in`);
+      errors.push(`${file}: ${EMPTY_TEMPLATE_MESSAGE}`);
       continue;
     }
     if (parsed.milestone !== file.slice(1, -3)) {
       errors.push(`${file}: the heading says M${parsed.milestone} but the file is named ${file}`);
     }
 
-    for (const [what, sha, of] of [['main SHA', parsed.sha, 'the close'] as const]) {
-      const a = ancestry(repo, sha, ref, env);
-      if (a === 'unknown') errors.push(`${file}: ${what} ${sha} at ${of} is not a commit in this repository`);
-      else if (a === 'not-ancestor') errors.push(`${file}: ${what} ${sha} at ${of} is not an ancestor of ${ref}`);
+    {
+      const a = ancestry(repo, parsed.sha, ref, env);
+      if (a === 'unknown') errors.push(`${file}: main SHA ${parsed.sha} at the close is not a commit in this repository`);
+      else if (a === 'not-ancestor') errors.push(`${file}: main SHA ${parsed.sha} at the close is not an ancestor of ${ref}`);
     }
 
     for (const row of parsed.rows) {
@@ -475,7 +504,7 @@ writeCloseout(
 const outOfOrderAudit = audit(outOfOrder.repo, withGh);
 check(
   'rows out of ascending issue order fail, naming both rows',
-  outOfOrderAudit.errors.some((e) => /ascending issue order/.test(e) && e.includes('#2') && e.includes('#1')),
+  outOfOrderAudit.errors.some((e) => e.includes(outOfOrderMessage(2, 1))),
   outOfOrderAudit.errors.join('\n'),
 );
 
@@ -488,7 +517,7 @@ writeCloseout(
 const duplicateAudit = audit(duplicateRow.repo, withGh);
 check(
   'the same issue listed twice fails the ascending order rule',
-  duplicateAudit.errors.some((e) => /ascending issue order/.test(e)),
+  duplicateAudit.errors.some((e) => e.includes(outOfOrderMessage(1, 1))),
   duplicateAudit.errors.join('\n'),
 );
 
@@ -497,7 +526,7 @@ const emptyAudit = audit(empty.repo, withGh);
 check('a tree with no closeout file passes', emptyAudit.errors.length === 0, emptyAudit.errors.join('\n'));
 check(
   'a tree with no closeout file leaves a note on stderr',
-  emptyAudit.notes.some((n) => /nothing to check/.test(n)),
+  emptyAudit.notes.includes(NO_CLOSEOUT_MESSAGE),
   emptyAudit.notes.join('\n'),
 );
 
@@ -533,7 +562,7 @@ writeCloseout(stillTemplate.repo, 'M1.md', existsSync(templatePath) ? readFileSy
 const templateAudit = audit(stillTemplate.repo, withGh);
 check(
   'a milestone file left as the unfilled template fails',
-  templateAudit.errors.length > 0,
+  templateAudit.errors.some((e) => e.includes(EMPTY_TEMPLATE_MESSAGE)),
   templateAudit.errors.join('\n'),
 );
 
