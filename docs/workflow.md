@@ -19,6 +19,10 @@ written in English; the language you talk to the agents in is your business.
   commit *log* for one thing only — when that red is
   *structural* (a missing module or export, a syntax error), a `test(red):` commit in
   `base..head` touching one of those test files is what makes it acceptable (#135).
+  That outcome is the convention's mechanical consumer, and it is why the reviewer's
+  check 3 (`agents/reviewer.md`) still asks for the commit: the card and this document
+  name one mechanism — without the commit a structurally red overlay fails as
+  `structural`, so the commit is what buys it its `pass`.
 
 ## Milestones
 
