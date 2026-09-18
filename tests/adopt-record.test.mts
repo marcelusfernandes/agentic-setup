@@ -653,6 +653,22 @@ check(
   !isCaller("// import { RECORD_FILE } from './record.mts';", 'RECORD_FILE'),
   'a commented-out import counts as a caller',
 );
+const REGEX_FIXTURE = [
+  "const quoted = /^(['\"])(.*)\\1$/;",
+  "// import { PROOF_DIR } from './record.mts';",
+  'const kept = PROOF_DIR;',
+].join('\n');
+check(
+  'a quote inside a regex literal does not open a string',
+  occurrences(code(REGEX_FIXTURE), 'PROOF_DIR') === 1,
+  `the comment after the regex survives the stripper: ${occurrences(code(REGEX_FIXTURE), 'PROOF_DIR')} of 1 occurrence left`,
+);
+const BACKTICK_FIXTURE = ['const backticked = /`([^`]+)`/g;', '// PROOF_DIR', 'const kept = 1;'].join('\n');
+check(
+  'a backtick inside a regex literal does not open a template literal',
+  occurrences(code(BACKTICK_FIXTURE), 'PROOF_DIR') === 0,
+  `the comment after the regex survives the stripper: ${occurrences(code(BACKTICK_FIXTURE), 'PROOF_DIR')} occurrences left`,
+);
 
 // --- N: the one export #233 could not withdraw says why it stays (#326) -----
 // #233's criterion asked for two names to stop being exported. `LABELS_SOURCE`
