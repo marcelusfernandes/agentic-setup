@@ -12,10 +12,16 @@
 // same reason — it parses that file's own top-level `copyTree`/`copyOne` calls and
 // refuses any repository directory the sentence names that no such call touches.
 //
-// Pure-read: no script is spawned, only the filesystem (CLAUDE.md invariant 6
-// exempts catalogue reads). Crash policy: fails closed — an unreadable file or an
-// unparseable Map throws, and a bullet or sentence that cannot be located is an
-// assertion red rather than a silent pass.
+// Pure-read: no script is spawned, only the filesystem. Invariant 6 has no target
+// here: it asks a case for a hook, a CI script or the installer to run the real
+// file, and nothing under `hooks/`, `ci/` or `scripts/` implements the Map —
+// `tests/init.test.mts` is where `init.mts` itself is spawned. What licenses the
+// shape below is invariant 10 (CLAUDE.md and AGENTS.md, the two files this pins):
+// the bullet grammar and the `copyTree`/`copyOne` reading are stated here rather
+// than imported from a shared parser, because a pin that reuses the thing it pins
+// cannot catch that thing drifting. Crash policy: fails closed — an unreadable
+// file or an unparseable Map throws, and a bullet or sentence that cannot be
+// located is an assertion red rather than a silent pass.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';

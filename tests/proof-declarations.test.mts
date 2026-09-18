@@ -5,11 +5,15 @@
 // on the base, so a typo in it silently narrows the control instead of
 // failing it — this file is the consumer that makes the typo loud.
 //
-// Pure-read: no script is spawned, only the filesystem (CLAUDE.md invariant 6
-// exempts catalogue reads). The validation is deliberately written out here
-// rather than imported from the script under test: a pin test that reuses the
-// parser it pins cannot catch that parser drifting away from the documented
-// shape.
+// Pure-read: no script is spawned, only the filesystem. Invariant 6 grants no
+// exemption for reading one — it asks a case for a hook, a CI script or the
+// installer to spawn the real file, and there is no such case here; the
+// single import from the machinery this pins, `matchesAny` from
+// `ci/lib/globs.mts`, is the pure-function exemption invariant 6 does state.
+// The validation itself is deliberately written out here rather than imported
+// from `ci/negative-control.mts`, which is invariant 10 (CLAUDE.md and
+// AGENTS.md): a pin that reuses the thing it pins cannot catch that thing
+// drifting away from the documented shape.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { matchesAny } from '../ci/lib/globs.mts';
