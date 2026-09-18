@@ -186,9 +186,9 @@ replaced.
 
 *2026-09-18 (#232, #328):* `ci/issue-lint.mts` reads the grants too now, and holds them
 to the two rules it holds the bullet globs to. It calls `parseIssueAuthorisedGlobs`
-(`ci/issue-lint.mts:196`), resolves a grant and a bullet glob through one
+(`ci/issue-lint.mts:199`), resolves a grant and a bullet glob through one
 `classifyGlob(glob, grant)` by the same literal-path/new-prefix rule, and runs the
-disjointness comparison over `[...globs, ...grants]` on both sides (`:388`, `:395`).
+disjointness comparison over `[...globs, ...grants]` on both sides (`:398`, `:405`).
 **The decision above is unchanged and still in force**: a grant bullet is read once, as
 a grant, and never as one of the issue's globs — `parseIssueGlobs` still skips it, and
 the lint now tells a granted path from a declared one rather than conflating them, which
@@ -204,6 +204,9 @@ what earns this line. **Cost accepted** is untouched: `## Files has no bullet gl
 still counts bullets only, so an issue whose `## Files` carries grants alone still
 declares no scope of its own. The same pull request moved this item's citations into
 that file (the header gained the sentence naming grants, the body gained the grant
-parsing): the three under **Decision** read `:64`, `:190` and `:395`, and the one under
-**Cost accepted** reads `:197-198`. The wording above keeps the numbers it was written
-with, per the template.
+parsing): the three under **Decision** read `:67`, `:193` and `:405`, and the one under
+**Cost accepted** reads `:200-201`. The wording above keeps the numbers it was written
+with, per the template. Every number in this line is read at the head that added the
+grant loop's dedupe (#328, round 2), not at the head that first wrote the line — a round
+that moves a file re-points every citation the same pull request has written into it,
+this one included.
