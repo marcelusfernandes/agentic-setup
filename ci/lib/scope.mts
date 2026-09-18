@@ -5,7 +5,9 @@
 // only `authorised:` lines grant anything, and only in the **issue** body
 // (#155 — the implementer writes the PR body, so a grant there would be a
 // self-grant); only backtick-quoted spans are globs when any are present,
-// otherwise the first whitespace-delimited token is.
+// otherwise the first whitespace-delimited token is. A grant line carrying
+// more than one backticked span grants nothing at all and is reported by
+// `findMultiGlobGrantLines` instead (#316).
 import { matchesAny } from './globs.mts';
 
 /**
@@ -76,33 +78,87 @@ export function parseIssueGlobs(issueBody: string): string[] {
   return globs;
 }
 
+type GrantLine = { line: string; spans: string[]; remainder: string };
+
+/**
+ * One `authorised:` line, read once: the line itself (trimmed, bullet marker
+ * removed, the form `findMisplacedAuthorisedLines` already reports) and every
+ * backticked span on it. `null` when the line is not a grant, or grants
+ * nothing.
+ *
+ * The single reader of a grant's *content*, the way `grantRemainder` is the
+ * single reader of whether a line is one (#231). What `authorisedGlobsIn`
+ * refuses and what `findMultiGlobGrantLines` reports are therefore the same
+ * decision taken once, rather than two span counts that have to agree.
+ */
+function readGrantLine(rawLine: string): GrantLine | null {
+  const remainder = grantRemainder(rawLine);
+  if (remainder === null || !remainder.trim()) return null;
+  return { line: rawLine.trim().replace(/^[-*]\s+/, ''), spans: backticked(remainder), remainder };
+}
+
 /**
  * The globs granted by `authorised:` lines (bullet or bare) in a body's
  * `## Files` section; every other line there is prose. One glob per line
- * (invariant 5): *every* backticked span on the line is taken when there is
- * at least one — so a same-line justification must carry no backticks of its
- * own — otherwise the first whitespace-delimited token wins, trailing `,`/`;`
- * stripped, and the rest of the line is ignored. A bare comma list therefore
- * grants its first entry and nothing else. Shared by the issue and PR parsers
- * below so the two read a grant identically — what differs is only whose body
- * is allowed to carry one.
+ * (invariant 5), and since #316 that is enforced rather than conventional:
+ * a line carrying more than one backticked span grants **nothing** — see
+ * `findMultiGlobGrantLines`, which names it. Exactly one span grants that
+ * span; no span at all falls back to the first whitespace-delimited token,
+ * trailing `,`/`;` stripped, so a bare comma list grants its first entry and
+ * nothing else.
+ *
+ * Refusing rather than taking the first span is the point: narrowing would
+ * trade a silent over-grant for a silent under-grant, and a line with two
+ * spans is a line whose author meant something this format cannot express.
+ * The direction matters — an over-grant fails open, quietly widening the
+ * audited scope, while a refusal fails closed, as something a person reads.
+ *
+ * Shared by the issue and PR parsers below so the two read a grant
+ * identically — what differs is only whose body is allowed to carry one.
  */
 function authorisedGlobsIn(body: string): string[] {
   const section = extractSection(body, 'Files');
   if (section === null) return [];
   const globs: string[] = [];
   for (const raw of section.split(/\r?\n/)) {
-    const remainder = grantRemainder(raw);
-    if (remainder === null || !remainder.trim()) continue;
-    const quoted = backticked(remainder);
-    if (quoted.length) {
-      globs.push(...quoted);
+    const grant = readGrantLine(raw);
+    if (grant === null) continue;
+    if (grant.spans.length > 1) continue; // refused, not narrowed (#316)
+    if (grant.spans.length === 1) {
+      globs.push(grant.spans[0]);
       continue;
     }
-    const bare = remainder.trim().split(/\s+/)[0]?.replace(/[,;]+$/, '');
+    const bare = grant.remainder.trim().split(/\s+/)[0]?.replace(/[,;]+$/, '');
     if (bare) globs.push(bare);
   }
   return globs;
+}
+
+export type MultiGlobGrant = { line: string; spans: string[] };
+
+/**
+ * The `authorised:` lines of a body's `## Files` section that carry more than
+ * one backticked span — the lines `authorisedGlobsIn` refuses. Each entry
+ * carries the line as written (trimmed, bullet marker removed) and every span
+ * on it, so the caller can name both halves of what was refused instead of
+ * reporting a count.
+ *
+ * Read by `ci/issue-lint.mts`, which turns each entry into a failure: the
+ * refusal has to reach the orchestrator at dispatch, where the line is
+ * written, rather than at the `scope` check on somebody else's pull request
+ * (#316). A justification belongs on the next line, indented and not a
+ * bullet; a bare (unbackticked) justification on the same line is fine, since
+ * it adds no span.
+ */
+export function findMultiGlobGrantLines(body: string): MultiGlobGrant[] {
+  const section = extractSection(body, 'Files');
+  if (section === null) return [];
+  const refused: MultiGlobGrant[] = [];
+  for (const raw of section.split(/\r?\n/)) {
+    const grant = readGrantLine(raw);
+    if (grant !== null && grant.spans.length > 1) refused.push({ line: grant.line, spans: grant.spans });
+  }
+  return refused;
 }
 
 /**

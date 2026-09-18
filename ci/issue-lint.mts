@@ -4,7 +4,9 @@
 // `proof/<slug>.json` path, globs that parse and match something (or are
 // `new`), the `authorised:` grants of `## Files` held to those same two
 // rules — a grant resolves like a glob and is compared for overlap like one,
-// because it is what widens the scope check (#232) — globs disjoint from the
+// because it is what widens the scope check (#232) — one glob per grant line,
+// so a line carrying more than one backticked span is refused by name here at
+// dispatch rather than quietly granting all of them (#316), globs disjoint from the
 // issues already in flight in the same milestone, a `Blocked by:` graph with
 // no cycle in it, and every
 // `Blocked by: #N` number in the issue actually
@@ -64,7 +66,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
-import { parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
+import { findMultiGlobGrantLines, parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
 import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDeclaration, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
@@ -199,6 +201,20 @@ const issueGlobs = parseIssueGlobs(body);
 const issueGrants = parseIssueAuthorisedGlobs(body);
 if (sec['Files'] && issueGlobs.length === 0) {
   failures.push('## Files has no bullet glob');
+}
+// A grant line carrying more than one backticked span grants nothing, and
+// this is where that refusal has to be said (#316). The parser could not take
+// only the first span — that would trade a silent over-grant for a silent
+// under-grant — so the line is refused, and the refusal belongs at dispatch,
+// where the orchestrator wrote it: `scripts/claim.mts` runs this lint before
+// it pushes the lock branch, and the `issue-lint` workflow reruns it on every
+// `edited`, so a grant added after dispatch is refused too. At `scope` time
+// the same line would only surface as a file outside the globs, with no
+// reason given — fail-closed, but to the wrong reader.
+for (const { line, spans } of findMultiGlobGrantLines(body)) {
+  failures.push(
+    `\`authorised:\` line carries more than one backticked span (${spans.map((s) => `\`${s}\``).join(', ')}), so it grants none of them — one glob per line. Put the justification on the next line, indented and not a bullet, with no backticks of its own. The line: ${line}`,
+  );
 }
 // The `Declaration: proof/<slug>.json` line is optional (#136): only a line
 // that is present and names something other than a `proof/<slug>.json` path
