@@ -134,6 +134,14 @@ left by the last one, for an offline check against the last fetch. Fields:
   since dead) still reads `inProgress` and needs a person, or a future liveness signal, to
   resolve.
 
+A GitHub listing taken right after the write that caused it may lag — the write lands
+before the listing that reports it does: `reconcile` returned an empty milestone seconds
+after the issue was created, and `guard-main` opened a pull request over a squash commit
+whose own pull-request association was not indexed yet (measured:
+`docs/dogfood/2026-09-10.md`, L6). So an empty or stale result on a listing this pass
+just caused is not a state to act on: re-read it once, after a short pause, before
+dispatching, relabelling, opening anything or stopping on it. Only the second read counts.
+
 A failing `gh` or `git` call prints `{ "error": "..." }` and exits 1; stop and report
 rather than guessing the state.
 
@@ -266,7 +274,22 @@ per pass.
 ## 5. Decide
 
 On every verdict the reviewer returns, first comment its JSON on the PR yourself, then
-apply the labels — `land.mts` and `reconcile.mts` read them regardless of what follows:
+apply the labels — `land.mts` and `reconcile.mts` read them regardless of what follows.
+
+**Label before the push that starts the round, not after it.** `agentic-checks` runs on
+`labeled` and `unlabeled` as well as on `synchronize`, under `concurrency` with
+`cancel-in-progress: true` (`.github/workflows/agentic-checks.yml`), so every `gh pr edit
+--add-label` cancels the run in flight and re-triggers a fresh one. That is the design,
+not a bug: apply this step's verdict labels *before* you relaunch the implementer, and the
+one run its round-2 push starts covers both; apply them after that push and they cancel
+the very run you are waiting on, which is a pass full of `cancelled` runs and minutes
+spent twice (measured: `docs/dogfood/2026-09-10.md`, L5). Step 4's `type:`/`scope:` copy
+is the one edit that cannot come before a push — the PR does not exist until the
+implementer has pushed — so it costs at least one re-trigger by design (GitHub fires one
+`labeled` event per label, so two labels in one `gh pr edit` still start two runs, and the
+concurrency group leaves one standing): make it a single `gh pr edit` carrying both labels,
+before you read `$OID` and launch the reviewer, so the run left standing is the one the
+verdict waits on. The labels:
 
 - `approved` → `gh pr edit <pr> --add-label review:approved --add-label state:in-review
   --remove-label state:qa-failed` (the remove is harmless when the label was never there —
@@ -383,7 +406,17 @@ Then act on the verdict:
   include one whose PR merge is still only queued. Poll `scripts/reconcile.mts --milestone
   "<current>"` again after a short fixed pause (a merge takes low minutes, not a tight
   loop) until the issue no longer appears in `inReview`, `inProgress` or `resumable` —
-  closed, its PR merged — then continue the loop from step 0.
+  closed, its PR merged — then continue the loop from step 0. Once it has merged, bring
+  the root checkout onto the squash commit in two steps, exactly this:
+  `git fetch origin && git pull --ff-only origin main`. Naming the remote *and* the branch
+  on the pull is the part that matters. A `--ff-only` pull that resolves to more than one
+  merge head refuses with `Cannot fast-forward to multiple branches`: either because
+  more than one branch was named on the one pull (`git pull --ff-only origin main other`),
+  or because none was named and the current branch's `branch.<name>.merge` holds more than
+  one ref. Naming a single branch leaves one head and the fast-forward goes through, so
+  the fetch is not what cures that — it is there to bring every `origin/*` ref up to date,
+  which a pull naming one branch does not do. The error is the one the 2026-09-10 pass hit
+  (`docs/dogfood/2026-09-10.md`, L22).
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
   summary and the reviewer's JSON (round 2; skill `safe-worktree` §C); once it returns,
   back to step 4.
@@ -484,7 +517,8 @@ in this order — the closeout lands **before** the close, never after it
 - Nothing left to dispatch this instant, but the milestone still has open issues → check
   the three stop reasons above before stopping. If none applies (for example, a `humanPending`
   issue was just cleared by a person, or GitHub is still indexing a write from a moment
-  ago — #129 L6), reconcile again rather than stopping.
+  ago — the lag of step 0, `docs/dogfood/2026-09-10.md`, L6), reconcile again rather than
+  stopping.
 
 ## Escalate to a person (label `human:pending`, comment on the issue)
 
