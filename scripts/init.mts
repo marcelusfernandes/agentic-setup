@@ -21,7 +21,8 @@
 // one "! default branch is ..." line (#261): the workflow templates, the
 // pre-push hook and hooks/protect-main.mts this installer copies are all
 // written around main/master, and that assumption is otherwise invisible
-// until the first refused push.
+// until the first refused push. When the branch cannot be read at all the
+// report says that instead, and --rules refuses rather than guessing (#229).
 //
 // --rules updates the branch ruleset that already governs the repository's
 // default branch — the one whose conditions name it, whatever it is called
@@ -30,12 +31,30 @@
 // squash as the only merge method and the checks the merge model depends on
 // (docs/decisions.md item 9(a)), and carries every rule, parameter and
 // bypass actor it does not manage over from the ruleset it found.
-// `--ruleset-name <name>` picks the ruleset by name instead. A 403 (rulesets
-// are not available on a private repository on the free plan) is reported
-// plainly instead of gh's raw error, and a ruleset whose detail cannot be
-// read refuses the run — no POST, no PUT — rather than letting a ruleset
-// with no readable conditions look like one that governs nothing. Without
+// `--ruleset-name <name>` picks the ruleset by name instead; it only ever
+// updates, so a name matching nothing refuses and lists the rulesets that do
+// exist rather than creating a second one under that name (#229). Without
 // --rules, no rulesets call is made at all.
+//
+// Crash policy on this path: every read either produces a ruleset the run can
+// act on or refuses with a named "! ruleset: <reason>" line, and a refusal
+// makes no POST and no PUT. It stays a report line and exit 0 — a failed read
+// is not a reason to abandon the filesystem work already done, and the report
+// is what the operator acts on. The refusals name *what* could not be read,
+// because a bare failure out of an installer cannot be told apart from a
+// missing token, a missing repository or a network problem, and the operator
+// will guess. What refuses: --ruleset-name with no name after it; a default
+// branch gh could not read; a rulesets list that is not valid JSON or not a
+// JSON array; and a ruleset detail that failed, did not parse, is not a
+// ruleset object, or whose rules/bypass_actors is not an array, conditions
+// not an object or conditions.ref_name.include not an array. Letting any of
+// those through is how a ruleset with no readable conditions comes to look
+// like one that governs nothing, and the run POSTs a second ruleset over the
+// branch the first already governs — the defect #143 removed and #229 closed
+// the remaining entrances to. A 403 (rulesets are not available on a private
+// repository on the free plan) is reported plainly instead of gh's raw error,
+// and only for a genuine HTTP 403 from a gh call — never by matching those
+// digits inside some other message (#229).
 //
 // --rules resets required_approving_review_count to 0 and carries the fetched
 // dismiss_stale_reviews_on_push / require_last_push_approval through (false

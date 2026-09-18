@@ -27,8 +27,9 @@ skips labels, milestone and the ruleset (offline, or no `gh` auth); `--force` ov
 files you edited before (it never overwrites silently); `--rules` updates (or creates) the
 branch ruleset over the default branch (see step 8 below) — omit it to leave rulesets
 untouched entirely; `--ruleset-name <name>` picks the ruleset to update by name instead of
-by what it governs; `--require-review` raises the ruleset's review gate (only meaningful
-together with `--rules`).
+by what it governs (it never creates one — a name that matches nothing refuses);
+`--require-review` raises the ruleset's review gate (only meaningful together with
+`--rules`).
 
 `--rules` on its own never turns a review gate on: it resets
 `required_approving_review_count` to 0 and carries the fetched stale-approval fields
@@ -70,8 +71,25 @@ The script is idempotent. It:
    and never by its name: `conditions.ref_name.include` containing `~DEFAULT_BRANCH` or
    `refs/heads/<default branch>`. `--ruleset-name <name>` overrides that choice; when
    several rulesets match, the first is updated and the others are named in the report,
-   never created over. Only when nothing matches is a ruleset created (POST), named
-   `agentic-setup` (or `--ruleset-name`'s value) on `refs/heads/<default branch>`.
+   never created over. Only when nothing matches *and no `--ruleset-name` was given* is a
+   ruleset created (POST), named `agentic-setup` on `refs/heads/<default branch>`. A
+   `--ruleset-name` that matches nothing refuses instead, naming the rulesets that do
+   exist: the operator asked for one specific ruleset to be updated, and creating a second
+   one over the default branch is not a smaller version of that request (#229).
+
+   **Every read on this path either produces a ruleset the run can act on or refuses with
+   a named `! ruleset: <reason>` line, and a refusal makes no POST and no PUT** (#229). It
+   refuses when: `--ruleset-name` has no name after it (or another flag), which is a usage
+   error rather than a silent fall back to matching by conditions; `gh repo view` could not
+   read the default branch, rather than guessing `main` and matching every ruleset against
+   the wrong ref; the rulesets list is not valid JSON or not a JSON array, rather than
+   reading an error body as "no ruleset governs this branch"; or a ruleset's detail cannot
+   be read — the call failed, the response is not a ruleset object, or its `rules` /
+   `bypass_actors` is not an array, its `conditions` not an object, or its
+   `conditions.ref_name.include` not an array. The run still exits 0: the refusal is a
+   report line, not a crash. "Not available on this plan for a private repository" is said
+   only for a genuine `HTTP 403` from a gh call, never by matching those digits inside
+   another message.
 
    What it writes: a `pull_request` rule with `allowed_merge_methods: ['squash']`;
    `required_status_checks` for `scope`, `negative-control` and this repository's own test
