@@ -76,7 +76,9 @@ not a detail of item 8:
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
   [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0022-<slug>.md`. The date lives inside the file, on its
+  the next free number is `0024-<slug>.md` — item 22 is claimed by #231 (PR #311) and its
+  index row lands with it, so a gap at 22 here means that pull request has not merged
+  yet. The date lives inside the file, on its
   `Date:` line. The number continues the register across both files: items 16, 18, 19 and
   20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
   number is the one after the highest in the index below, not the one after the
@@ -115,3 +117,4 @@ not a detail of item 8:
 | 19 | [The M9 discipline agent catalogue is retired](../decisions.md#19-2026-09-17-the-m9-discipline-agent-catalogue-is-retired) — still in `../decisions.md`, not yet relocated | accepted |
 | 20 | [`land` declares its review mode — `agent` by default, `approved` opt-in](../decisions.md#20-2026-09-17-land-declares-its-review-mode--agent-by-default-approved-opt-in) — still in `../decisions.md`, not yet relocated | accepted |
 | 21 | [The negative control never exempts a change to its own installed code](0021-the-gate-does-not-exempt-its-own-code.md) | proposed |
+| 23 | [A `--ruleset-name` that matches nothing refuses, and no failed read reaches the create path](0023-a-ruleset-name-that-matches-nothing-refuses.md) | proposed |
