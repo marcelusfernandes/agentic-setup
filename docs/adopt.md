@@ -643,8 +643,9 @@ The generated `agentic-checks.yml` runs `scope` and `negative-control` out of
 `.github/scripts/agentic/`, which `node scripts/init.mts` copies into a repository and this
 branch does not carry: the two checks it installs cannot run on the pull request that
 installs them. The body says so, the way `skills/init/SKILL.md` says it for the bootstrap
-pull request — **both reds are correct there**, only your own test job is expected green,
-and they stop at the first pull request opened after this one is merged. Do not make them
+pull request — **both reds are correct there**, the generated `test` and `check` jobs are
+the ones expected green, and they stop at the first pull request opened after this one is
+merged. Do not make them
 required checks on the default branch until then, or the adoption pull request cannot land.
 The jobs are not made conditional on the copy existing: a required check that skips itself
 is a gate that reports green without having run, which is the one thing a merge gate must

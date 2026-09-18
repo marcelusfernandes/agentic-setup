@@ -250,8 +250,7 @@ try {
 
 /** What the report says about the record: never the record itself, which detection replaces. */
 type RecordView = { generatedBy: string; generatedAt: string; stale: string[] } | null;
-type ReportGap = Gap | 'record:stale';
-type Report = Omit<Inventory, 'gaps'> & { gaps: ReportGap[]; record: RecordView };
+type Report = Omit<Inventory, 'gaps'> & { gaps: Gap[]; record: RecordView };
 
 const stale = existing === null ? [] : staleFields(existing, inventory);
 const record: RecordView =
@@ -543,7 +542,7 @@ if (report.gaps.length === 0) {
 const show = (value: string | null): string => (value === null ? 'none' : `\`${value}\``);
 
 /** What adoption would do about each gap, in the gap's own words. */
-const REMEDIES: Record<ReportGap, (report: Report) => string> = {
+const REMEDIES: Record<Gap, (report: Report) => string> = {
   'ruleset:absent': (r) =>
     `create the \`agentic-setup\` branch ruleset on \`${r.defaultBranch}\` (\`node scripts/init.mts --rules\`), ` +
     'requiring a pull request and the checks the merge gate reads',

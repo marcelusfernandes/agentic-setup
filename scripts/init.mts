@@ -86,7 +86,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { labelsSeededByInit, loadLabels, type LabelEntry } from './lib/labels.mts';
 import { HOOK_MARKER, SUPERSEDED_DENY_RULES } from './lib/adopt/constants.mts';
-import { readRecord, RecordError } from './lib/adopt/record.mts';
+import { RECORD_FILE, readRecord, RecordError } from './lib/adopt/record.mts';
 import { readTemplates, renderWorkflows, WorkflowError } from './lib/adopt/workflows.mts';
 
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -178,13 +178,10 @@ function requiredChecks(repoRoot: string): string[] {
     if (record !== null) return renderWorkflows(record, readTemplates()).checks;
   } catch (err) {
     if (!(err instanceof RecordError) && !(err instanceof WorkflowError)) throw err;
-    say(`  ! ruleset: ${RECORD_FILE_NAME} could not be rendered from (${(err as Error).message.split('\n')[0]}); falling back to detection for the check names`);
+    say(`  ! ruleset: ${RECORD_FILE} could not be rendered from (${(err as Error).message.split('\n')[0]}); falling back to detection for the check names`);
   }
   return ['scope', 'negative-control', detectTestCheckName(repoRoot)];
 }
-
-/** The adoption record's file name, as the fallback message above names it. */
-const RECORD_FILE_NAME = 'agentic.config.json';
 
 function detectTestCheckName(repoRoot: string): string {
   const dir = join(repoRoot, '.github', 'workflows');

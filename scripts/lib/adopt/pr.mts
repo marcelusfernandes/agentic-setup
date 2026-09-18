@@ -566,8 +566,8 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     // `.github/scripts/agentic/`, which `node scripts/init.mts` copies and
     // this branch does not carry, so they fail on the pull request that
     // introduces them and pass on every one after it (#302).
-    '**`scope` and `negative-control` are expected red on this pull request, and only your',
-    "own test job is expected green on it.** The generated `agentic-checks.yml` runs them",
+    '**`scope` and `negative-control` are expected red on this pull request; the generated',
+    "`test` and `check` jobs are the ones expected green on it.** `agentic-checks.yml` runs the",
     'with `node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
     '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
     'two checks it installs cannot run on the pull request that installs them. Both reds are',
