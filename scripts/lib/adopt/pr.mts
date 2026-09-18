@@ -193,6 +193,7 @@ export type PrReason =
   | 'pr:stack-not-supported'
   | 'pr:no-test-command'
   | 'pr:nothing-to-commit'
+  | 'pr:base-unreadable'
   | 'pr:git-failed';
 
 /**
@@ -355,7 +356,15 @@ function planSettings(base: string | null, shipped: Shipped): PlannedFile {
     }
   }
   const currentDeny = settings === null ? [] : ((settings.permissions as { deny?: unknown } | undefined)?.deny ?? []);
-  const current = Array.isArray(currentDeny) ? currentDeny.filter((rule): rule is string => typeof rule === 'string') : [];
+  // A deny list this module cannot read is one it must not rewrite. Filtering
+  // the entries that are not strings and writing the rest back would delete a
+  // rule the adopter wrote, silently, in a pull request about adopting a
+  // *protection* (#302). It is reported and skipped, like a settings file that
+  // is not JSON at all; `scripts/adopt.mts --hooks` refuses on the same shape.
+  if (!Array.isArray(currentDeny) || currentDeny.some((rule) => typeof rule !== 'string')) {
+    return { path: SETTINGS_FILE, content: null, outcome: 'skipped', reason: 'deny-not-strings', commit: 'adopt' };
+  }
+  const current = currentDeny as string[];
   const { deny, merge } = mergeDeny(current, shipped.deny);
 
   if (settings !== null && merge.added.length === 0 && merge.replaced.length === 0) {
@@ -511,6 +520,30 @@ export type BodyContext = {
 const outcomeLine = (file: PlannedFile): string => `- \`${file.path}\` — ${file.outcome} (${file.reason})`;
 
 /**
+ * The two jobs of the generated `agentic-checks.yml` that run from
+ * `.github/scripts/agentic/` — the copy `scripts/init.mts` makes and this
+ * branch does not carry. They are the two that cannot pass on the pull request
+ * that installs them (#302).
+ */
+export const COPIED_CHECKS = ['scope', 'negative-control'];
+
+/**
+ * How the body names the jobs that *are* expected green: the rendered
+ * workflow's own job list minus the two above. It is derived and never
+ * written out, because which jobs exist depends on the record —
+ * `renderChecks` emits `check` only when `commands.check` is set, and a body
+ * that named it anyway would send a reader looking for a job the workflow does
+ * not declare.
+ */
+function greenPhrase(checks: string[]): string {
+  const green = checks.filter((name) => !COPIED_CHECKS.includes(name));
+  if (green.length === 0) return 'no other job of it is';
+  const names = green.map((name) => `\`${name}\``);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `the generated ${list} job${green.length === 1 ? ' is the one' : 's are the ones'}`;
+}
+
+/**
  * The pull request's body, in the shape `.github/pull_request_template.md`
  * fixes and `ci/scope-check.mts` reads: the closing keyword in plain text on
  * the first line, `## Files` listing exactly the paths this branch carries,
@@ -550,6 +583,21 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     '`ci/negative-control.mts` copies it onto a checkout of the base and requires that',
     'run to fail; an adoption whose own checks cannot go green is one nobody should',
     'trust. The red is committed on its own, first, as `test(red):`.',
+    '',
+    // The two checks the generated workflow declares but cannot run *here*,
+    // stated the way `skills/init/SKILL.md` states the bootstrap pull
+    // request's two reds. `agentic-checks.yml` runs them out of
+    // `.github/scripts/agentic/`, which `node scripts/init.mts` copies and
+    // this branch does not carry, so they fail on the pull request that
+    // introduces them and pass on every one after it (#302).
+    `**\`${COPIED_CHECKS.join('` and `')}\` are expected red on this pull request; ${greenPhrase(plan.checks)}`,
+    'expected green on it.** `agentic-checks.yml` runs the two of them with',
+    '`node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
+    '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
+    'two checks it installs cannot run on the pull request that installs them. Both reds are',
+    'correct here — nothing is wrong with the adoption, so do not debug it over them — and',
+    'they stop at the first pull request opened after this one is merged. Until then, do not',
+    'make them required checks on the default branch, or this pull request cannot land.',
     '',
     '## Files',
     '',

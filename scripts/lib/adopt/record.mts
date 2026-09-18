@@ -17,8 +17,9 @@
 // the repository it describes.
 //
 // **It copies nothing that already has an owner.** `checks` comes from the
-// default branch's effective ruleset as the inventory read it, `hooks` from
-// the hooks the inventory found installed, and `labels.source` is a
+// default branch's effective ruleset as the inventory read it, `hooks` is the
+// set adoption intends to install (the hooks this setup ships, plus anything
+// the inventory already found installed — #302), and `labels.source` is a
 // *pointer* to where the label vocabulary lives, not a copy of it —
 // `scripts/lib/adopt/inventory.mts` derives its own two lists from
 // `labels.json` and `templates/.github/workflows` (#233), and this file
@@ -41,6 +42,7 @@
 //
 // Node built-ins only; `JSON.parse` is the reader, since there is no YAML
 // reader among them (invariant 1).
+import { GIT_HOOKS } from './constants.mts';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -252,7 +254,14 @@ export function buildRecord(source: RecordSource, now: Date = new Date()): Adopt
     stack: source.stack,
     commands: { test: source.test, check: source.check },
     checks: [...(source.ruleset?.requiredStatusChecks ?? [])].sort(),
-    hooks: [...source.hooks].sort(),
+    // What adoption *intends* to install, not what the inventory found
+    // installed (#302). Recording only the latter meant a repository that had
+    // adopted nothing wrote `hooks: []`, `--hooks` then installed no hook for
+    // it, and `docs/adopt.md` documented editing the record by hand as the way
+    // round that — a file invariant 4 says no person edits. The installed set
+    // is still reported, by `--inventory`, which is where "what this
+    // repository has" belongs.
+    hooks: [...new Set([...source.hooks, ...GIT_HOOKS])].sort(),
     proof: { dir: PROOF_DIR },
     labels: { source: LABELS_SOURCE },
     generatedAt: now.toISOString(),

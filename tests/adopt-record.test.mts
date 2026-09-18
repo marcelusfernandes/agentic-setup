@@ -324,7 +324,16 @@ check(
   jRecord?.stack === 'unknown' && jRecord?.commands?.test === null && jRecord?.commands?.check === null,
   readRaw(bare),
 );
-check('a repository with no hook installed records an empty hooks list', Array.isArray(jRecord?.hooks) && jRecord.hooks.length === 0, readRaw(bare));
+// #302: `hooks[]` is what adoption *intends* to install, not what the
+// inventory found installed. A repository that has adopted nothing yet used to
+// record `hooks: []`, so `--hooks` installed no hook for it and `docs/adopt.md`
+// documented a hand edit of the record as the way round that — a file
+// invariant 4 says no person edits.
+check(
+  'a repository with no hook installed still records the hook adoption intends to install',
+  Array.isArray(jRecord?.hooks) && jRecord.hooks.join(',') === 'pre-push',
+  readRaw(bare),
+);
 
 // --- K: a stale record reaches the plan issue, and the reported gaps --------
 // `--plan-issue` renders the same report `--inventory` prints, so a record

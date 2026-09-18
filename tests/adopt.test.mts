@@ -396,4 +396,124 @@ if ((shellcheck.stdout ?? '').trim() === '') {
   }
 }
 
+/** The adoption branch and the label the plan issue carries once decided. */
+const BRANCH = 'chore/adopt-agentic-setup';
+const DECIDED_LABEL = 'human:decided';
+
+// --- H: one definition of the constants three files used to restate (#302) ---
+// The hook marker and the superseded deny rules lived in three places at once,
+// each comment pointing at the other two and asking that they move together.
+// A comment is not a mechanism; one definition is.
+const SHARED = ['scripts/init.mts', 'scripts/lib/adopt/hooks.mts', 'scripts/lib/adopt/inventory.mts', 'scripts/lib/adopt/constants.mts'];
+const sourceOf = (rel: string): string => {
+  try {
+    return readFileSync(join(ROOT, rel), 'utf8');
+  } catch {
+    return '';
+  }
+};
+check('the shared adoption constants have a module of their own', sourceOf('scripts/lib/adopt/constants.mts').length > 0, 'scripts/lib/adopt/constants.mts');
+const denyDefiners = SHARED.filter((rel) => /SUPERSEDED_DENY_RULES: Record<string, string> =/.test(sourceOf(rel)));
+check(
+  'the superseded deny rules are defined exactly once, in that module',
+  denyDefiners.length === 1 && denyDefiners[0] === 'scripts/lib/adopt/constants.mts',
+  denyDefiners.join(', ') || '(defined nowhere)',
+);
+const markerDefiners = SHARED.filter((rel) => /^(export )?const [A-Z_]*MARKER = 'agentic-setup';$/m.test(sourceOf(rel)));
+check(
+  'the hook marker is defined exactly once, in that module',
+  markerDefiners.length === 1 && markerDefiners[0] === 'scripts/lib/adopt/constants.mts',
+  markerDefiners.join(', ') || '(defined nowhere)',
+);
+check(
+  'scripts/init.mts tests for the marker it shares rather than an inline literal of its own',
+  !/\/agentic-setup\/\.test\(/.test(sourceOf('scripts/init.mts')),
+  'inline marker regex',
+);
+
+// --- H2: the --pr block is a module of its own, and git names its buffer -----
+// `scripts/adopt.mts` held the whole of `--pr` and stood at 793 of its 800
+// lines, so the next mode had nowhere to go (#302).
+check(
+  'the --pr command is lifted out of the CLI into a module of its own',
+  sourceOf('scripts/lib/adopt/pr-run.mts').length > 0,
+  'scripts/lib/adopt/pr-run.mts',
+);
+
+// Every `git` the adoption steps spawn goes through one runner with one
+// explicit `maxBuffer`. The default is 1 MB, which the `ls-tree` of a large
+// repository outgrows — and the base then *refused*, which is what the issue
+// said and what a measurement over a 30,000-path repository confirms: every
+// buffer size that truncated answered `status: null` with `SIGTERM`, so
+// `status ?? 1` was 1. What it did not do is say why, because `stderr` on that
+// path is empty. Both branches are exercised below, because `spawnSync`
+// reports the same `ENOBUFS` for each and this runner refuses both: a kill
+// with the tail missing, and a complete answer whose limit was noticed after
+// it had all arrived. A module of the adoption libraries, imported and called
+// directly, as `resolvePlanIssue` already is.
+type GitModule = {
+  GIT_MAX_BUFFER: number;
+  runGit: (cwd: string, args: string[], options?: { maxBuffer?: number }) => { status: number; stdout: string; stderr: string };
+};
+let gitMod: GitModule | null = null;
+try {
+  gitMod = (await import('../scripts/lib/adopt/git.mts')) as unknown as GitModule;
+} catch {
+  gitMod = null;
+}
+check('the adoption git runner names one explicit maxBuffer', gitMod?.GIT_MAX_BUFFER === 64 * 1024 * 1024, String(gitMod?.GIT_MAX_BUFFER));
+
+// `ls-tree` of this repository fits in one read, so the limit is noticed with
+// the whole answer already in hand: status 0 beside an `ENOBUFS`. That is the
+// branch the old `status ?? 1` would have accepted.
+const wholeAnswer = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
+// `log -p` is large enough to need several, so this one is killed mid-answer:
+// `status: null`, `SIGTERM`. The base refused here too — with an empty detail.
+const killed = gitMod?.runGit(ROOT, ['log', '-p', '--no-color'], { maxBuffer: 1024 });
+type GitAnswer = { status: number; stdout: string; stderr: string } | undefined;
+for (const [shape, answer] of [['whole', wholeAnswer], ['killed mid-answer', killed]] as Array<[string, GitAnswer]>) {
+  check(
+    `a git answer that outgrows the buffer (${shape}) reports a named reason and never an empty detail`,
+    answer !== undefined && answer.status !== 0 && /ENOBUFS/.test(answer.stderr),
+    JSON.stringify(answer?.stderr),
+  );
+  check(`and hands back no output at all for the ${shape} one`, answer?.stdout === '', String(answer?.stdout.length));
+}
+
+// --- I: `record:stale` is one of the gap names, not a name beside them -------
+const gapNames = sourceOf('scripts/lib/adopt/inventory.mts').match(/const GAP_NAMES = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
+check('the inventory names the gaps at all (the source was read)', gapNames.includes('ruleset:absent'), gapNames || '(no GAP_NAMES)');
+check("the inventory's gap names include record:stale", gapNames.includes("'record:stale'"), gapNames);
+
+// --- J: what the two adoption documents are held to (moved here in #302) ---
+// The `--pr` section lives in `docs/adopt-pr.md` since #302: `docs/adopt.md`
+// stood at the 800-line cap and had no room for what these cases ask it to
+// say. The two are read together here, so a claim that moves between them
+// neither passes nor fails by accident; a case naming one file by hand is a
+// case about *that* file.
+const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
+const prDoc = readFileSync(join(ROOT, 'docs', 'adopt-pr.md'), 'utf8');
+const docs = `${adoptDoc}\n${prDoc}`;
+check('the two documents point at each other', adoptDoc.includes('docs/adopt-pr.md') && prDoc.includes('docs/adopt.md'), 'no pointer');
+check(
+  'and each sits below the 800-line cap the split exists for',
+  [adoptDoc, prDoc].every((text) => text.split('\n').length <= 800),
+  [adoptDoc, prDoc].map((text) => text.split('\n').length).join(' | '),
+);
+check('the documentation documents the --pr flag', /node scripts\/adopt\.mts --pr\b/.test(docs));
+check('the documentation documents the full sequence', ['--inventory', '--plan-issue', DECIDED_LABEL, '--pr'].every((step) => docs.includes(step)), 'sequence');
+check('the documentation says what the deliberate red test is for', /deliberate red/i.test(docs) && docs.includes('negative-control'), 'deliberate red');
+check('the documentation says adopt never merges, and names scripts/land.mts', /never merges/i.test(docs) && docs.includes('scripts/land.mts'), 'never merges');
+check('the documentation names the adoption branch and the refusal the plan issue can cause', docs.includes(BRANCH) && docs.includes('plan:not-decided'), 'branch and refusal');
+check(
+  'the documentation says which of the generated checks cannot run on the adoption pull request',
+  prDoc.includes('expected red') && prDoc.includes('.github/scripts/agentic/'),
+  'docs expected red',
+);
+check(
+  'the documentation says which plan issue authorises when two share the title, and names the ambiguous refusal',
+  docs.includes('pr:plan-ambiguous') && /open/.test(prDoc.split('### Which plan issue authorises')[1] ?? ''),
+  'ambiguity',
+);
+
 finish();

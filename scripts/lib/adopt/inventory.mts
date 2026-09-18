@@ -51,6 +51,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectCommands } from '../../../ci/lib/detect.mts';
 import { labelsSeededByInit, loadLabels } from '../labels.mts';
+import { GIT_HOOKS, HOOK_MARKER } from './constants.mts';
 
 export type CommandResult = { status: number; stdout: string; stderr: string };
 /** Runs `gh` with the given argv and reports what it printed. */
@@ -115,13 +116,15 @@ export const SEEDED_LABELS = seededLabels();
  */
 export const LABEL_LIST_LIMIT = 200;
 
-/** The git hooks `scripts/init.mts` installs into the adopting repository. */
-const OWNED_HOOKS = ['pre-push'];
-
-/** The marker every hook this setup installs carries in its text. */
-const HOOK_MARKER = 'agentic-setup';
-
-/** Every gap this inventory can name. A gap is a fact, not a judgement. */
+/**
+ * Every gap a report can name. A gap is a fact, not a judgement.
+ *
+ * `record:stale` is one of them although this module never emits it: the
+ * inventory is what a repository *has*, read once, and the record is a layer
+ * over it that `scripts/adopt.mts` compares against detection. The name still
+ * belongs to this list, because a caller branching on a gap has one
+ * vocabulary to branch on and not two (#302).
+ */
 const GAP_NAMES = [
   'ruleset:absent',
   'ruleset:review-not-required',
@@ -129,6 +132,7 @@ const GAP_NAMES = [
   'hooks:not-installed',
   'workflows:missing',
   'test-command:none',
+  'record:stale',
 ] as const;
 
 export type Gap = (typeof GAP_NAMES)[number];
@@ -219,7 +223,7 @@ function gitHooksDir(root: string, git: GitRunner): Read<string> {
  */
 function installedHooks(dir: string): Read<string[]> {
   const found: string[] = [];
-  for (const name of OWNED_HOOKS) {
+  for (const name of GIT_HOOKS) {
     try {
       if (readFileSync(join(dir, name), 'utf8').includes(HOOK_MARKER)) found.push(name);
     } catch (err) {
@@ -263,7 +267,7 @@ function findGaps(report: Omit<Inventory, 'gaps'>): Gap[] {
   if (report.ruleset === null) gaps.push('ruleset:absent');
   else if (report.ruleset.requiredApprovingReviewCount < 1) gaps.push('ruleset:review-not-required');
   if (SEEDED_LABELS.some((name) => !report.labels.includes(name))) gaps.push('labels:missing');
-  if (OWNED_HOOKS.some((name) => !report.hooks.includes(name))) gaps.push('hooks:not-installed');
+  if (GIT_HOOKS.some((name) => !report.hooks.includes(name))) gaps.push('hooks:not-installed');
   if (OWNED_WORKFLOWS.some((name) => !report.workflows.includes(name))) gaps.push('workflows:missing');
   if (report.test === null) gaps.push('test-command:none');
   return gaps;

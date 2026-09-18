@@ -32,7 +32,7 @@
 // usage, no branch is ever pushed, and the negative-control case has no
 // generated diff to run over.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
@@ -710,17 +710,88 @@ check('an issue carrying no state at all does not authorise', decide([{ number: 
 check('an issue of another title is not a plan issue', decide([{ ...issueOf(PLAN_ISSUE, DECIDED_LABEL, 'OPEN'), title: 'something else' }])?.ok === false, 'other title');
 check('an empty search is no plan issue', decide([])?.ok === false, JSON.stringify(decide([])));
 
-// --- J: the documentation the acceptance criterion asks for -----------------
-const docs = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
-check('docs/adopt.md documents the --pr flag', /node scripts\/adopt\.mts --pr\b/.test(docs));
-check('docs/adopt.md documents the full sequence', ['--inventory', '--plan-issue', DECIDED_LABEL, '--pr'].every((step) => docs.includes(step)), 'sequence');
-check('docs/adopt.md says what the deliberate red test is for', /deliberate red/i.test(docs) && docs.includes('negative-control'), 'deliberate red');
-check('docs/adopt.md says adopt never merges, and names scripts/land.mts', /never merges/i.test(docs) && docs.includes('scripts/land.mts'), 'never merges');
-check('docs/adopt.md names the adoption branch and the refusal the plan issue can cause', docs.includes(BRANCH) && docs.includes('plan:not-decided'), 'branch and refusal');
+// --- K: the residuals the two reviews of #167 left behind (#302) ------------
+// The source-level cases of this group — the lifted module, the git buffer and
+// what the two adoption documents are held to — are in `tests/adopt.test.mts`,
+// which has room for them; this file started 74 lines from the 800-line cap.
+//
+// K3. the two checks the adoption pull request cannot pass, stated on it the
+// way `skills/init/SKILL.md` states them for the bootstrap pull request.
+// The body is hard-wrapped, so it is read unwrapped and the whole clause is
+// asserted: three loose substrings passed over a sentence truncated mid-clause
+// ("runs the with `node …`"), which is what that reader would have got.
+const unwrap = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
+const bodyFor = (record: any): string =>
+  mod ? unwrap(mod.renderBody(plan(record, planning.repo) as Plan, { issue: PLAN_ISSUE, defaultBranch: 'main', record })) : '';
+const bodyReds = bodyFor(recordValue);
+const RED_CLAUSE =
+  '**`scope` and `negative-control` are expected red on this pull request; the generated `test` and `check` jobs are the ones expected green on it.** `agentic-checks.yml` runs the two of them with `node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which `node scripts/init.mts` copies into the repository and this branch does not carry';
+check('the body states, as one unbroken sentence, which checks are expected red and why', bodyReds.includes(RED_CLAUSE), bodyReds.slice(bodyReds.indexOf('expected red') - 80, bodyReds.indexOf('expected red') + 340));
+
+// Which jobs the workflow declares depends on the record: `renderChecks` emits
+// `check` only when `commands.check` is set, so a body naming it regardless
+// would send a reader after a job that does not exist.
+const noCheckBody = bodyFor({ ...recordValue, commands: { test: recordValue.commands.test, check: null } });
 check(
-  'docs/adopt.md says which plan issue authorises when two share the title, and names the ambiguous refusal',
-  docs.includes('pr:plan-ambiguous') && /open/.test(docs.split('## `--pr`')[1] ?? ''),
-  'ambiguity',
+  'the jobs named as expected green are the ones that record actually renders',
+  noCheckBody.includes('the generated `test` job is the one expected green on it.') && !noCheckBody.includes('`check` job'),
+  noCheckBody.slice(noCheckBody.indexOf('expected red'), noCheckBody.indexOf('expected red') + 200),
+);
+
+// A deny list the planner cannot read is skipped, never filtered: the twin of
+// the `--hooks` refusal, on the path that decides what the branch carries.
+const strayDeny = (path: string) => (path === SETTINGS ? JSON.stringify({ permissions: { deny: ['Bash(x)', 7] } }) : null);
+const strayPlan = mod?.planPullRequest(recordValue, { root: planning.repo, baseFile: strayDeny });
+const strayEntry = strayPlan?.files.find((file) => file.path === SETTINGS);
+check(
+  'a base deny entry that is not a string is skipped by name, and nothing is rewritten',
+  strayEntry?.outcome === 'skipped' && strayEntry?.reason === 'deny-not-strings' && strayEntry?.content === null,
+  JSON.stringify(strayEntry),
+);
+// K4. a question that has already been answered is not asked again.
+const answered = fixture();
+const answeredRun = adopt(['--plan-issue'], answered.repo, { FAKE_GH_PLAN: 'decided' });
+const answeredOut = parse(answeredRun.stdout);
+check(
+  '--plan-issue refuses by name when the open plan issue already carries human:decided',
+  answeredRun.status === 1 && answeredOut?.reason === 'plan-issue:already-decided' && answeredOut?.issue === PLAN_ISSUE,
+  `${answeredRun.stdout}\n${answeredRun.stderr}`,
+);
+check('a decided plan issue is not asked again', !existsSync(join(answeredRun.stateDir, 'issue-create.args')), answeredRun.stateDir);
+
+// K5. a base tree whose path cannot be read leaves no temporary index behind.
+const broken = fixture({ [SETTINGS]: `${JSON.stringify({ permissions: { deny: [] } }, null, 2)}\n` });
+const blob = git(['rev-parse', `HEAD:${SETTINGS}`], broken.repo).trim();
+rmSync(join(broken.repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)), { force: true });
+const ownTmp = mkdtempSync(join(tmpdir(), 'agentic-prtmp-'));
+cleanup(() => rmSync(ownTmp, { recursive: true, force: true }));
+const unreadable = adopt(['--pr'], broken.repo, { FAKE_GH_PLAN: 'decided', TMPDIR: ownTmp });
+check(
+  'a base path the tree names and git cannot read is pr:base-unreadable',
+  unreadable.status === 1 && parse(unreadable.stdout)?.error === 'pr:base-unreadable',
+  `${unreadable.stdout}\n${unreadable.stderr}`,
+);
+check(
+  'the temporary index directory is removed after pr:base-unreadable',
+  readdirSync(ownTmp).filter((name) => name.startsWith('agentic-adopt-index-')).length === 0,
+  readdirSync(ownTmp).join(',') || '(empty)',
+);
+check('a base path that cannot be read pushes nothing', remoteSha(broken.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
+
+// K6. what the record says enters the plan issue as data, never as markup.
+const WEIRD_BY = 'agentic-setup/adopt`x`';
+const weird = fixture({ [RECORD_FILE]: `${JSON.stringify({ ...recordValue, generatedBy: WEIRD_BY }, null, 2)}\n` });
+const weirdRun = adopt(['--plan-issue'], weird.repo, { FAKE_GH_PLAN: 'none' });
+const weirdBody = bodyOf(weirdRun.stateDir, 'issue-create.args');
+check(
+  'a generatedBy holding a backtick enters the plan issue as a code span it cannot break out of',
+  weirdBody.includes(`\`\` ${WEIRD_BY} \`\``),
+  weirdBody.split('\n').find((line) => line.includes('Adoption record')) ?? `${weirdRun.stdout}\n${weirdRun.stderr}`,
+);
+check(
+  'the record’s generatedAt is a code span too',
+  new RegExp(`\`${recordValue.generatedAt}\``).test(weirdBody),
+  weirdBody.split('\n').find((line) => line.includes('Adoption record')) ?? '',
 );
 
 finish();

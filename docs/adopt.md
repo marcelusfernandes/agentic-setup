@@ -141,9 +141,12 @@ the body's checkboxes were rendered from, `record:stale` included — the JSON a
 reads and the issue a person reads never disagree.
 
 A second run never opens a second issue. When an open issue with that exact title
-already exists it refuses — `{ "refused": "…", "reason": "plan-issue:already-open",
-"issue": 7 }`, exit 1 — and makes no `gh issue create` call at all. Close the issue to
-get a new one.
+already exists it refuses, exit 1, and makes no `gh issue create` call at all. Which
+refusal depends on the label that issue carries: `plan-issue:already-open` for one still
+carrying `human:pending` (read it, or close it and run again), and
+`plan-issue:already-decided` for one already carrying `human:decided` — that question has
+been answered, a second issue would put a second decision beside the standing one, and the
+next step there is `--pr`. Both print `{ "refused": "…", "reason": …, "issue": 7 }`.
 
 A repository with nothing to plan is refused too. When the report names no gap there is
 no question to ask — the issue would carry an empty checklist, and a person would have to
@@ -185,7 +188,7 @@ only thing that produces it — one writer, one reader, one validator.
 | `stack` | `ci/lib/detect.mts`'s stack at the moment of writing |
 | `commands.test`, `commands.check` | the commands the loop runs; `null` when nothing was detected and nothing was overridden |
 | `checks[]` | the status checks the merge gate requires on the default branch, as the inventory read them from the branch's effective ruleset. Empty when no ruleset is in force |
-| `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them. `--hooks` reads it back as the set to install |
+| `hooks[]` | the hooks adoption intends to install: the ones this setup ships, plus any the inventory already found carrying its marker. `--hooks` reads it back as the set to install |
 | `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`); `scripts/proof.mts` looks there rather than assuming the default |
 | `labels.source` | *where* the label vocabulary is defined — a pointer, never a copy. `scripts/init.mts` today; it becomes `labels.json` when that file is the one dictionary |
 | `generatedAt` | when the file was generated, ISO 8601 |
@@ -340,12 +343,14 @@ Rendering itself is pure: `scripts/lib/adopt/workflows.mts` takes a record and t
 template texts and returns strings. It writes nothing — `adopt.mts` is what writes — and
 it reads nothing in the repository being adopted.
 
-### What this does not close yet
+### The ruleset reads the same list
 
-`node scripts/init.mts --rules` still computes its own check names with
-`detectTestCheckName` when it builds the ruleset payload. Until that path reads the
-`checks` list above, `missingFromRuleset` is how the disagreement is made visible rather
-than prevented: run `--workflows`, and require exactly the names it prints.
+`node scripts/init.mts --rules` requires exactly the `checks` above when the repository has
+an `agentic.config.json`: it renders the workflow from that record and requires its job
+names, so the ruleset cannot ask for a check the generated workflow never produces. Without
+a record there is nothing to render from, and the historical default stands — `scope`,
+`negative-control` and whatever `detectTestCheckName` says the repository's own test job is
+called. `missingFromRuleset` still reports the difference between the two lists.
 
 ## `--hooks` installs the hooks the record names
 
@@ -442,11 +447,11 @@ Like `--workflows`, a repository without `agentic.config.json` is refused —
 `{ "refused": "…", "reason": "hooks:no-record" }`, exit 1, nothing installed. Run `--record`
 first.
 
-One gap remains open, and it is worth naming: `--record` fills `hooks[]` from the hooks the
-inventory found **installed**, so a repository that has adopted nothing yet writes
-`hooks: []` and `--hooks` then installs no hook file for it — only the deny list. Until the
-record can carry the hooks an adoption *intends*, name them in `hooks[]` before running
-this flag, and re-run `--record` afterwards so the record and the repository agree again.
+`hooks[]` is what adoption **intends** to install, not what the inventory found installed:
+`--record` writes the hooks this setup ships (`pre-push`) plus anything already there, so a
+repository that has adopted nothing still gets its hook from `--hooks`. No person edits the
+record to arrange that — invariant 4 says nobody edits it at all. What a repository *has*
+is `--inventory`'s answer, and `hooks:not-installed` is its gap.
 
 ## `node scripts/proof.mts <slug>` runs the proof
 
@@ -509,163 +514,14 @@ runner at all.
 
 ## `--pr` opens the adoption pull request
 
-Everything above generates files. `--pr` is what lands them, the way this repository
-requires everything else to land: through a pull request the required checks pass on.
-
-```bash
-node scripts/adopt.mts --pr
-```
-
-It assembles one branch — `chore/adopt-agentic-setup` — carrying the adoption record, the
-generated workflows, the merged deny list, the proof declaration and one deliberate red
-test under the record's `proof.dir`; pushes it; and opens a pull request against the
-default branch. On success it prints the branch, the base and head commits, the plan issue
-it closes, the pull request's URL, one entry per file with what happened to it, the globs
-the body declares, the checks the generated workflow produces, and the proof the branch
-declares.
-
-### The sequence, end to end
-
-| Step | Command | What it does |
-| --- | --- | --- |
-| 1 | `node scripts/adopt.mts --inventory` | describes the repository; writes nothing |
-| 2 | `node scripts/adopt.mts --plan-issue` | opens one `human:pending` issue with that plan |
-| 3 | *a person* | reads the plan, ticks what should happen, moves the issue to `human:decided` |
-| 4 | `node scripts/adopt.mts --pr` | assembles the branch, pushes it, opens the pull request |
-| 5 | *the checks, then a review* | `scope`, `negative-control` and the generated `test` job run on the pull request itself |
-| 6 | `node scripts/land.mts <pr>` | queues the merge — **`adopt` never merges anything** |
-
-Step 3 is not optional and is not a formality. `--pr` **refuses unless that plan issue
-exists and carries `human:decided`**:
-
-```json
-{ "refused": "…", "reason": "pr:plan-not-decided", "missing": ["plan:not-decided"], "issue": 41 }
-```
-
-exit 1, nothing pushed and no pull request opened. A repository with no plan issue at all
-is refused the same way, with `missing: ["plan:not-found"]`. Adoption is not something a
-script decides for a repository; the issue is the question and the label is the answer.
-
-### Which plan issue authorises, when two share the title
-
-Two can. `--plan-issue` deduplicates against **open** issues only, so closing a plan issue
-and running the documented sequence again leaves a closed one beside an open one — an
-ordinary state, not an anomaly. `--pr` is the only mode that writes to a remote
-repository, and a gate that read whichever match the search returned first would not be a
-gate: a closed `human:decided` issue could authorise the push and put `Closes #<a closed
-issue>` in the body — a keyword GitHub will not act on — and a closed undecided one could
-produce a refusal the live question does not deserve.
-
-So the search asks GitHub for each issue's `state`, and **the open issue is what
-authorises**:
-
-| The repository holds | `--pr` reads |
-| --- | --- |
-| one open plan issue | that one; `human:decided` on it is the gate |
-| a closed one and an open one | the **open** one, whichever of the two the search returned first |
-| only closed ones | nothing — `pr:no-plan-issue`, `missing: ["plan:not-found"]`, naming them |
-| more than one **open** | nothing — `pr:plan-ambiguous`, `missing: ["plan:ambiguous"]`, naming them in `issues` |
-
-The open issue is the live question, and it is the one `--plan-issue` maintains as unique.
-A closed one is history — a decision that was made, acted on and filed — and history is
-not a standing authorisation; a pull request cannot close a closed issue anyway. Preferring
-the open match resolves the ordinary case. Where preference cannot decide — several open
-matches, which only a person opening one by hand produces — the run refuses by name rather
-than picking one, because each may carry a different decision and search order is not an
-answer. Close all but the one that holds the decision and run it again.
-
-A `state` this reader cannot recognise as open is treated as closed. That is the
-fail-closed direction: a state it cannot name never authorises a push.
-
-Steps 1–2 and 4 are the whole sequence: `--record`, `--workflows` and `--hooks` are not
-steps a person has to remember before `--pr`. It generates the record itself when there is
-none (from the same inventory), and renders the workflows and the deny list from it in
-memory. Run those flags when you want the files in your own working tree; run `--pr` when
-you want them reviewed.
-
-### It writes nothing into the working tree
-
-The branch is assembled in the object database — `hash-object`, `update-index` against a
-temporary index, `write-tree`, `commit-tree` — from the **base tree**, never from the
-checkout. `git status --porcelain` is empty afterwards, `HEAD` is where it was, and no
-file of the repository was created, moved or touched. Every "is this file already there?"
-question is asked of the base tree for the same reason: a file edited but not committed
-must not make a generated file look unchanged.
-
-That is also why the `pre-push` hook is not in the diff, and the body says so. Git hooks
-live under the directory git runs hooks from (`.git/hooks` by default), which is not
-tracked and which no pull request can carry. `node scripts/adopt.mts --hooks` installs it
-in each clone.
-
-### What the deliberate red test is for
-
-`ci/negative-control.mts` checks out the pull request's base, runs the test command there
-unchanged (the baseline), then copies **only the test files of the diff** on top and
-requires that second run to fail. A pull request whose tests pass on the base proves
-nothing, and that is exactly the risk an adoption pull request carries: the whole point of
-it is to install the checks, so nothing would notice if those checks could never go red.
-
-So the branch carries `<proof.dir>/adopt-agentic-setup.test.mjs`, generated from the
-record. It asserts what adoption generated — the record's `generatedBy` and `commands.test`,
-and each job of the generated `agentic-checks.yml` — by reading the files, never by
-importing them, so the red on the base is a failed assertion rather than a missing module
-(which `negative-control` would report as `structural`). Absent on the base, present at
-head: red there, green here. It is committed **on its own and first**, as
-`test(red): …`, which is also the vouch `negative-control` reads when a red does look
-structural (`docs/workflow.md`). The rest of the adoption follows in a second commit.
-
-The declaration beside it, `<proof.dir>/adopt-agentic-setup.json`, names that file and no
-command, so `node scripts/proof.mts adopt-agentic-setup` runs the command the record
-holds — one answer rather than two. The pull request's `## Proof` section names it.
-
-Two records are refused here rather than producing a test nobody would run:
-
-- `pr:stack-not-supported` — the generated test is a `node:test` file, so a record whose
-  `stack` is not `node` is refused by name. A runner that would never discover the file
-  would make `negative-control` report `no-tests` or `vacuous`, which reads as a pull
-  request that forgot its test rather than as an adoption that cannot be proved here.
-- `pr:no-test-command` — a record with no `commands.test` gives the deliberate red nothing
-  to be red in.
-
-Even on `node`, discovery is the one thing the record cannot guarantee: a test command
-that walks the repository (`npm test` running `node --test`, say) finds the file, and a
-runner configured with an explicit list of test paths has to be told about it. The pull
-request's `## Risks` section says so.
-
-### The body is the one `ci/scope-check.mts` reads
-
-The generated body follows `.github/pull_request_template.md` exactly: `Closes #<plan
-issue>` in plain text on the first line, `## What changed`, `## Proof`, `## Files` listing
-exactly the paths the branch carries, and `## Risks`. `scope` reads a pull request's scope
-off the **linked issue**, never off the body its opener wrote (#155), which is why
-`--plan-issue` declares the globs adoption may write under its own `## Files`:
-`agentic.config.json`, `.github/workflows/**`, `.claude/settings.json` and `proof/**`.
-The pull request names the exact files; the issue grants the globs they sit in.
-
-No `type:` label is applied to the pull request. An agent that labels its own work buys its
-own exemptions (`agents/implementer.md`), and the same rule holds for a script.
-
-### The branch is created, never forced
-
-The push is the create-only push `scripts/claim.mts` uses: `--force-with-lease=<ref>:`
-with an empty expected value, which means the ref must not already exist, and the
-`--porcelain` data line read as the signal. A branch that is already there is
-
-```json
-{ "held": "chore/adopt-agentic-setup", "branch": "chore/adopt-agentic-setup", "base": "…", "issue": 41 }
-```
-
-exit 2 — the remote ref is left exactly where it was and no second pull request is opened.
-`--force` is not a modifier of this flag (it is a usage error), for the same reason the
-generated workflows have none: the remedy is to read the branch, not to lose it. Delete
-the branch if you want a new one.
-
-### `adopt` never merges
-
-Nothing in this script merges anything, and no flag of it ever will. `scripts/land.mts` is
-the only thing in this repository that queues a merge — `gh pr merge --squash --auto`,
-gated by the base branch's ruleset when it has one and by `gh pr checks --required`
-otherwise (M12). The adoption pull request is reviewed and landed like any other.
+The last step, and the only one that touches the remote: it assembles the branch
+`chore/adopt-agentic-setup` out of the record, the generated workflows, the deny list and
+one deliberate red test, pushes it create-only and opens the pull request — refusing until
+the plan issue carries `human:decided`. It is **[`docs/adopt-pr.md`](./adopt-pr.md)**: the
+sequence end to end, which plan issue authorises when two share the title, why nothing is
+written into the working tree, what the deliberate red test is for, why two of the
+generated checks are expected red on that one pull request, and why `adopt` never merges.
+The `pr:*` refusal names are in the crash-policy table below, with the rest.
 
 ## `node scripts/doctor.mts` reads back what the loop requires
 
@@ -752,6 +608,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `workflows:template-missing` | a shipped template under `templates/.github/workflows/` is not there; `field` names it |
 | `workflows:template-unreadable` | a shipped template exists and could not be read; `field` names it |
 | `workflows:template-anchor-missing` | a template no longer carries the line the record is substituted into, so the file would be written with the placeholder still in it; `field` names it |
+| `workflows:jobs-not-last` | `agentic-checks.yml` carries a top-level key after its `jobs:` mapping, so the generated jobs would be appended under a key this tool did not write and neither check would run; `field` names the file |
 | `workflows:command-not-renderable` | a recorded command holds a newline or a control character and cannot be put on one line of YAML; `field` names it (`commands.test`, `commands.check`) |
 | `workflows:unreadable` | a file under `.github/workflows` exists and could not be read, so whether it carries the marker is unknown |
 | `workflows:not-written` | a generated workflow could not be written |
@@ -759,11 +616,11 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:source-missing` | a file this repository ships (`hooks/git-pre-push`, `hooks/hooks.json`, `templates/claude-settings.json`) is not there; `field` names it |
 | `hooks:source-unreadable` | one of those exists and could not be read, or is not the shape the installer needs; `field` names it |
 | `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
-| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object; the deny list is never merged into a file this tool could not understand |
-| `hooks:not-written` | a hook file or the settings file could not be written |
+| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object, or its `permissions.deny` is not a list of strings; the deny list is never merged into a file this tool could not understand, and a rule it cannot read is not a rule it may drop |
+| `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:origin-unreadable` | `git fetch origin` could not answer, so the base the branch would be built on is unknown |
-| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed, or a path the tree holds could not be read — an unreadable file is never planned as an absent one |
+| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed (a `git` answer that outgrew its buffer counts, and the reason is named rather than left empty), or a path the tree holds could not be read — an unreadable file is never planned as an absent one; `field` names the path when there is one, and the temporary index directory is removed either way |
 | `pr:stack-not-supported` | the record's `stack` is not `node`, so the generated `node:test` file would never be discovered; `field` names it |
 | `pr:no-test-command` | the record holds no `commands.test`, so the deliberate red has nothing to be red in; `field` names it |
 | `pr:nothing-to-commit` | the base already carries every file the adoption would write |
@@ -780,9 +637,10 @@ point at the line rather than the file.
 `plan-issue:already-open` use, because nothing failed: the repository simply has no
 record yet. `pr:no-plan-issue`, `pr:plan-not-decided` and `pr:plan-ambiguous` are refusals
 of the same shape, with one more field: `missing`, the named list of what a person still
-owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). The first two
-carry `issue`, the one they read; `pr:plan-ambiguous` carries `issues` instead, because the
-refusal *is* that there was more than one.
+owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). Only
+`pr:plan-not-decided` carries `issue`, the one it read: `pr:no-plan-issue` found none to
+name, and `pr:plan-ambiguous` carries `issues` instead, because the refusal *is* that there
+was more than one.
 
 ## What this is not
 
