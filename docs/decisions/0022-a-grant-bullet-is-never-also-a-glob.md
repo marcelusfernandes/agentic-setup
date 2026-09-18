@@ -205,13 +205,19 @@ still counts bullets only, so an issue whose `## Files` carries grants alone sti
 declares no scope of its own. The same pull request moved this item's citations into
 that file (the header gained the sentence naming grants, the body gained the grant
 parsing): the three under **Decision** read `:67`, `:193` and `:405`, and the one under
-**Cost accepted** reads `:200-201`. The seventh citation this item carries moved too, in
-a second file: **Decision**'s `skills/issue-and-pr/SKILL.md:98`, the card sentence stating
-the bullet exception, is at `:99` because the same pull request added a line above it.
-The wording above keeps the numbers it was written with, per the template, and every
-number in this paragraph is read at the head that wrote it rather than computed.
-**The rule, stated as wide as it reaches: a round that moves a file re-points every
-citation the same pull request has written into every file it touches — not only into the
-file in front of it.** Both misses recorded here were that narrower reading: one round
-corrected a citation in one file and left six in another, the next swept those six and
-left the seventh, in a third.
+**Cost accepted** reads `:200-201`. A seventh citation moved as well, into a different
+cited file: **Decision**'s `skills/issue-and-pr/SKILL.md:98`, the card sentence stating the
+bullet exception, is at `:99` because that pull request added a line above it. The wording
+above keeps the numbers it was written with, per the template, and every number in this
+paragraph is read at the head that records it rather than computed from an earlier one.
+
+**The rule, stated over the relation it has to close: when a branch moves a file, every
+citation into that file is re-pointed — every one this item carries, whoever wrote it and
+whenever, not only the ones the moving pull request typed — corrected where a glob or a
+grant covers the document the citation sits in, and reported where neither does.** Three
+rounds of #328 each read that relation too narrowly and each missed what the narrowing hid:
+one corrected a citation in a workflow header and left six here; the next swept those six,
+all into one cited file, and left the seventh, which points into another; the third stated
+the rule with an authorship qualifier — "citations this pull request has written" — that
+would itself have excluded four of those seven, the seventh included, since they were
+written by the pull request that created this item and not by the one that moved them.
