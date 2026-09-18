@@ -711,6 +711,16 @@ check(
   occurrences(code(BACKTICK_FIXTURE), 'PROOF_DIR') === 0,
   `the comment after the regex survives the stripper: ${occurrences(code(BACKTICK_FIXTURE), 'PROOF_DIR')} occurrences left`,
 );
+const NESTED_FIXTURE = [
+  'const line = `note: ${globs.map((g) => `\\`${g}\\``).join(\', \')} — the gate\'s own code`;',
+  "// import { PROOF_DIR } from './record.mts';",
+  'const kept = PROOF_DIR;',
+].join('\n');
+check(
+  'a template literal inside a substitution does not end the one around it',
+  occurrences(code(NESTED_FIXTURE), 'PROOF_DIR') === 1,
+  `the comment below the nested template survives: ${occurrences(code(NESTED_FIXTURE), 'PROOF_DIR')} of 1 occurrence left`,
+);
 
 // --- N: the one export #233 could not withdraw says why it stays (#326) -----
 // #233's criterion asked for two names to stop being exported. `LABELS_SOURCE`
