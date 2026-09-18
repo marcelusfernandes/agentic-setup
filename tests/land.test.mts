@@ -50,6 +50,19 @@
 //     fails there is the last assertion of the group — that the usage line
 //     names the two flags — because the base's usage line names neither.
 //
+//   * #238's cases, and which of them are reds rather than coverage. The base
+//     merges PR 38 (a server review cast against a commit that is not the
+//     head, in mode `approved`) and PR 39 (a reviews read that cannot answer),
+//     because nothing in it reads `gh pr view --json reviews` at all — those
+//     are the assertion reds of AC1, together with the three `{ error }`
+//     outputs (G, N, AV) and the usage line (AF), which carry no `mode` on the
+//     base. The other two are coverage, not red, and are marked as such
+//     rather than claimed: PR 36 (a stale marker written *after* the head
+//     marker) and PR 37 (a `gh pr view` that answers without a `headRefOid`)
+//     already refuse on the base — `newestReviewedSha` already reads comment
+//     bodies newest-first, and the head-oid guard already refuses
+//     `gh-pr-view`. They are here because neither rule was pinned anywhere.
+//
 // Cases M and O remain the negative control for #78, and P-T for #144: the
 // base named no commit on either merge call before those landed.
 import { spawnSync } from 'node:child_process';
@@ -122,10 +135,25 @@ case "\${1:-} \${2:-}" in
       # <!-- agentic-reviewed-sha: <oid> --> when it applies review:approved.
       case "$pr" in
         15) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$stale"' -->"},{"body":"round two, looks good"},{"body":"<!-- agentic-reviewed-sha: '"$head"' -->"}]}' ;;
+        # The other order, which is the one that must refuse: the marker naming
+        # the head is the *older* comment and a stale marker was written after
+        # it, so only an implementation that takes the newest marker refuses.
+        36) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$head"' -->"},{"body":"<!-- agentic-reviewed-sha: '"$stale"' -->"}]}' ;;
         24|28) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$stale"' -->"}]}' ;;
         25) echo '{"comments":[{"body":"approved in a comment with no marker in it"}]}' ;;
         26) echo "fake-gh: could not read the comments" >&2; exit 1 ;;
         *) echo '{"comments":[{"body":"<!-- agentic-reviewed-sha: '"$head"' -->"}]}' ;;
+      esac
+    elif [ "$fields" = "reviews" ]; then
+      # The server-side half of mode 'approved': the commit each review was
+      # actually cast against. \`--json reviews\` is what carries a populated
+      # commit.oid -- \`--json latestReviews\` answers \`{"oid":""}\` for every
+      # entry (measured against cli/cli#14447 with gh 2.83.1), so an
+      # implementation reading latestReviews could never compare anything.
+      case "$pr" in
+        38) echo '{"reviews":[{"state":"APPROVED","commit":{"oid":"'"$stale"'"}}]}' ;;
+        39) echo "fake-gh: could not read the reviews" >&2; exit 1 ;;
+        *) echo '{"reviews":[{"state":"APPROVED","commit":{"oid":"'"$head"'"}}]}' ;;
       esac
     else
       merge_state='"mergeable":"MERGEABLE"'
@@ -138,12 +166,15 @@ case "\${1:-} \${2:-}" in
         12|33|4[0-3]) label='[{"name":"type:docs"}]' ;;
       esac
       case "$pr" in
-        20|27|28) decision='"APPROVED"' ;;
+        20|27|28|38|39) decision='"APPROVED"' ;;
       esac
       state='"state":"OPEN"'
       if [ "$pr" = "10" ]; then state='"state":"CLOSED"'; fi
       case "$pr" in
-        1[0-9]|2[0-9]|3[0-5]|4[0-3]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
+        # 37 is the PR gh answers about without a headRefOid at all: readable,
+        # but carrying nothing to pin a merge to.
+        37) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main",'"$merge_state"'}' ;;
+        1[0-9]|2[0-9]|3[0-9]|4[0-4]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
         *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
       esac
     fi
@@ -200,6 +231,17 @@ case "\${1:-} \${2:-}" in
     fi
     if [ "$pr" = "22" ] && [ "$auto" = "yes" ]; then
       echo "fake-gh: some unrelated merge failure" >&2
+      exit 1
+    fi
+    if [ "$pr" = "44" ]; then
+      # The clean-status race of #78, where the retry that answers it fails
+      # too: both merge calls are gone, and the { error } that reports it is
+      # the last thing an operator reads about this run.
+      if [ "$auto" = "yes" ]; then
+        echo "fake-gh: GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)" >&2
+      else
+        echo "fake-gh: the plain retry failed too" >&2
+      fi
       exit 1
     fi
     echo "https://github.com/org/repo/pull/$pr"
@@ -306,6 +348,9 @@ const g = land(16, { FAKE_GH_RULES: 'required' });
 check('auto-merge disabled exits 1', g.status === 1, `${g.stdout}\n${g.stderr}`);
 const gOut = parse(g.stdout);
 check('auto-merge disabled reports { error } with gh\'s own message', typeof gOut?.error === 'string' && /auto merge/i.test(gOut.error), g.stdout);
+// #238 AC2: the { error } outputs are the ones an operator reads when the
+// merge did not happen, so they name the mode that ran like every other line.
+check('auto-merge disabled names its pr, gate and mode alongside the error', gOut?.pr === 16 && gOut?.gate === 'ruleset' && gOut?.mode === 'agent', g.stdout);
 
 // --- H: a branch ruleset exists but only forbids deletion/force-push (no
 // required_status_checks) -> the client-checks gate still refuses on red ----
@@ -339,6 +384,7 @@ const n = land(22, { FAKE_GH_RULES: 'required' });
 check('unrelated merge failure refuses (exit 1)', n.status === 1, `${n.stdout}\n${n.stderr}`);
 const nOut = parse(n.stdout);
 check('unrelated merge failure reports { error } with gh\'s own message', typeof nOut?.error === 'string' && /unrelated merge failure/.test(nOut.error), n.stdout);
+check('unrelated merge failure names its pr, gate and mode alongside the error', nOut?.pr === 22 && nOut?.gate === 'ruleset' && nOut?.mode === 'agent', n.stdout);
 const nLines = n.log.trim().split('\n').filter(Boolean);
 const nMerges = nLines.filter((l) => l.startsWith('pr merge'));
 check('unrelated merge failure: only the one --auto call, never a second merge call', nMerges.length === 1 && nMerges[0] === `pr merge 22 --squash --auto --match-head-commit ${headOid(22)}`, n.log);
@@ -394,6 +440,17 @@ check('mode: docs is exempt from the marker read as well (no comments call)', !/
 // the one naming its current head, and still merges ------------------------
 check('newest marker wins over an older, stale one', fOut?.merged === 15, f.stdout);
 check('the marker read happens, and before any merge call', f.log.includes('pr view 15 --json comments') && f.log.indexOf('pr view 15 --json comments') < f.log.indexOf('pr merge 15'), f.log);
+
+// The other direction, and the one the rule is *for*: PR 36 carries the marker
+// naming its head first and a stale marker after it. "The newest marker wins"
+// is only a rule if it can refuse — an implementation that accepts any marker
+// equal to the head merges this one.
+const t2 = land(36, { FAKE_GH_RULES: 'required' });
+check('a stale marker written after the head marker refuses (exit 1)', t2.status === 1, `${t2.stdout}\n${t2.stderr}`);
+const t2Out = parse(t2.stdout);
+check('a newest-marker-is-stale PR reports missing: [head:changed], mode agent', JSON.stringify(t2Out?.missing) === JSON.stringify(['head:changed']) && t2Out?.mode === 'agent', t2.stdout);
+check('a newest-marker-is-stale PR never invoked gh pr merge', !/pr merge/.test(t2.log), t2.log);
+check('a newest-marker-is-stale PR names the stale commit it read, not the head', /1111111111111111111111111111111111111111/.test(String(t2Out?.refused)), t2.stdout);
 
 // --- U: `--require-review` selects mode 'approved' -> the label and the
 // marker are no longer enough; the refusal says what the mode costs --------
@@ -501,6 +558,10 @@ check('unreadable rules names gh-rules, mode null, and never merges', JSON.strin
 // --- AF: usage --------------------------------------------------------------
 const af = land(15, { FAKE_GH_RULES: 'required' }, ['--merge-now']);
 check('an unknown flag is a usage error, not a mode', af.status === 1 && typeof parse(af.stdout)?.error === 'string' && !/pr merge/.test(af.log), `${af.stdout}\n${af.log}`);
+// #238 AC2: usage is the one output that runs before a mode can be read, so it
+// says so with `mode: null` rather than by leaving the key out.
+const afOut = parse(af.stdout);
+check('the usage error names mode: null, the key present and empty', afOut !== null && Object.hasOwn(afOut, 'mode') && afOut.mode === null, af.stdout);
 
 // --- AG-AL: --wait returns only once the pull request is merged (#260) ------
 // The wait is bounded by --timeout and polls every POLL_INTERVAL_SECONDS or a
@@ -567,5 +628,55 @@ check('--timeout 0 is a usage error: an unbounded wait is not one of the options
 const ap = land(15, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', 'soon']);
 check('a non-numeric --timeout is a usage error', ap.status === 1 && typeof parse(ap.stdout)?.error === 'string' && !/pr merge/.test(ap.log), `${ap.stdout}\n${ap.log}`);
 check('the usage line names --wait and --timeout', /--wait/.test(String(parse(am.stdout)?.error)) && /--timeout/.test(String(parse(am.stdout)?.error)), am.stdout);
+
+// --- AQ: a `gh pr view` that answers without a headRefOid (#238 AC3). The
+// read succeeded, so nothing failed closed on its own — but there is no oid to
+// pin `--match-head-commit` to and none to compare a marker against, which is
+// the same thing as not having read the pull request at all ----------------
+const aq = land(37, { FAKE_GH_RULES: 'required' });
+check('a PR view with no headRefOid refuses (exit 1)', aq.status === 1, `${aq.stdout}\n${aq.stderr}`);
+const aqOut = parse(aq.stdout);
+check('a PR view with no headRefOid names missing: [gh-pr-view] and mode null', JSON.stringify(aqOut?.missing) === JSON.stringify(['gh-pr-view']) && aqOut?.mode === null, aq.stdout);
+check('a PR view with no headRefOid never invoked gh pr merge', !/pr merge/.test(aq.log), aq.log);
+check('a PR view with no headRefOid read nothing further either', !/--json comments/.test(aq.log) && !/pr checks/.test(aq.log), aq.log);
+
+// --- AR: mode `approved` and a stale server-side review (#238 AC1). Everything
+// mode `agent` asks for is in place — the label, and a marker equal to the head
+// — and `reviewDecision` is APPROVED, because GitHub does not dismiss a stale
+// approval unless the repository raised `dismiss_stale_reviews_on_push`. What
+// the server carries is the commit the review was *cast against*, and it is not
+// this head -------------------------------------------------------------------
+const ar = land(38, { FAKE_GH_RULES: 'required' }, ['--require-review']);
+check('approved mode with a stale server review refuses (exit 1)', ar.status === 1, `${ar.stdout}\n${ar.stderr}`);
+const arOut = parse(ar.stdout);
+check('a stale server review names missing: [head:changed] and mode approved', JSON.stringify(arOut?.missing) === JSON.stringify(['head:changed']) && arOut?.mode === 'approved', ar.stdout);
+check('a stale server review never invoked gh pr merge', !/pr merge/.test(ar.log), ar.log);
+check('a stale server review was read from gh pr view --json reviews', /pr view 38 --json reviews/.test(ar.log), ar.log);
+check('a stale server review names the commit it was cast against', /1111111111111111111111111111111111111111/.test(String(arOut?.refused)), ar.stdout);
+
+// --- AT: the reviews read itself cannot answer -> fail closed with its own
+// code, exactly as the comments read does (invariant 3) ---------------------
+const at = land(39, { FAKE_GH_RULES: 'required' }, ['--require-review']);
+check('an unreadable reviews read refuses (exit 1)', at.status === 1, `${at.stdout}\n${at.stderr}`);
+const atOut = parse(at.stdout);
+check('an unreadable reviews read names missing: [gh-pr-reviews] and mode approved', JSON.stringify(atOut?.missing) === JSON.stringify(['gh-pr-reviews']) && atOut?.mode === 'approved', at.stdout);
+check('an unreadable reviews read never invoked gh pr merge', !/pr merge/.test(at.log), at.log);
+
+// --- AU: mode `agent` reads no server review at all: there is no
+// PullRequestReview to read a commit off when the reviewer casts nothing -----
+check('mode agent never reads gh pr view --json reviews', !/--json reviews/.test(f.log), f.log);
+check('mode docs never reads gh pr view --json reviews', !/--json reviews/.test(c.log), c.log);
+check('mode approved does read it, on the path that merges', /pr view 27 --json reviews/.test(x.log), x.log);
+
+// --- AV: the #78 retry fails too -> { error } names the mode that ran (#238
+// AC2). Both merge calls are spent and nothing was merged, so this line is all
+// the operator gets ----------------------------------------------------------
+const av = land(44, { FAKE_GH_RULES: 'required' });
+check('a failed clean-status retry exits 1', av.status === 1, `${av.stdout}\n${av.stderr}`);
+const avOut = parse(av.stdout);
+check('a failed retry reports { error } with the retry\'s own message', typeof avOut?.error === 'string' && /plain retry failed too/.test(String(avOut?.error)), av.stdout);
+check('a failed retry names its pr, gate and mode alongside the error', avOut?.pr === 44 && avOut?.gate === 'ruleset' && avOut?.mode === 'agent', av.stdout);
+const avMerges = av.log.trim().split('\n').filter((l) => l.startsWith('pr merge'));
+check('a failed retry made exactly the two merge calls and stopped', avMerges.length === 2, av.log);
 
 finish();
