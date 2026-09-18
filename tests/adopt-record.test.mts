@@ -25,7 +25,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
 
 /** The record's name, as `docs/adopt.md` and `docs/decisions.md` item 15 name it. */
@@ -437,6 +437,10 @@ if (IS_ROOT) {
 const RECORD_REL = join('scripts', 'lib', 'adopt', 'record.mts');
 const RECORD_SRC = readFileSync(join(ROOT, RECORD_REL), 'utf8');
 
+/** The fixture #339 names for the comment-stripper: its line 81 builds a glob. */
+const PR_REL = join('scripts', 'lib', 'adopt', 'pr.mts');
+const PR_SRC = readFileSync(join(ROOT, PR_REL), 'utf8');
+
 /**
  * A file's code, with its block and line comments removed. A prose mention
  * is not a caller — this very case names `LABELS_SOURCE` in the paragraph
@@ -444,6 +448,9 @@ const RECORD_SRC = readFileSync(join(ROOT, RECORD_REL), 'utf8');
  * to catch.
  */
 const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+/** How many times one name appears as a whole word in a text. */
+const occurrences = (text: string, name: string): number => (text.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length;
 
 /** Every name `record.mts` exports: a const, a function, a class or a type. */
 const EXPORTED = [...RECORD_SRC.matchAll(/^export (?:const|function|class|type|interface) (\w+)/gm)].map((m) => m[1] ?? '');
@@ -463,18 +470,78 @@ function sources(dir: string): string[] {
   });
 }
 
-const CALLERS = ['hooks', 'ci', 'scripts', 'tests', join('.agents', 'skills')]
+/** Whether one file's text counts as a caller of one export of `record.mts`. */
+const isCaller = (text: string, name: string): boolean => new RegExp(`\\b${name}\\b`).test(text);
+
+/** Every file the caller side walks, with the path its text came from. */
+const CALLER_FILES = ['hooks', 'ci', 'scripts', 'tests', join('.agents', 'skills')]
   .flatMap((dir) => sources(join(ROOT, dir)))
   .filter((path) => path !== join(ROOT, RECORD_REL))
-  .map((path) => code(readFileSync(path, 'utf8')));
+  .map((path) => ({ rel: path.slice(ROOT.length + 1), text: code(readFileSync(path, 'utf8')) }));
 
-const orphans = EXPORTED.filter((name) => !CALLERS.some((text) => new RegExp(`\\b${name}\\b`).test(text)));
+/** The files that count as callers of one export, by path relative to the root. */
+const callersOf = (name: string): string[] => CALLER_FILES.filter((file) => isCaller(file.text, name)).map((file) => file.rel);
+
+const orphans = EXPORTED.filter((name) => callersOf(name).length === 0);
 check('record.mts exports something at all (the walk found the file)', EXPORTED.length > 0, RECORD_REL);
-check('the caller walk found the rest of the tree', CALLERS.length > 10, `${CALLERS.length} source files read`);
+check('the caller walk found the rest of the tree', CALLER_FILES.length > 10, `${CALLER_FILES.length} source files read`);
 check(
-  'every export of record.mts is named somewhere outside it',
+  'every export of record.mts is read outside it',
   orphans.length === 0,
   `exported and never read: ${orphans.join(', ')}`,
+);
+
+// The pin says "has a caller", so it must be able to tell a caller from a
+// mention (#339). A name spelled in a string, a comment or a re-declaration
+// is not a call, and the test tree is not the caller side at all: this file
+// re-declares `RECORD_FILE` and `GENERATED_BY` as literals by design (see
+// the header), so counting it would let either name pass with zero importers
+// anywhere in the tree.
+check(
+  'a re-declaration of an export is not a caller',
+  !isCaller("const RECORD_FILE = 'agentic.config.json';", 'RECORD_FILE'),
+  'a literal that re-declares the name counts as a caller',
+);
+check(
+  'an import of an export is a caller',
+  isCaller("import { RECORD_FILE } from './record.mts';", 'RECORD_FILE'),
+  'an import of the name does not count as a caller',
+);
+const fromTests = EXPORTED.flatMap((name) =>
+  callersOf(name)
+    .filter((rel) => rel.startsWith(`tests${sep}`))
+    .map((rel) => `${name} <- ${rel}`),
+);
+check(
+  'no file under tests/ stands in as a caller of an export',
+  fromTests.length === 0,
+  `counted as callers: ${fromTests.join(', ')}`,
+);
+
+// And it must read code as code (#339). `scripts/lib/adopt/pr.mts:81` builds
+// `${WORKFLOW_DIR}/**` as a template literal; reading that `/*` as a comment
+// opener swallows 238 characters over lines 81-87, one of that file's two
+// `PROOF_DIR` occurrences with them.
+check(
+  'the stripper leaves a glob inside a template literal alone',
+  occurrences(code(PR_SRC), 'PROOF_DIR') === occurrences(PR_SRC, 'PROOF_DIR'),
+  `${PR_REL}: ${occurrences(PR_SRC, 'PROOF_DIR')} PROOF_DIR occurrences, ${occurrences(code(PR_SRC), 'PROOF_DIR')} survive the stripper`,
+);
+const GLOB_FIXTURE = 'const glob = `${DIR}/**`;\nconst kept = PROOF_DIR;\n/** and a real docstring below it */';
+check(
+  'a /* inside a template literal does not open a comment',
+  occurrences(code(GLOB_FIXTURE), 'PROOF_DIR') === 1,
+  `the glob opens a comment that runs to the next real */: ${occurrences(code(GLOB_FIXTURE), 'PROOF_DIR')} of 1 occurrence left`,
+);
+check(
+  'a real block comment is still stripped',
+  occurrences(code('/* PROOF_DIR */ const kept = 1;'), 'PROOF_DIR') === 0,
+  'a block comment survives the stripper',
+);
+check(
+  'a real line comment is still stripped',
+  occurrences(code('// PROOF_DIR\nconst kept = 1;'), 'PROOF_DIR') === 0,
+  'a line comment survives the stripper',
 );
 
 // --- N: the one export #233 could not withdraw says why it stays (#326) -----
@@ -518,6 +585,21 @@ function importedFromRecord(text: string): string[] {
     .map((name) => name.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0]?.trim() ?? '')
     .filter((name) => name.length > 0);
 }
+
+// The same defect class as section M's, on the side that matters here: a
+// real caller this reader misses is a false pass, not a false orphan (#339).
+// Only a brace import with a single-quoted specifier was read, so an
+// `import * as` or a double-quoted specifier reported a caller as none.
+check(
+  'a double-quoted specifier is read as an import of record.mts',
+  importedFromRecord('import { PROOF_DIR } from "./record.mts";').includes('PROOF_DIR'),
+  `read: ${importedFromRecord('import { PROOF_DIR } from "./record.mts";').join(', ') || 'nothing'}`,
+);
+check(
+  'a namespace import of record.mts is read as an import of what it reads',
+  importedFromRecord("import * as record from './record.mts';\nconst dir = record.PROOF_DIR;").includes('PROOF_DIR'),
+  `read: ${importedFromRecord("import * as record from './record.mts';\nconst dir = record.PROOF_DIR;").join(', ') || 'nothing'}`,
+);
 
 /**
  * Every module of the tree that imports `PROOF_DIR` from a `record.mts`, by
