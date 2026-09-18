@@ -1,10 +1,11 @@
 // Parses the `## Files` sections of an issue and a PR body, and checks a
 // list of changed files against them. See docs/workflow.md, "Issue" and
-// "PR": only bullet lines count as the issue's globs; only `authorised:`
-// lines grant anything, and only in the **issue** body (#155 — the
-// implementer writes the PR body, so a grant there would be a self-grant);
-// only backtick-quoted spans are globs when any are present, otherwise the
-// first whitespace-delimited token is.
+// "PR": only bullet lines count as the issue's globs, and a bullet whose
+// content starts `authorised:` is a grant rather than one of them (#231);
+// only `authorised:` lines grant anything, and only in the **issue** body
+// (#155 — the implementer writes the PR body, so a grant there would be a
+// self-grant); only backtick-quoted spans are globs when any are present,
+// otherwise the first whitespace-delimited token is.
 import { matchesAny } from './globs.mts';
 
 /**
@@ -38,8 +39,24 @@ function backticked(text: string): string[] {
 }
 
 /**
+ * The text after `authorised:` on a line, bullet marker stripped — `null`
+ * when the line is not a grant, `''` when it grants nothing. The single
+ * recogniser every parser below shares, so which line is a grant is decided
+ * in one place instead of by two regexes that happen to agree (#231).
+ */
+function grantRemainder(rawLine: string): string | null {
+  const line = rawLine.trim().replace(/^[-*]\s+/, '');
+  const m = line.match(/^authorised:\s*(.*)$/i);
+  return m ? m[1] : null;
+}
+
+/**
  * One or more globs per bullet line, backticked or bare, comma-separated.
- * Prose lines (no leading `-`/`*`) are ignored.
+ * Prose lines (no leading `-`/`*`) are ignored, and so is a bullet that is
+ * a grant: `authorisedGlobsIn` reads that line, and reading it here too
+ * would put the granted path in `issueGlobs` as well — a second, unaudited
+ * route to the same widening, and one `ci/issue-lint.mts` (which reads this
+ * parser alone) cannot tell from real scope (#231).
  */
 export function parseIssueGlobs(issueBody: string): string[] {
   const section = extractSection(issueBody, 'Files');
@@ -48,6 +65,7 @@ export function parseIssueGlobs(issueBody: string): string[] {
   for (const raw of section.split(/\r?\n/)) {
     const bullet = raw.trim().match(/^[-*]\s+(.*)$/);
     if (!bullet) continue;
+    if (grantRemainder(raw) !== null) continue;
     const quoted = backticked(bullet[1]);
     if (quoted.length) {
       globs.push(...quoted);
@@ -61,25 +79,27 @@ export function parseIssueGlobs(issueBody: string): string[] {
 /**
  * The globs granted by `authorised:` lines (bullet or bare) in a body's
  * `## Files` section; every other line there is prose. One glob per line
- * (invariant 5): trailing prose is ignored when the glob is backticked,
- * otherwise the first whitespace-delimited token wins. Shared by the issue
- * and PR parsers below so the two read a grant identically — what differs
- * is only whose body is allowed to carry one.
+ * (invariant 5): *every* backticked span on the line is taken when there is
+ * at least one — so a same-line justification must carry no backticks of its
+ * own — otherwise the first whitespace-delimited token wins, trailing `,`/`;`
+ * stripped, and the rest of the line is ignored. A bare comma list therefore
+ * grants its first entry and nothing else. Shared by the issue and PR parsers
+ * below so the two read a grant identically — what differs is only whose body
+ * is allowed to carry one.
  */
 function authorisedGlobsIn(body: string): string[] {
   const section = extractSection(body, 'Files');
   if (section === null) return [];
   const globs: string[] = [];
   for (const raw of section.split(/\r?\n/)) {
-    const line = raw.trim().replace(/^[-*]\s+/, '');
-    const m = line.match(/^authorised:\s*(.*)$/i);
-    if (!m || !m[1].trim()) continue;
-    const quoted = backticked(m[1]);
+    const remainder = grantRemainder(raw);
+    if (remainder === null || !remainder.trim()) continue;
+    const quoted = backticked(remainder);
     if (quoted.length) {
       globs.push(...quoted);
       continue;
     }
-    const bare = m[1].trim().split(/\s+/)[0]?.replace(/[,;]+$/, '');
+    const bare = remainder.trim().split(/\s+/)[0]?.replace(/[,;]+$/, '');
     if (bare) globs.push(bare);
   }
   return globs;
@@ -90,8 +110,9 @@ function authorisedGlobsIn(body: string): string[] {
  * the `## Files` section of an issue the PR closes. The orchestrator writes
  * the issue at dispatch and the implementer has no reason to edit it, so a
  * grant here cannot be a self-grant (#155). A bare (non-bullet) line is
- * accepted too — `parseIssueGlobs` reads bullets only, so the two parsers
- * never disagree about which line is a grant.
+ * accepted too, and a bullet one is read here alone: both parsers ask
+ * `grantRemainder`, so the answer to "is this line a grant" is one answer,
+ * not two that have to agree (#231).
  */
 export function parseIssueAuthorisedGlobs(issueBody: string): string[] {
   return authorisedGlobsIn(issueBody);
@@ -120,8 +141,7 @@ export function findMisplacedAuthorisedLines(prBody: string): string[] {
   const misplaced: string[] = [];
   lines.forEach((raw, i) => {
     if (range !== null && i >= range.start && i < range.end) return;
-    const line = raw.trim().replace(/^[-*]\s+/, '');
-    if (/^authorised:\s*\S/i.test(line)) misplaced.push(line);
+    if (grantRemainder(raw)?.trim()) misplaced.push(raw.trim().replace(/^[-*]\s+/, ''));
   });
   return misplaced;
 }
