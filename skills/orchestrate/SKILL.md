@@ -75,18 +75,27 @@ left by the last one, for an offline check against the last fetch. Fields:
   whatever their `state:`. Never dispatch these; a person decides, records the decision
   in a comment, flips the label to `human:decided` and sets the next `state:` (see
   "Resume after a person decides"). `human:decided` issues are not listed here.
-- `inProgress` — `{ number, branch, hasRemoteBranch, pr }`: `state:in-progress` issues
-  that are not `resumable` (below) — an open PR, a branch checked out in a *live* local
-  worktree of this checkout (an agent of this checkout may be alive — a worktree in
-  `deadWorktrees` does not count), or no remote branch at all. `pr` is the open PR's
-  number on that branch, or `null`.
+- `inProgress` — `{ number, branch, hasRemoteBranch, foreignLock, pr }`:
+  `state:in-progress` issues that are not `resumable` (below), for one of four reasons —
+  an open PR; a branch checked out in a *live* local worktree of this checkout (an agent
+  of this checkout may be alive — a worktree in `deadWorktrees` does not count); no remote
+  branch at all; or a branch that is the other route's `codex/task-<n>` lock. That fourth
+  reason is `foreignLock: true`, and it is where such an issue belongs, not a misfiling:
+  it stays here whether or not it has a pull request yet, because round N+1 is dispatched
+  *without* a claim (step 3). Report it and leave it to the coordinator that owns it — do
+  not claim it, do not dispatch an implementer to it, do not push to that branch and do
+  not wait on it. `pr` is the open PR's number on that branch, or `null`; on a
+  `foreignLock: true` entry that number is the *other route's* pull request, never one to
+  review or `land` from here.
 - `resumable` — `{ number, branch, commitsAheadOfMain }`: `state:in-progress` issues with
-  a remote branch, no open PR, and no *live* local worktree checked out on that branch
-  (a worktree in `deadWorktrees` does not count as a checkout). A fresh orchestrator
-  session has no live agents by definition, so this is not "an implementer is working
-  right now" — it is round N+1 of that issue, resumed from `origin/<branch>` (skill
-  `safe-worktree` §C). `commitsAheadOfMain` is `0` when the previous implementer never
-  pushed past the lock branch's starting point.
+  a remote branch **of this route's own `<type>/<n>-<slug>` shape**, no open PR, and no
+  *live* local worktree checked out on that branch (a worktree in `deadWorktrees` does not
+  count as a checkout). A `codex/task-<n>` branch is never listed here — it stays in
+  `inProgress` with `foreignLock: true`, above. A fresh orchestrator session has no live
+  agents by definition, so this is not "an implementer is working right now" — it is round
+  N+1 of that issue, resumed from `origin/<branch>` (skill `safe-worktree` §C).
+  `commitsAheadOfMain` is `0` when the previous implementer never pushed past the lock
+  branch's starting point.
 - `inReview` — `{ number, pr, checks, reviewApproved, foreignLock }`: `state:in-review`
   issues. `foreignLock: true` means the pull request belongs to the Codex route, which
   labels its own tasks `state:in-review` too: report it, do not review it, do not `land`

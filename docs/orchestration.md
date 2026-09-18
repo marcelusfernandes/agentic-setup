@@ -57,7 +57,9 @@ Two roles:
    `implementer` in its own worktree with the whole issue in the prompt; a `resumable`
    issue skips `claim.mts` — the lock is already held — and launches straight to an
    implementer as round N+1 from origin/<branch>
-4. PR opened → launch a `reviewer` (read-only), wait for it. The reviewer returns the JSON
+4. PR opened → launch a `reviewer` (read-only), wait for it, for pull requests this route
+   opened only: an `inReview` entry with `foreignLock: true` is the other route's, so it is
+   neither labelled nor reviewed nor landed here. The reviewer returns the JSON
    verdict; it no longer comments on the PR or touches its labels (that moved here, to the
    orchestrator, in step 5) — read `agents/reviewer.md`. Check CI with `gh pr checks <n>`
 5. on the verdict: comment it on the PR and apply the labels yourself — `approved` →
