@@ -64,8 +64,14 @@ that branch and **never creates or renames one**.
 ```bash
 gh pr create --base main --head "$type/$n-$slug" --title "$type($scope): <imperative>" \
   --body-file pr.md --label state:in-review
-gh issue edit $n --add-label state:in-review --remove-label state:in-progress
 ```
+
+That is the whole of it: the implementer never touches the issue. `gh issue edit` is
+denied from inside a worktree by `hooks/protect-main.mts` (#237) — the issue body carries
+the `## Files` globs and any `authorised:` line that widens them, so a session editing the
+issue it is implementing could grant itself scope. The **orchestrator** moves the issue to
+`state:in-review` at its step 4, beside the `type:`/`scope:` copy below and for the same
+reason (`skills/orchestrate/SKILL.md`).
 
 `pr.md` follows `.github/pull_request_template.md`: `Closes #N` in plain text (no bold, no
 link) as the first line — `Fixes #N` and `Resolves #N` (and their close/closed, fix/fixed,

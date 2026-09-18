@@ -61,11 +61,15 @@ What is in force, as `hooks/protect-main.mts` implements it:
 - **The crash policy is unchanged: ALLOW.** A `git` that cannot say where the session is
   standing returns `false` and the call goes through (`:133`). An unreadable repository is
   not evidence of a grant, and this hook is layer three.
-- **The docs that carry it.** `docs/orchestration.md:354` (the hooks table row) names the
-  new denial, its discriminator and what stays allowed, and `docs/orchestration.md:309-315`
-  (the implementer's `Forbidden:` list) names `gh issue edit` beside the other refused
-  commands, with the remedy. Two documents state the same rule and this item is where they
-  are held to each other.
+- **The docs that carry it.** Five places state this rule and they are written to agree:
+  `docs/orchestration.md:354` (the hooks table row) names the denial, its discriminator and
+  what stays allowed; `docs/orchestration.md:309-315` (the implementer's `Forbidden:` list)
+  names `gh issue edit` beside the other refused commands, with the remedy;
+  `docs/workflow.md:177-188` states the enforcement where it already said the implementer
+  asks and stops, and `docs/workflow.md:527-533` keeps the enumeration of what this hook
+  denies complete at four items; `agents/implementer.md` and
+  `skills/issue-and-pr/SKILL.md` forbid the command and point at the orchestrator; and
+  `skills/orchestrate/SKILL.md` carries the relabel that moved.
 
 Unchanged by this item: a grant still counts only in the body of an issue the pull request
 closes and never from a pull-request body (#155); it is still read once, as a grant, and
@@ -99,27 +103,40 @@ in front of it.
 
 ## Cost accepted
 
-**An implementer can no longer relabel its own issue, and two tracked documents tell it to.**
-`agents/implementer.md:50` and `skills/issue-and-pr/SKILL.md:67` both end the implementer's
-step 7 with `gh issue edit <n> --add-label state:in-review --remove-label state:in-progress`,
-run from the worktree — and `agents/implementer.md:51-53` records why it matters: an issue
-left on `state:in-progress` under a pull request in review is listed in neither of
-`reconcile`'s buckets (measured, `docs/dogfood/2026-09-10.md`, L14). This item denies that
-command along with the grant, because the hook reads the segment's head and not its flags,
-and `--add-label` is one `--body-file` away on the same command line.
+**The implementer's closing relabel becomes the orchestrator's, and that trades an error
+that could not happen for one that can.** `agents/implementer.md` and
+`skills/issue-and-pr/SKILL.md` both ended the implementer's step 7 with
+`gh issue edit <n> --add-label state:in-review --remove-label state:in-progress`, run from
+the worktree. This item denies that command along with the grant, because the hook reads a
+segment's head and not its flags, and `--add-label` is one `--body-file` away on the same
+line. So the step moves, in this same pull request, to the orchestrator's step 4
+(`skills/orchestrate/SKILL.md`), beside the `type:`/`scope:` copy that is already there for
+the same reason — an agent that labels its own work could buy its own exemptions.
 
-The denial is deliberately the wider one. Narrowing it to the body-writing forms
+**What the move costs is a step that can now be forgotten.** The implementer could not
+finish its round without relabelling; the orchestrator can skip it and nothing fails. The
+consequence is the one that was measured: a pull request in review over an issue still on
+`state:in-progress` is listed in neither of `reconcile`'s buckets, so the issue goes quiet
+instead of loud (`docs/dogfood/2026-09-10.md`, L14 — the incident that put the step on the
+implementer's card in the first place). The orchestrate card states that cost where the
+step now lives, and names `reconcile`'s `inReview` entries against `state:in-progress`
+issues as where a miss surfaces. Nothing enforces it: this is a workflow change, not a
+mechanism, and a second hook to police the first would be the arms race this file already
+refuses. Who pays: the orchestrator, which gains a step it can drop, and whoever reads a
+milestone whose issues stopped tracking their pull requests.
+
+**The denial is deliberately the wider one.** Narrowing it to the body-writing forms
 (`--body`, `--body-file`, `-b`, `-F`) would put the rule back in the business of enumerating
 flags — the arms race the hook's header refuses for every other item — and an agent that
-reads "`gh issue edit` is denied" is told something it cannot get wrong. Who pays: the
-implementer, which now ends its round by asking the orchestrator to move the label, and the
-orchestrator, which gains one step. Moving that step to the orchestrator's step 4, where the
-`type:` and `scope:` labels are already copied onto the pull request for the same reason —
-an agent that labels its own work could buy its own exemptions — is the change the two
-documents need, and it is filed separately rather than smuggled in here, because
-`agents/implementer.md` and `skills/issue-and-pr/SKILL.md` are outside this issue's globs.
-Until that lands, an implementer's relabel is refused by a hook while two cards still ask
-for it.
+reads "`gh issue edit` is denied" is told something it cannot get wrong. Moving the one
+legitimate use is the cheaper half of that trade.
+
+**Four documents carried the old rule, and the fourth was a test.** `agents/implementer.md`,
+`skills/issue-and-pr/SKILL.md` and `docs/workflow.md:286-290` each stated it in prose, and
+`tests/doctrine.test.mts` pinned the implementer card to carry that exact command string
+under #264's AC4 — a guard that was right when the implementer owned the step and asserts
+the opposite of the contract now. All four move in this pull request. A rule fixed in three
+places and left in a fourth is how the next agent learns the old one.
 
 **This is layer three, and it is bypassable on purpose.** `bash -c 'gh issue edit …'`, a
 wrapper script, an alias, `$(…)` substitution, and above all

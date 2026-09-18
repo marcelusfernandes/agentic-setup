@@ -321,7 +321,22 @@ When an implementer returns with a PR: first copy the issue's `type:` and `scope
 onto it — `gh pr edit <pr> --add-label "type:<t>" --add-label "scope:<s>"`, the same
 `type:` you wrote on the issue at step 3. The implementer sets only `state:in-review`, so
 until you do this the PR carries no `type:`/`scope:` at all, and `scope`/`land` read the
-**PR's** labels, never the issue's. Then read the head you are about to have reviewed and
+**PR's** labels, never the issue's. **Move the issue in the same breath:**
+
+```bash
+gh issue edit <n> --add-label state:in-review --remove-label state:in-progress
+```
+
+That is yours now, not the implementer's (#237). `hooks/protect-main.mts` denies
+`gh issue edit` from inside an agent's worktree, because the issue body carries the
+`## Files` globs and any `authorised:` line that widens them, so a session editing the
+issue it is implementing could grant itself scope — the same reason the `type:`/`scope:`
+copy above is yours. **It is a step you can forget and nothing will stop you**: where the
+implementer could not finish its round without running it, nothing fails when you skip it.
+What it costs when you do — a PR in review over an issue still on `state:in-progress` is
+listed in neither of `reconcile`'s buckets, so the issue goes quiet rather than loud
+(measured: `docs/dogfood/2026-09-10.md`, L14). `reconcile`'s `inReview` entries against
+`state:in-progress` issues are where you catch a miss. Then read the head you are about to have reviewed and
 keep it — `OID="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"` — and launch the
 `reviewer` agent with the PR number and the issue body. Read the oid here, not after the
 verdict: a push that lands while the reviewer is reading must leave the marker naming the
