@@ -108,11 +108,7 @@ check('output carries the issue number', validOut?.issue === 100, valid.out);
 const missingGoal = lint(101, issueBody({ goal: null }));
 const missingGoalOut = parse(missingGoal.out);
 check('missing ## Goal fails with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
-check(
-  'missing ## Goal names the section in failures[]',
-  Array.isArray(missingGoalOut?.failures) && missingGoalOut.failures.some((f: any) => typeof f === 'string' && /## Goal/.test(f)),
-  missingGoal.out,
-);
+check('missing ## Goal names the section in failures[]', Array.isArray(missingGoalOut?.failures) && missingGoalOut.failures.some((f: any) => typeof f === 'string' && /## Goal/.test(f)), missingGoal.out);
 
 const missingContext = lint(102, issueBody({ context: null }));
 check('missing ## Context fails and names it', missingContext.status === 1 && /## Context/.test(missingContext.out), missingContext.out);
@@ -159,11 +155,7 @@ const templateProof = readFileSync(join(ROOT, '.github', 'ISSUE_TEMPLATE', 'task
   .split(/^## /m)
   .find((section) => section.startsWith('Proof'));
 const fromTemplate = lint(1067, issueBody({ proof: `## ${templateProof ?? 'Proof\nMISSING SECTION\n'}` }));
-check(
-  "the shipped task template's ## Proof section carries no armed Declaration: line",
-  fromTemplate.status === 0 && parse(fromTemplate.out)?.ok === true,
-  fromTemplate.out,
-);
+check("the shipped task template's ## Proof section carries no armed Declaration: line", fromTemplate.status === 0 && parse(fromTemplate.out)?.ok === true, fromTemplate.out);
 
 // A `Declaration:` line outside the Proof section is not this line: it must
 // not be read, and it must not fail the lint either.
@@ -212,11 +204,7 @@ check(
 // on disk is still "new", not a failure — the issue creates the directory.
 const literalNewDir = lint(108, issueBody({ files: '## Files\n- `nonexistent-dir/file.ts`\n' }));
 const literalNewDirOut = parse(literalNewDir.out);
-check(
-  'a literal path with no existing parent directory passes ("new"), not a failure',
-  literalNewDir.status === 0 && literalNewDirOut?.ok === true,
-  literalNewDir.out,
-);
+check('a literal path with no existing parent directory passes ("new"), not a failure', literalNewDir.status === 0 && literalNewDirOut?.ok === true, literalNewDir.out);
 check(
   'the literal new path is reported in globs: [{ glob, status: "new" }]',
   Array.isArray(literalNewDirOut?.globs) &&
@@ -291,11 +279,7 @@ check(
 // call "new".
 const noPrefixWildcard = lint(1083, issueBody({ files: '## Files\n- `**/*.foo`\n' }));
 const noPrefixWildcardOut = parse(noPrefixWildcard.out);
-check(
-  'a wildcard glob with no fixed prefix that matches nothing fails with ok: false',
-  noPrefixWildcard.status === 1 && noPrefixWildcardOut?.ok === false,
-  noPrefixWildcard.out,
-);
+check('a wildcard glob with no fixed prefix that matches nothing fails with ok: false', noPrefixWildcard.status === 1 && noPrefixWildcardOut?.ok === false, noPrefixWildcard.out);
 check(
   'the no-fixed-prefix failure uses the "wildcard glob matches no tracked file" wording',
   Array.isArray(noPrefixWildcardOut?.failures) &&
@@ -415,11 +399,7 @@ const cycleMilestone = milestoneFile([
 ]);
 const cycle = lint(1132, issueBody({ deps: '## Dependencies\nBlocked by: #224\n' }), { milestone: cycleMilestone });
 const cycleOut = parse(cycle.out);
-check(
-  'a Blocked-by cycle fails with ok: false instead of hanging',
-  cycle.status === 1 && cycleOut?.ok === false,
-  cycle.out,
-);
+check('a Blocked-by cycle fails with ok: false instead of hanging', cycle.status === 1 && cycleOut?.ok === false, cycle.out);
 check(
   'the cycle failure names every issue in it',
   (cycleOut?.failures ?? []).some((f: any) => typeof f === 'string' && /cycle/i.test(f) && f.includes('#1132') && f.includes('#224')),
@@ -614,6 +594,45 @@ check(
   sequencedMatchedVsNewSubOverlap.out,
 );
 
+// --- `authorised:` grants are checked like the globs (#232) ----------------
+// A grant is the one line that widens what the PR may touch, and since #231 no
+// grant of either shape reaches `parseIssueGlobs` — so the lint must read it
+// with `parseIssueAuthorisedGlobs` and hold it to AC2 (the glob resolves) and
+// AC3 (no other in-flight issue claims the file). The dead grant below is a
+// wildcard whose fixed prefix (`scripts/`) is tracked: a literal path, or a
+// prefix that exists nowhere, is "new" by the same rule the bullet globs get.
+const GRANT_FILES = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts`\n';
+const deadGrant = lint(240, issueBody({ files: '## Files\n- `tests/**`\nauthorised: scripts/nope-*.mts\n' }));
+const deadGrantOut = parse(deadGrant.out);
+check('a bare `authorised:` grant whose wildcard matches no tracked file fails', deadGrant.status === 1 && deadGrantOut?.ok === false, deadGrant.out);
+check('the dead-grant failure names the line as a grant, not as a bullet glob', (deadGrantOut?.failures ?? []).some((f: any) => typeof f === 'string' && /grant/i.test(f) && f.includes('scripts/nope-*.mts')), deadGrant.out);
+
+const liveGrant = lint(241, issueBody({ files: GRANT_FILES }));
+const liveGrantOut = parse(liveGrant.out);
+const liveGrantGlobs: any[] = liveGrantOut?.globs ?? [];
+check('a grant naming a tracked file passes and is reported in globs[]', liveGrant.status === 0 && liveGrantGlobs.some((g) => g.glob === 'scripts/reconcile.mts' && g.status === 'matched'), liveGrant.out);
+check('globs[] marks the grant as a grant and the bullet glob as not one', liveGrantGlobs.some((g) => g.glob === 'scripts/reconcile.mts' && g.grant === true) && liveGrantGlobs.some((g) => g.glob === 'tests/**' && g.grant === false), liveGrant.out);
+const liveGrantMd = lint(242, issueBody({ files: GRANT_FILES }), { markdown: true });
+check('--markdown names the granted path as a grant too', /grant/i.test(liveGrantMd.out) && liveGrantMd.out.includes('scripts/reconcile.mts'), liveGrantMd.out);
+
+// AC3: a granted file that another in-flight issue's bullet glob also covers
+// is an overlap, and so is the reverse — this issue's glob against the other
+// issue's grant. Both sides of the comparison read grants.
+const grantVsGlobMilestone = milestoneFile([{ number: 243, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n' }]);
+const grantVsGlob = lint(1240, issueBody({ files: GRANT_FILES }), { milestone: grantVsGlobMilestone });
+const grantVsGlobOut = parse(grantVsGlob.out);
+check("this issue's grant against another issue's glob is an overlap failure", grantVsGlob.status === 1 && (grantVsGlobOut?.failures ?? []).some((f: any) => f?.issue === 243 && f?.files?.includes('scripts/reconcile.mts')), grantVsGlob.out);
+
+const globVsGrantMilestone = milestoneFile([{ number: 244, labels: ['state:in-progress'], body: '## Files\n- `tests/other.test.mts`\n- authorised: `scripts/reconcile.mts`\n' }]);
+const globVsGrant = lint(1241, issueBody({ files: '## Files\n- `scripts/reconcile.mts`\n' }), { milestone: globVsGrantMilestone });
+const globVsGrantOut = parse(globVsGrant.out);
+check("another issue's grant against this issue's glob is an overlap failure too", globVsGrant.status === 1 && (globVsGrantOut?.failures ?? []).some((f: any) => f?.issue === 244 && f?.files?.includes('scripts/reconcile.mts')), globVsGrant.out);
+
+const sequencedGrantMilestone = milestoneFile([{ number: 245, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n' }]);
+const sequencedGrant = lint(1242, issueBody({ files: GRANT_FILES, deps: '## Dependencies\nBlocked by: #245\n' }), { milestone: sequencedGrantMilestone });
+const sequencedGrantOut = parse(sequencedGrant.out);
+check('a grant overlap is sequenced, not a failure, when a Blocked by: orders the two', sequencedGrant.status === 0 && sequencedGrantOut?.ok === true && (sequencedGrantOut?.sequenced ?? []).some((s: any) => s?.issue === 245 && s?.files?.includes('scripts/reconcile.mts')), sequencedGrant.out);
+
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);
@@ -639,13 +658,7 @@ const bareBlocker = lint(1170, issueBody({ deps: '## Dependencies\nBlocked by: 5
 check('"Blocked by: 5" (no #) is read as a real blocker and passes when gh finds it', bareBlocker.status === 0, bareBlocker.out);
 const bareBlockerMissing = lint(1171, issueBody({ deps: '## Dependencies\nBlocked by: 999\n' }));
 const bareBlockerMissingOut = parse(bareBlockerMissing.out);
-check(
-  '"Blocked by: 999" (no #) is still checked against gh and fails when not found',
-  bareBlockerMissing.status === 1 &&
-    bareBlockerMissingOut?.ok === false &&
-    bareBlockerMissingOut.failures.some((f: any) => typeof f === 'string' && f.includes('999')),
-  bareBlockerMissing.out,
-);
+check('"Blocked by: 999" (no #) is still checked against gh and fails when not found', bareBlockerMissing.status === 1 && bareBlockerMissingOut?.ok === false && bareBlockerMissingOut.failures.some((f: any) => typeof f === 'string' && f.includes('999')), bareBlockerMissing.out);
 
 // --- AC6: output shape, --markdown, and the { error } path ------------------
 check('a failing issue exits 1 with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
