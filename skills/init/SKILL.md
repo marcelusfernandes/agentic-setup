@@ -92,10 +92,19 @@ The script is idempotent. It:
    another message.
 
    What it writes: a `pull_request` rule with `allowed_merge_methods: ['squash']`;
-   `required_status_checks` for `scope`, `negative-control` and this repository's own test
-   workflow's job (the sole job of the sole workflow file this plugin does not own;
-   defaults to `test` when that is not unambiguous); and `non_fast_forward` and `deletion`
+   `required_status_checks` for the checks below; and `non_fast_forward` and `deletion`
    to block force-push and deletion.
+
+   Which checks those are has **one source**, not two (#302). A repository holding an
+   `agentic.config.json` gets the job names of the `agentic-checks.yml` that record renders
+   — the same list `node scripts/adopt.mts --workflows` prints — so the ruleset cannot
+   require a check the generated workflow never produces. A repository without a record has
+   nothing to render from, and the default stands: `scope`, `negative-control` and this
+   repository's own test workflow's job (the sole job of the sole workflow file this plugin
+   does not own; `test` when that is not unambiguous). Detection is a default, never a
+   contract. A record that is not the shape, or one that cannot be rendered, is reported as
+   `! ruleset: agentic.config.json could not be rendered from (…)` and falls back to that
+   same default rather than stopping the run.
 
    What it writes for the review gate: by default it turns nothing on — it resets
    `required_approving_review_count` to 0, with `dismiss_stale_reviews_on_push` and

@@ -710,24 +710,11 @@ check('an issue carrying no state at all does not authorise', decide([{ number: 
 check('an issue of another title is not a plan issue', decide([{ ...issueOf(PLAN_ISSUE, DECIDED_LABEL, 'OPEN'), title: 'something else' }])?.ok === false, 'other title');
 check('an empty search is no plan issue', decide([])?.ok === false, JSON.stringify(decide([])));
 
-// --- J: the documentation the acceptance criterion asks for -----------------
-const docs = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
-check('docs/adopt.md documents the --pr flag', /node scripts\/adopt\.mts --pr\b/.test(docs));
-check('docs/adopt.md documents the full sequence', ['--inventory', '--plan-issue', DECIDED_LABEL, '--pr'].every((step) => docs.includes(step)), 'sequence');
-check('docs/adopt.md says what the deliberate red test is for', /deliberate red/i.test(docs) && docs.includes('negative-control'), 'deliberate red');
-check('docs/adopt.md says adopt never merges, and names scripts/land.mts', /never merges/i.test(docs) && docs.includes('scripts/land.mts'), 'never merges');
-check('docs/adopt.md names the adoption branch and the refusal the plan issue can cause', docs.includes(BRANCH) && docs.includes('plan:not-decided'), 'branch and refusal');
-check(
-  'docs/adopt.md says which plan issue authorises when two share the title, and names the ambiguous refusal',
-  docs.includes('pr:plan-ambiguous') && /open/.test(docs.split('## `--pr`')[1] ?? ''),
-  'ambiguity',
-);
-
 // --- K: the residuals the two reviews of #167 left behind (#302) ------------
-// The two source-level cases of this group — that `--pr` is a module of its
-// own, and that every adoption `git` names its own buffer — are in
-// `tests/adopt.test.mts`, which has room for them; this file is 74 lines from
-// the cap the criterion itself names.
+// The source-level cases of this group — that `--pr` is a module of its own,
+// that every adoption `git` names its own buffer, and everything the two
+// adoption documents are held to — are in `tests/adopt.test.mts`, which has
+// room for them; this file started 74 lines from the cap #302 is about.
 //
 // K3. the two checks the adoption pull request cannot pass, stated on it the
 // way `skills/init/SKILL.md` states them for the bootstrap pull request.
@@ -737,12 +724,6 @@ check(
   /expected red on this pull request/.test(bodyReds) && bodyReds.includes('scope') && bodyReds.includes('.github/scripts/agentic/'),
   bodyReds.split('\n').filter((line) => /expected red/.test(line)).join('\n') || 'no such line',
 );
-check(
-  'docs/adopt.md says which of the generated checks cannot run on the adoption pull request',
-  docs.includes('expected red') && docs.includes('.github/scripts/agentic/'),
-  'docs expected red',
-);
-
 // K4. a question that has already been answered is not asked again.
 const answered = fixture();
 const answeredRun = adopt(['--plan-issue'], answered.repo, { FAKE_GH_PLAN: 'decided' });

@@ -396,6 +396,10 @@ if ((shellcheck.stdout ?? '').trim() === '') {
   }
 }
 
+/** The adoption branch and the label the plan issue carries once decided. */
+const BRANCH = 'chore/adopt-agentic-setup';
+const DECIDED_LABEL = 'human:decided';
+
 // --- H: one definition of the constants three files used to restate (#302) ---
 // The hook marker and the superseded deny rules lived in three places at once,
 // each comment pointing at the other two and asking that they move together.
@@ -466,5 +470,36 @@ check('and it hands back no output at all, rather than a truncated answer', over
 const gapNames = sourceOf('scripts/lib/adopt/inventory.mts').match(/const GAP_NAMES = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
 check('the inventory names the gaps at all (the source was read)', gapNames.includes('ruleset:absent'), gapNames || '(no GAP_NAMES)');
 check("the inventory's gap names include record:stale", gapNames.includes("'record:stale'"), gapNames);
+
+// --- J: what the two adoption documents are held to (moved here in #302) ---
+// The `--pr` section lives in `docs/adopt-pr.md` since #302: `docs/adopt.md`
+// stood at the 800-line cap and had no room for what these cases ask it to
+// say. The two are read together here, so a claim that moves between them
+// neither passes nor fails by accident; a case naming one file by hand is a
+// case about *that* file.
+const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
+const prDoc = readFileSync(join(ROOT, 'docs', 'adopt-pr.md'), 'utf8');
+const docs = `${adoptDoc}\n${prDoc}`;
+check('the two documents point at each other', adoptDoc.includes('docs/adopt-pr.md') && prDoc.includes('docs/adopt.md'), 'no pointer');
+check(
+  'and each sits below the 800-line cap the split exists for',
+  [adoptDoc, prDoc].every((text) => text.split('\n').length <= 800),
+  [adoptDoc, prDoc].map((text) => text.split('\n').length).join(' | '),
+);
+check('the documentation documents the --pr flag', /node scripts\/adopt\.mts --pr\b/.test(docs));
+check('the documentation documents the full sequence', ['--inventory', '--plan-issue', DECIDED_LABEL, '--pr'].every((step) => docs.includes(step)), 'sequence');
+check('the documentation says what the deliberate red test is for', /deliberate red/i.test(docs) && docs.includes('negative-control'), 'deliberate red');
+check('the documentation says adopt never merges, and names scripts/land.mts', /never merges/i.test(docs) && docs.includes('scripts/land.mts'), 'never merges');
+check('the documentation names the adoption branch and the refusal the plan issue can cause', docs.includes(BRANCH) && docs.includes('plan:not-decided'), 'branch and refusal');
+check(
+  'the documentation says which of the generated checks cannot run on the adoption pull request',
+  prDoc.includes('expected red') && prDoc.includes('.github/scripts/agentic/'),
+  'docs expected red',
+);
+check(
+  'the documentation says which plan issue authorises when two share the title, and names the ambiguous refusal',
+  docs.includes('pr:plan-ambiguous') && /open/.test(prDoc.split('### Which plan issue authorises')[1] ?? ''),
+  'ambiguity',
+);
 
 finish();
