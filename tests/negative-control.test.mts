@@ -37,9 +37,11 @@ let r = nc(head);
 check('negative-control passes when the new test fails on the base', r.status === 0 && /\bpass\b/.test(r.out) && !/warning:/.test(r.out), r.out);
 
 // --- the skip is by path class, not by the PR's own `type:` label ----------
-// A diff that is entirely docs, workflows, templates or root Markdown owes
-// no negative control; a `type:` label alone no longer buys the exemption,
-// because the implementer applies its own PR's labels.
+// A diff entirely inside the skipped classes — docs, workflows, templates,
+// session configuration and Markdown anywhere in the tree — owes no negative
+// control; a `type:` label alone no longer buys the exemption, because the
+// implementer applies its own PR's labels. This case covers four of them;
+// the nested Markdown and `.claude/**` classes have cases of their own below.
 git(['checkout', '-q', '-b', 'docs/4-docs-only', base], repo);
 const docsHead = commit(repo, {
   'docs/guide.md': '# guide\n',
@@ -401,9 +403,13 @@ const noTestsKeyHead = declaringBranch('feat/20-no-tests-key', 'no-tests-key', 1
   command: 'node checks/pin.mts',
 });
 r = declRun('feat/20-no-tests-key', noTestsKeyHead);
+// The cause sentence, not the bare word: `tests` and `command` both occur in
+// these declarations' own slugs, so pinning either one alone would pass on
+// any `cannot-run` at all and discriminate nothing.
 check(
-  'a declaration with no `tests` array is cannot-run',
-  r.status === 1 && /cannot-run/.test(r.out) && /proof\/no-tests-key\.json/.test(r.out) && /tests/.test(r.out),
+  'a declaration with no `tests` array is cannot-run, and says that is why',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/no-tests-key\.json/.test(r.out)
+    && /has no `"tests"` array of file paths/.test(r.out),
   r.out,
 );
 
@@ -413,8 +419,9 @@ const badCommandHead = declaringBranch('feat/21-bad-command', 'bad-command', 13,
 });
 r = declRun('feat/21-bad-command', badCommandHead);
 check(
-  'a declaration whose `command` is not a non-empty string is cannot-run',
-  r.status === 1 && /cannot-run/.test(r.out) && /proof\/bad-command\.json/.test(r.out) && /command/.test(r.out),
+  'a declaration whose `command` is not a non-empty string is cannot-run, and says that is why',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/bad-command\.json/.test(r.out)
+    && /has a `"command"` that is not a non-empty string/.test(r.out),
   r.out,
 );
 
