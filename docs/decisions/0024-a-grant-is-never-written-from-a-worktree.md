@@ -115,12 +115,14 @@ the same reason — an agent that labels its own work could buy its own exemptio
 
 **What the move costs is a step that can now be forgotten.** The implementer could not
 finish its round without relabelling; the orchestrator can skip it and nothing fails. The
-consequence is the one that was measured: a pull request in review over an issue still on
-`state:in-progress` is listed in neither of `reconcile`'s buckets, so the issue goes quiet
-instead of loud (`docs/dogfood/2026-09-10.md`, L14 — the incident that put the step on the
-implementer's card in the first place). The orchestrate card states that cost where the
-step now lives, and names `reconcile`'s `inReview` entries against `state:in-progress`
-issues as where a miss surfaces. Nothing enforces it: this is a workflow change, not a
+consequence is the one that was measured: `reconcile`'s `inReview` bucket is filtered on the
+issue's own `state:in-review` label (`scripts/reconcile.mts:715`), so an issue nobody moved
+is missing from the bucket the orchestrator works from, and `stale` does not catch it either
+because that wants no pull request and no remote branch (`:731-733`). The pull request goes
+quiet instead of loud (`docs/dogfood/2026-09-10.md`, L14 — the incident that put the step on
+the implementer's card in the first place). It is not invisible: it surfaces as an
+`inProgress` entry carrying a `pr` with `foreignLock: false`, and the orchestrate card names
+that signature where the step now lives. Nothing enforces it: this is a workflow change, not a
 mechanism, and a second hook to police the first would be the arms race this file already
 refuses. Who pays: the orchestrator, which gains a step it can drop, and whoever reads a
 milestone whose issues stopped tracking their pull requests.

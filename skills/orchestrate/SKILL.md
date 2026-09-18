@@ -333,10 +333,14 @@ That is yours now, not the implementer's (#237). `hooks/protect-main.mts` denies
 issue it is implementing could grant itself scope — the same reason the `type:`/`scope:`
 copy above is yours. **It is a step you can forget and nothing will stop you**: where the
 implementer could not finish its round without running it, nothing fails when you skip it.
-What it costs when you do — a PR in review over an issue still on `state:in-progress` is
-listed in neither of `reconcile`'s buckets, so the issue goes quiet rather than loud
-(measured: `docs/dogfood/2026-09-10.md`, L14). `reconcile`'s `inReview` entries against
-`state:in-progress` issues are where you catch a miss. Then read the head you are about to have reviewed and
+What it costs when you do: `inReview` is filtered on the issue's own `state:in-review`
+label (`scripts/reconcile.mts:715`), so an issue you did not move is absent from the bucket
+you work from, and `stale` never picks it up either — that wants no PR and no remote branch
+(`:731-733`). The pull request goes quiet rather than loud, which is what L14 measured
+(`docs/dogfood/2026-09-10.md`). Where it *does* show is `inProgress`: an entry whose `pr`
+is not `null` and whose `foreignLock` is `false` is an issue still in progress under an
+open pull request of this route's own — that is the signature of a relabel nobody made, and
+step 0 is where you read it. Then read the head you are about to have reviewed and
 keep it — `OID="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"` — and launch the
 `reviewer` agent with the PR number and the issue body. Read the oid here, not after the
 verdict: a push that lands while the reviewer is reading must leave the marker naming the
