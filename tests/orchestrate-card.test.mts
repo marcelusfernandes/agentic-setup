@@ -95,8 +95,26 @@ function section(heading: string): string {
 
 const reconcileStep = section('## 0. Reconcile from GitHub');
 const decide = section('## 5. Decide');
-check('SKILL.md step 0 is a section bounded by the next heading', reconcileStep.length > 0 && reconcileStep.length < card.length);
-check('SKILL.md step 5 is a section bounded by the next heading', decide.length > 0 && decide.length < card.length);
+// These two pin the bound itself: the slice starts at its own `## ` heading and stops
+// before the next one, so no sentence from a later step can satisfy a case below. A
+// length comparison would not catch a widened slice — a slice running to the end of the
+// file is still shorter than the card — so each case names the heading that must not
+// appear in it. A missing heading returns '' and fails `startsWith` here as well as every
+// content case below.
+check(
+  'SKILL.md step 0 stops before the next `## ` heading — `## 1. Candidates` is not in the slice',
+  reconcileStep.startsWith('## 0. Reconcile from GitHub') &&
+    !reconcileStep.includes('\n## ') &&
+    !reconcileStep.includes('## 1. Candidates'),
+  reconcileStep.slice(-300),
+);
+check(
+  'SKILL.md step 5 stops before the next `## ` heading — `## 6. Close the milestone` is not in the slice',
+  decide.startsWith('## 5. Decide') &&
+    !decide.includes('\n## ') &&
+    !decide.includes('## 6. Close the milestone'),
+  decide.slice(-300),
+);
 
 // AC1 (L5): a label edit re-triggers agentic-checks, so the labels go on before the push
 // that starts the round, not after it.
@@ -124,15 +142,25 @@ check(
   reconcileStep.slice(0, 600),
 );
 
-// AC3 (L22): the post-merge step names the exact command, and why the bare form fails.
+// AC3 (L22): the post-merge step names the exact command, and the condition under which a
+// `--ff-only` pull refuses — more than one merge head. Reproduced on git 2.50.1 against a
+// bare origin with two branches: `git pull --ff-only origin main other` and a bare
+// `git pull --ff-only` whose `branch.main.merge` held two refs both exit 128 with
+// `Cannot fast-forward to multiple branches`, while `git pull -q --ff-only origin main`
+// exits 0 and fast-forwards with or without a preceding fetch.
 check(
   'SKILL.md step 5 names the exact post-merge pull command',
   decide.includes('git fetch origin && git pull --ff-only origin main'),
   decide.slice(0, 600),
 );
 check(
-  'SKILL.md step 5 says why the bare pull fails on a checkout tracking more than one branch',
+  'SKILL.md step 5 says when a --ff-only pull refuses, with the message git prints',
   /Cannot fast-forward to multiple branches/.test(decide) && /more than one branch/i.test(decide),
+  decide.slice(0, 600),
+);
+check(
+  'SKILL.md step 5 names more than one merge head as the trigger, not a checkout tracking more than one branch',
+  /merge head/i.test(decide) && !/checkout that tracks more than one branch/i.test(decide),
   decide.slice(0, 600),
 );
 
