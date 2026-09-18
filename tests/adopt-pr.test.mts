@@ -711,18 +711,42 @@ check('an issue of another title is not a plan issue', decide([{ ...issueOf(PLAN
 check('an empty search is no plan issue', decide([])?.ok === false, JSON.stringify(decide([])));
 
 // --- K: the residuals the two reviews of #167 left behind (#302) ------------
-// The source-level cases of this group — that `--pr` is a module of its own,
-// that every adoption `git` names its own buffer, and everything the two
-// adoption documents are held to — are in `tests/adopt.test.mts`, which has
-// room for them; this file started 74 lines from the cap #302 is about.
+// The source-level cases of this group — the lifted module, the git buffer and
+// what the two adoption documents are held to — are in `tests/adopt.test.mts`,
+// which has room for them; this file started 74 lines from the 800-line cap.
 //
 // K3. the two checks the adoption pull request cannot pass, stated on it the
 // way `skills/init/SKILL.md` states them for the bootstrap pull request.
-const bodyReds = mod && p ? mod.renderBody(p, { issue: PLAN_ISSUE, defaultBranch: 'main', record: recordValue }) : '';
+// The body is hard-wrapped, so it is read unwrapped and the whole clause is
+// asserted: three loose substrings passed over a sentence truncated mid-clause
+// ("runs the with `node …`"), which is what that reader would have got.
+const unwrap = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
+const bodyFor = (record: any): string =>
+  mod ? unwrap(mod.renderBody(plan(record, planning.repo) as Plan, { issue: PLAN_ISSUE, defaultBranch: 'main', record })) : '';
+const bodyReds = bodyFor(recordValue);
+const RED_CLAUSE =
+  '**`scope` and `negative-control` are expected red on this pull request; the generated `test` and `check` jobs are the ones expected green on it.** `agentic-checks.yml` runs the two of them with `node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which `node scripts/init.mts` copies into the repository and this branch does not carry';
+check('the body states, as one unbroken sentence, which checks are expected red and why', bodyReds.includes(RED_CLAUSE), bodyReds.slice(bodyReds.indexOf('expected red') - 80, bodyReds.indexOf('expected red') + 340));
+
+// Which jobs the workflow declares depends on the record: `renderChecks` emits
+// `check` only when `commands.check` is set, so a body naming it regardless
+// would send a reader after a job that does not exist.
+const noCheckBody = bodyFor({ ...recordValue, commands: { test: recordValue.commands.test, check: null } });
 check(
-  'the body states the two checks that are expected red on the adoption pull request',
-  /expected red on this pull request/.test(bodyReds) && bodyReds.includes('scope') && bodyReds.includes('.github/scripts/agentic/'),
-  bodyReds.split('\n').filter((line) => /expected red/.test(line)).join('\n') || 'no such line',
+  'the jobs named as expected green are the ones that record actually renders',
+  noCheckBody.includes('the generated `test` job is the one expected green on it.') && !noCheckBody.includes('`check` job'),
+  noCheckBody.slice(noCheckBody.indexOf('expected red'), noCheckBody.indexOf('expected red') + 200),
+);
+
+// A deny list the planner cannot read is skipped, never filtered: the twin of
+// the `--hooks` refusal, on the path that decides what the branch carries.
+const strayDeny = (path: string) => (path === SETTINGS ? JSON.stringify({ permissions: { deny: ['Bash(x)', 7] } }) : null);
+const strayPlan = mod?.planPullRequest(recordValue, { root: planning.repo, baseFile: strayDeny });
+const strayEntry = strayPlan?.files.find((file) => file.path === SETTINGS);
+check(
+  'a base deny entry that is not a string is skipped by name, and nothing is rewritten',
+  strayEntry?.outcome === 'skipped' && strayEntry?.reason === 'deny-not-strings' && strayEntry?.content === null,
+  JSON.stringify(strayEntry),
 );
 // K4. a question that has already been answered is not asked again.
 const answered = fixture();

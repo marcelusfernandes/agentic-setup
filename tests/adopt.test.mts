@@ -442,11 +442,15 @@ check(
 
 // Every `git` the adoption steps spawn goes through one runner with one
 // explicit `maxBuffer`. The default is 1 MB, which the `ls-tree` of a large
-// repository outgrows: `spawnSync` then answers with status 0, an `ENOBUFS`
-// error and *truncated* output, so reading the status alone reads a partial
-// answer as a whole one — and a path that fell off the end is planned as one
-// the base does not carry. A pure function of the adoption libraries, imported
-// and called directly, as `resolvePlanIssue` already is.
+// repository outgrows — and the base then *refused*, which is what the issue
+// said and what a measurement over a 30,000-path repository confirms: every
+// buffer size that truncated answered `status: null` with `SIGTERM`, so
+// `status ?? 1` was 1. What it did not do is say why, because `stderr` on that
+// path is empty. Both branches are exercised below, because `spawnSync`
+// reports the same `ENOBUFS` for each and this runner refuses both: a kill
+// with the tail missing, and a complete answer whose limit was noticed after
+// it had all arrived. A module of the adoption libraries, imported and called
+// directly, as `resolvePlanIssue` already is.
 type GitModule = {
   GIT_MAX_BUFFER: number;
   runGit: (cwd: string, args: string[], options?: { maxBuffer?: number }) => { status: number; stdout: string; stderr: string };
@@ -458,13 +462,23 @@ try {
   gitMod = null;
 }
 check('the adoption git runner names one explicit maxBuffer', gitMod?.GIT_MAX_BUFFER === 64 * 1024 * 1024, String(gitMod?.GIT_MAX_BUFFER));
-const overflow = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
-check(
-  'a git answer that outgrows the buffer reports a named reason and never an empty detail',
-  overflow !== undefined && overflow.status !== 0 && /ENOBUFS/.test(overflow.stderr),
-  JSON.stringify(overflow),
-);
-check('and it hands back no output at all, rather than a truncated answer', overflow?.stdout === '', JSON.stringify(overflow?.stdout));
+
+// `ls-tree` of this repository fits in one read, so the limit is noticed with
+// the whole answer already in hand: status 0 beside an `ENOBUFS`. That is the
+// branch the old `status ?? 1` would have accepted.
+const wholeAnswer = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
+// `log -p` is large enough to need several, so this one is killed mid-answer:
+// `status: null`, `SIGTERM`. The base refused here too — with an empty detail.
+const killed = gitMod?.runGit(ROOT, ['log', '-p', '--no-color'], { maxBuffer: 1024 });
+type GitAnswer = { status: number; stdout: string; stderr: string } | undefined;
+for (const [shape, answer] of [['whole', wholeAnswer], ['killed mid-answer', killed]] as Array<[string, GitAnswer]>) {
+  check(
+    `a git answer that outgrows the buffer (${shape}) reports a named reason and never an empty detail`,
+    answer !== undefined && answer.status !== 0 && /ENOBUFS/.test(answer.stderr),
+    JSON.stringify(answer?.stderr),
+  );
+  check(`and hands back no output at all for the ${shape} one`, answer?.stdout === '', String(answer?.stdout.length));
+}
 
 // --- I: `record:stale` is one of the gap names, not a name beside them -------
 const gapNames = sourceOf('scripts/lib/adopt/inventory.mts').match(/const GAP_NAMES = \[([\s\S]*?)\] as const;/)?.[1] ?? '';

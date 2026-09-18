@@ -1,18 +1,22 @@
 // The one `git` runner the adoption steps spawn through (#302).
 //
+// This module closes a ceiling and an uninformative refusal. It does not close
+// a silent corruption: there was none, and the measurement is in `runGit` below.
+//
 // `child_process`'s default `maxBuffer` is 1 MB. `scripts/adopt.mts` read the
 // base tree with `git ls-tree -r --name-only -z <base>`, whose answer is the
 // whole path text of a repository: a large one outgrows a megabyte long before
-// it outgrows anything else, and `spawnSync` then killed the child and
-// answered with `status: null` and an empty `stderr`. The caller's
-// `status ?? 1` turned that into "git failed" with no detail at all — a read
-// that failed closed, correctly, but said nothing a person could act on, while
-// `git show` two lines below already passed 64 MB.
+// it outgrows anything else. `spawnSync` then killed the child and answered
+// with `status: null` and an empty `stderr`, so the caller's `status ?? 1`
+// refused — correctly, and with nothing in `detail` that a person could act
+// on, while `git show` two lines below already passed 64 MB and would have
+// answered. A repository was refused for being large, and told only that git
+// had failed.
 //
-// So the buffer is named once, here, and every adoption `git` gets it; and a
-// spawn that could not run or could not be held is reported with the reason
-// Node gave it (`ENOBUFS`, `ENOENT`, …) in `stderr`, so the named refusal the
-// caller prints carries a detail rather than an empty string.
+// So the buffer is named once, here, and every adoption `git` gets it — the
+// ceiling; and a spawn that could not run or could not be held is reported
+// with the reason Node gave it (`ENOBUFS`, `ENOENT`, …) in `stderr` — the
+// detail, so `pr:base-unreadable` says which path and why.
 //
 // **Crash policy: fail closed, and never throw.** Every outcome is a
 // `CommandResult`; a spawn that did not produce an exit status is status 1
@@ -42,16 +46,22 @@ export type GitOptions = {
 /**
  * One `git` call inside `cwd`.
  *
- * **`error` decides before `status` does.** A child that outgrows the buffer
- * is reported by `spawnSync` as `error.code === 'ENOBUFS'` with an exit status
- * of 0 and *truncated* output — so reading the status alone answers "git
- * succeeded" over an answer that is missing its tail. For `ls-tree`, whose
- * answer is the set of paths the base tree holds, a truncated success is the
- * worst of the three outcomes: a path that fell off the end reads as one the
- * base does not carry, and a generated file gets planned as `created` over the
- * base's own version of it (#302). So any `error` at all is status 1, with
- * Node's own code in `stderr`: a named refusal with an empty detail is a
- * refusal nobody can act on.
+ * **`error` decides before `status` does**, and the reason is narrower than it
+ * looks. Measured over a 30,000-path repository (1.44 MB of `-z` listing) at
+ * eleven buffer sizes from 8 bytes to 2 MB: every size that actually truncated
+ * answered `status: null`, `signal: 'SIGTERM'`, `error.code: 'ENOBUFS'`, which
+ * the old `status ?? 1` turned into 1 — so the base **did** fail closed, as
+ * the issue said. `status: 0` beside an `ENOBUFS` appeared only where the
+ * complete answer had already arrived in one read; nothing was lost there, and
+ * no truncated listing was ever read as a whole one.
+ *
+ * So reading `error` first is not undoing a silent corruption. It is the
+ * fail-closed reading of a signal that is ambiguous from the outside: Node
+ * reports the same `ENOBUFS` for "killed with the tail missing" and for "the
+ * whole answer arrived and then the limit was noticed", and this runner cannot
+ * tell them apart — only the caller's expectation of length could, and it has
+ * none. Refusing both is the answer that is never wrong; accepting both is the
+ * one that would be.
  */
 export function runGit(cwd: string, args: string[], options: GitOptions = {}): CommandResult {
   const r = spawnSync('git', args, {

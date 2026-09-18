@@ -31,7 +31,7 @@ declares.
 | 2 | `node scripts/adopt.mts --plan-issue` | opens one `human:pending` issue with that plan |
 | 3 | *a person* | reads the plan, ticks what should happen, moves the issue to `human:decided` |
 | 4 | `node scripts/adopt.mts --pr` | assembles the branch, pushes it, opens the pull request |
-| 5 | *the checks, then a review* | `scope`, `negative-control` and the generated `test` job run on the pull request itself |
+| 5 | *the checks, then a review* | the generated `test` and `check` jobs run and are expected green; `scope` and `negative-control` are expected **red** on this one pull request (below) |
 | 6 | `node scripts/land.mts <pr>` | queues the merge — **`adopt` never merges anything** |
 
 Step 3 is not optional and is not a formality. `--pr` **refuses unless that plan issue
@@ -95,6 +95,14 @@ That is also why the `pre-push` hook is not in the diff, and the body says so. G
 live under the directory git runs hooks from (`.git/hooks` by default), which is not
 tracked and which no pull request can carry. `node scripts/adopt.mts --hooks` installs it
 in each clone.
+
+A file the planner cannot read is left exactly as the base has it and reported with the
+reason why, never rewritten: `not-generated` for a workflow without the marker,
+`not-parsable` for a `.claude/settings.json` that is not JSON, and `deny-not-strings` for
+one whose `permissions.deny` holds an entry that is not a string. That last one is the
+same answer `--hooks` gives as `hooks:settings-unparsable` (`docs/adopt.md`): a rule this
+tool cannot read is not a rule it may quietly drop out of a permission file, least of all
+in a pull request whose subject is a protection.
 
 ### What the deliberate red test is for
 

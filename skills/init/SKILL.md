@@ -103,8 +103,11 @@ The script is idempotent. It:
    repository's own test workflow's job (the sole job of the sole workflow file this plugin
    does not own; `test` when that is not unambiguous). Detection is a default, never a
    contract. A record that is not the shape, or one that cannot be rendered, is reported as
-   `! ruleset: agentic.config.json could not be rendered from (…)` and falls back to that
-   same default rather than stopping the run.
+   `! check names: agentic.config.json could not be rendered from (…)` and falls back to
+   that same default — and the ruleset is still written. That prefix is not `! ruleset:`,
+   which this installer reserves for a refusal after which nothing is written: the ruleset
+   itself was read here, and leaving a branch ungoverned over a malformed optional record
+   would be the larger harm.
 
    What it writes for the review gate: by default it turns nothing on — it resets
    `required_approving_review_count` to 0, with `dismiss_stale_reviews_on_push` and

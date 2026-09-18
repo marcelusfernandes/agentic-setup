@@ -620,7 +620,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:origin-unreadable` | `git fetch origin` could not answer, so the base the branch would be built on is unknown |
-| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed (a `git` answer that outgrew its buffer counts: a truncated listing is not a shorter one), or a path the tree holds could not be read — an unreadable file is never planned as an absent one; `field` names the path when there is one, and the temporary index directory is removed either way |
+| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed (a `git` answer that outgrew its buffer counts, and the reason is named rather than left empty), or a path the tree holds could not be read — an unreadable file is never planned as an absent one; `field` names the path when there is one, and the temporary index directory is removed either way |
 | `pr:stack-not-supported` | the record's `stack` is not `node`, so the generated `node:test` file would never be discovered; `field` names it |
 | `pr:no-test-command` | the record holds no `commands.test`, so the deliberate red has nothing to be red in; `field` names it |
 | `pr:nothing-to-commit` | the base already carries every file the adoption would write |

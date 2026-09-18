@@ -520,6 +520,30 @@ export type BodyContext = {
 const outcomeLine = (file: PlannedFile): string => `- \`${file.path}\` — ${file.outcome} (${file.reason})`;
 
 /**
+ * The two jobs of the generated `agentic-checks.yml` that run from
+ * `.github/scripts/agentic/` — the copy `scripts/init.mts` makes and this
+ * branch does not carry. They are the two that cannot pass on the pull request
+ * that installs them (#302).
+ */
+export const COPIED_CHECKS = ['scope', 'negative-control'];
+
+/**
+ * How the body names the jobs that *are* expected green: the rendered
+ * workflow's own job list minus the two above. It is derived and never
+ * written out, because which jobs exist depends on the record —
+ * `renderChecks` emits `check` only when `commands.check` is set, and a body
+ * that named it anyway would send a reader looking for a job the workflow does
+ * not declare.
+ */
+function greenPhrase(checks: string[]): string {
+  const green = checks.filter((name) => !COPIED_CHECKS.includes(name));
+  if (green.length === 0) return 'no other job of it is';
+  const names = green.map((name) => `\`${name}\``);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `the generated ${list} job${green.length === 1 ? ' is the one' : 's are the ones'}`;
+}
+
+/**
  * The pull request's body, in the shape `.github/pull_request_template.md`
  * fixes and `ci/scope-check.mts` reads: the closing keyword in plain text on
  * the first line, `## Files` listing exactly the paths this branch carries,
@@ -566,9 +590,9 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     // `.github/scripts/agentic/`, which `node scripts/init.mts` copies and
     // this branch does not carry, so they fail on the pull request that
     // introduces them and pass on every one after it (#302).
-    '**`scope` and `negative-control` are expected red on this pull request; the generated',
-    "`test` and `check` jobs are the ones expected green on it.** `agentic-checks.yml` runs the",
-    'with `node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
+    `**\`${COPIED_CHECKS.join('` and `')}\` are expected red on this pull request; ${greenPhrase(plan.checks)}`,
+    'expected green on it.** `agentic-checks.yml` runs the two of them with',
+    '`node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
     '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
     'two checks it installs cannot run on the pull request that installs them. Both reds are',
     'correct here — nothing is wrong with the adoption, so do not debug it over them — and',

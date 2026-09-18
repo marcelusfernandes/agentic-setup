@@ -378,16 +378,26 @@ check('docs/adopt.md documents the re-run guarantee', /re-run|run again|twice/i.
 // `hooks:not-written`. A read-only `.claude/` is the cheapest way to make the
 // second write fail *after* the first one succeeded: the plan is complete
 // (there is no settings file to read), and only the write of it is refused.
-const blocked = fixture({ [RECORD_FILE]: recordOf([GIT_HOOK]) });
-mkdirSync(join(blocked, '.claude'), { recursive: true });
-chmodSync(join(blocked, '.claude'), 0o555);
-const j = adopt(['--hooks'], blocked);
-check(
-  'a settings file that cannot be written is hooks:not-written',
-  j.status === 1 && parse(j.stdout)?.error === 'hooks:not-written',
-  `${j.stdout}\n${j.stderr}`,
-);
-check('a --hooks run that could not finish leaves no hook installed', !existsSync(join(blocked, PRE_PUSH)), PRE_PUSH);
+//
+// Skipped as root, the way `tests/adopt-record.test.mts` and
+// `tests/adopt-inventory.test.mts` skip their own EACCES cases: root writes
+// through the mode, `--hooks` then exits 0, and the case would report a red
+// that says nothing about the rollback it exists to prove.
+const IS_ROOT = process.getuid?.() === 0;
+if (IS_ROOT) {
+  check('the partial-install rollback case skipped (running as root, which a read-only directory cannot stop)', true);
+} else {
+  const blocked = fixture({ [RECORD_FILE]: recordOf([GIT_HOOK]) });
+  mkdirSync(join(blocked, '.claude'), { recursive: true });
+  chmodSync(join(blocked, '.claude'), 0o555);
+  const j = adopt(['--hooks'], blocked);
+  check(
+    'a settings file that cannot be written is hooks:not-written',
+    j.status === 1 && parse(j.stdout)?.error === 'hooks:not-written',
+    `${j.stdout}\n${j.stderr}`,
+  );
+  check('a --hooks run that could not finish leaves no hook installed', !existsSync(join(blocked, PRE_PUSH)), PRE_PUSH);
+}
 
 // --- K: a deny entry that is not a string is a refusal, not a silent drop ----
 const poisoned = fixture({

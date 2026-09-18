@@ -38,7 +38,15 @@
 //
 // Crash policy on this path: every read either produces a ruleset the run can
 // act on or refuses with a named "! ruleset: <reason>" line, and a refusal
-// makes no POST and no PUT. It stays a report line and exit 0 — a failed read
+// makes no POST and no PUT. One read is deliberately outside that rule and
+// says so in its own prefix: the adoption record the check *names* are taken
+// from (requiredChecks below, #302). A record that cannot be read or rendered
+// prints "! check names: <reason>" — not "! ruleset:" — and the write still
+// happens, with the historical detected names. It is not a ruleset read: the
+// ruleset is still fully known, and refusing to write a protection because a
+// repository's optional record is malformed would leave the branch ungoverned
+// over a file that is not the installer's business. `adopt` is where a
+// rejected record is fatal. It stays a report line and exit 0 — a failed read
 // is not a reason to abandon the filesystem work already done, and the report
 // is what the operator acts on. The refusals name *what* could not be read,
 // because a bare failure out of an installer cannot be told apart from a
@@ -169,8 +177,10 @@ function run(cmd: string, args: string[], cwd?: string, input?: string) {
  * repository's own test workflow calls its job — detection, which invariant 4
  * says is a default and never a contract. A record that is not the shape, or a
  * rendering that refuses, falls back to the same default rather than stopping
- * the run: `scripts/adopt.mts` is where a rejected record is fatal, and this
- * step's own refusals are about the ruleset it could not read.
+ * the run, and says so as `! check names:` — deliberately not the
+ * `! ruleset:` prefix this file's header reserves for a refusal that writes
+ * nothing, because this one writes. `scripts/adopt.mts` is where a rejected
+ * record is fatal.
  */
 function requiredChecks(repoRoot: string): string[] {
   try {
@@ -178,7 +188,7 @@ function requiredChecks(repoRoot: string): string[] {
     if (record !== null) return renderWorkflows(record, readTemplates()).checks;
   } catch (err) {
     if (!(err instanceof RecordError) && !(err instanceof WorkflowError)) throw err;
-    say(`  ! ruleset: ${RECORD_FILE} could not be rendered from (${(err as Error).message.split('\n')[0]}); falling back to detection for the check names`);
+    say(`  ! check names: ${RECORD_FILE} could not be rendered from (${(err as Error).message.split('\n')[0]}); falling back to detection for the check names`);
   }
   return ['scope', 'negative-control', detectTestCheckName(repoRoot)];
 }
