@@ -496,8 +496,15 @@ const PROOF_DIR_AT = RECORD_SRC.indexOf('\nexport const PROOF_DIR');
 const PROOF_DIR_BLOCKS = PROOF_DIR_AT < 0 ? [] : [...RECORD_SRC.slice(0, PROOF_DIR_AT).matchAll(/\/\*\*([\s\S]*?)\*\//g)];
 const PROOF_DIR_DOC = PROOF_DIR_BLOCKS.at(-1)?.[1] ?? '';
 
-/** Every `<path>.mts` the docstring names in backticks, in the order it names them. */
-const NAMED_CALLERS = [...PROOF_DIR_DOC.matchAll(/`([\w./-]+\.mts)`/g)].map((m) => m[1] ?? '');
+/**
+ * Every `<path>.mts` the docstring names in backticks, in the order it names
+ * them, minus this file: the paragraph names the pin that reads it, and a pin
+ * is not a caller — counting it would let the docstring satisfy this case by
+ * pointing at the case.
+ */
+const NAMED_CALLERS = [...PROOF_DIR_DOC.matchAll(/`([\w./-]+\.mts)`/g)]
+  .map((m) => m[1] ?? '')
+  .filter((rel) => !rel.startsWith('tests/'));
 
 /** A file's text as one line, so an import list that wraps still reads as one statement. */
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ');
