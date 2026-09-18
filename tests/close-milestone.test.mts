@@ -27,12 +27,17 @@
 // Milestone 404 does not exist; milestone 500 fails for a reason that is not
 // a 404 at all.
 //
-// Negative control: on the base (before this PR) scripts/close-milestone.mts
-// does not exist, so every run below prints nothing on stdout and each case
-// fails on its own JSON assertion — a runtime red, not a structural one.
-// That is why the failure detail passed to check() is the child's *stdout*
-// only: the child's ERR_MODULE_NOT_FOUND on stderr stays in a captured
-// variable and never reaches the suite's output, where
+// Negative control (#227): on the base the script reads the milestone's
+// issues with `--limit 200` and makes its temporary directory outside any
+// failure handling, so three cases below are red there — case P asserts both
+// reads ask for at least 500, case R closes a milestone whose evidence omits
+// the issues past the limit (the base *closes* it, which is the fail-open
+// this issue is about), and case V asserts a broken `TMPDIR` prints
+// `{ error }` where the base throws out of the process. An assertion red,
+// not a structural one: the file, the script and every import exist on the
+// base. That is also why the failure detail passed to check() is the child's
+// *stdout* only — the base's uncaught ENOENT stack stays on the child's
+// stderr, in a variable that never reaches the suite's output, where
 // `ci/negative-control.mts`'s structural-red warning would read it as a
 // structural red (skill `safe-worktree` §B7).
 import { spawnSync } from 'node:child_process';
@@ -77,12 +82,28 @@ const read = (name, fallback) => {
 const out = (text) => { process.stdout.write(text + '\n'); process.exit(0); };
 const die = (message) => { process.stderr.write(message + '\n'); process.exit(1); };
 
-// gh issue list --milestone "<title>" --state open|closed --json number --limit 200
+// gh issue list --milestone "<title>" --state open|closed --json number --limit 500
+//
+// issues.json is keyed by milestone title, and an unknown title — or no
+// --milestone at all — dies rather than answering an empty list: a script
+// that asked for the wrong milestone's issues, or for every issue in the
+// repository, must not look like a milestone that shipped nothing (#227).
+// --limit is honoured the way gh honours it: the page is cut to it, with
+// nothing said about what was dropped.
 if (args[0] === 'issue' && args[1] === 'list') {
   const at = args.indexOf('--state');
   const wanted = at === -1 ? 'open' : args[at + 1];
-  const issues = read('issues.json', { open: [], closed: [] });
-  out(JSON.stringify((issues[wanted] ?? []).map((n) => ({ number: n }))));
+  const milestoneAt = args.indexOf('--milestone');
+  if (milestoneAt === -1) die('fake-gh: issue list without --milestone: ' + args.join(' '));
+  const wantedMilestone = args[milestoneAt + 1];
+  const byMilestone = read('issues.json', {});
+  if (!Object.prototype.hasOwnProperty.call(byMilestone, wantedMilestone)) {
+    die('fake-gh: no issues recorded for milestone: ' + wantedMilestone);
+  }
+  const limitAt = args.indexOf('--limit');
+  const limit = limitAt === -1 ? 30 : Number(args[limitAt + 1]);
+  const all = byMilestone[wantedMilestone][wanted] ?? [];
+  out(JSON.stringify(all.slice(0, limit).map((n) => ({ number: n }))));
 }
 
 if (args[0] !== 'api') die('fake-gh: unknown command: ' + args.join(' '));
@@ -166,9 +187,10 @@ function closeout(
   rows: Array<[number, number, string]>,
   leftOut = '- None — every issue shipped.',
   dogfood = '- None needed — no report was required.',
+  title = TITLE,
 ): string {
   const table = rows.map(([issue, pr, rowSha]) => `| #${issue} | feat(x): a thing | #${pr} | ${rowSha} |`).join('\n');
-  return `# Closeout M${phase} — ${TITLE}
+  return `# Closeout M${phase} — ${title}
 
 - Closed (UTC): 2026-09-17
 - main SHA: ${sha}
@@ -197,25 +219,32 @@ function goodRepo(): Fixture {
 }
 
 // --- runner ------------------------------------------------------------------
-type State = { milestone?: unknown; open?: number[]; closed?: number[] };
+// `title` is the milestone title the fake `gh` answers issue lists for: the
+// issue lists are keyed by it, so a case that renames the milestone renames
+// the key too and a script asking for another milestone gets nothing.
+type State = { milestone?: unknown; title?: string; open?: number[]; closed?: number[] };
 
 function stateDir(state: State = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'agentic-close-state-'));
   cleanup(() => rmSync(dir, { recursive: true, force: true }));
+  const title = state.title ?? TITLE;
   writeFileSync(join(dir, 'gh-argv.log'), '');
   writeFileSync(
     join(dir, 'milestone.json'),
-    JSON.stringify(state.milestone ?? { number: MILESTONE, title: TITLE, state: 'open', description: DESCRIPTION_OK }),
+    JSON.stringify(state.milestone ?? { number: MILESTONE, title, state: 'open', description: DESCRIPTION_OK }),
   );
-  writeFileSync(join(dir, 'issues.json'), JSON.stringify({ open: state.open ?? [], closed: state.closed ?? [1] }));
+  writeFileSync(
+    join(dir, 'issues.json'),
+    JSON.stringify({ [title]: { open: state.open ?? [], closed: state.closed ?? [1] } }),
+  );
   return dir;
 }
 
-function close(repo: string, args: string[], dir: string) {
+function close(repo: string, args: string[], dir: string, env: Record<string, string> = {}) {
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'close-milestone.mts'), ...args], {
     encoding: 'utf8',
     cwd: repo,
-    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: dir, FAKE_GH_NODE: RUNTIME, FAKE_GH_JS },
+    env: { ...process.env, PATH: PATH_WITH_FAKE_GH, FAKE_GH_STATE_DIR: dir, FAKE_GH_NODE: RUNTIME, FAKE_GH_JS, ...env },
   });
   const patchPath = join(dir, 'patch.json');
   return {
@@ -475,6 +504,147 @@ check(
   'a row sha off origin/main refuses on the sha and claims nothing about dogfood',
   missingOf(o6.stdout).includes('evidence:sha') && !missingOf(o6.stdout).includes('dogfood'),
   o6.stdout,
+);
+
+// --- P: the issue reads name the milestone and ask for the whole of it ------
+// `evidence:issue-missing` is the one check that asks "did everything that
+// shipped get written down", and it compares the closeout against the
+// **closed** issue list. That makes both reads load-bearing: one that named
+// the wrong milestone, or that `gh` cut short, would answer a different
+// question than the one the refusal claims to have asked. The limit is the
+// one `ci/issue-lint.mts` already uses for the same kind of read (#227).
+const p = run(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+const pReads = p.log.split('\n').filter((line) => line.startsWith('issue list '));
+check('the close makes exactly two `gh issue list` reads', pReads.length === 2, p.log);
+check(
+  'both `gh issue list` reads carry --milestone "<title>"',
+  pReads.length === 2 && pReads.every((line) => line.includes(`--milestone ${TITLE} `)),
+  p.log,
+);
+check(
+  'the two reads ask for the open and then the closed issues of that milestone',
+  pReads.length === 2 && pReads[0].includes('--state open') && pReads[1].includes('--state closed'),
+  p.log,
+);
+check(
+  'both `gh issue list` reads ask for at least 500 issues',
+  pReads.length === 2 && pReads.every((line) => Number(/--limit (\d+)/.exec(line)?.[1] ?? 0) >= 500),
+  p.log,
+);
+
+// --- R: a page that comes back full cannot support `evidence:issue-missing` -
+// 500 closed issues, and a closeout that accounts for the first 200 of them
+// and for none of the rest. Asking for 200 returns a page indistinguishable
+// from a complete list, every issue on it is accounted for, and the milestone
+// **closes** with its evidence silently short — the one check that catches an
+// issue nobody wrote down, failing open. A full page is not evidence of
+// anything, so the run names the limit it hit and writes nothing.
+const rFixture = fixture();
+const rLeftOut = Array.from({ length: 199 }, (_, i) => `#${i + 2}`).join(', ');
+land(
+  rFixture.repo,
+  { [EVIDENCE]: closeout('14', rFixture.landed, [[1, 11, rFixture.landed]], `- ${rLeftOut} — closed with the phase, no PR of their own.`) },
+  'docs(docs): closeout M14 (#174)',
+);
+const r = run(rFixture.repo, [String(MILESTONE), '--evidence', EVIDENCE], {
+  closed: Array.from({ length: 500 }, (_, i) => i + 1),
+});
+const rOut = parse(r.stdout);
+check('a closed-issue page as long as the limit exits 1', r.status === 1, r.stdout);
+check(
+  'a closed-issue page as long as the limit reports { error } — neither a close nor a refusal',
+  typeof rOut?.error === 'string' && rOut?.closed === undefined && rOut?.refused === undefined,
+  r.stdout,
+);
+check(
+  'the error names the milestone, the state read and the limit it hit',
+  (rOut?.error ?? '').includes(TITLE) && /closed/.test(rOut?.error ?? '') && /500/.test(rOut?.error ?? ''),
+  r.stdout,
+);
+check('a closed-issue page as long as the limit never patched the milestone', noWrite(r.log) && r.patch === null, r.log);
+
+// --- S: a milestone whose title carries no `M<k>` prefix --------------------
+// The evidence file is named after the phase in the milestone's title. A
+// title with no `M<k>` prefix names no phase, so the expected path falls back
+// to the number GitHub gave the milestone — documented in the script's header
+// since #172 and unpinned until here.
+const BARE_TITLE = 'Closure with evidence';
+const BARE_EVIDENCE = `docs/closeout/M${MILESTONE}.md`;
+
+const sWrong = run(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE], { title: BARE_TITLE });
+refuses('a phase-named --evidence for a milestone whose title has no M<k> prefix', sWrong, 'evidence:missing');
+check(
+  'the refusal names docs/closeout/M<milestone number>.md as the expected path',
+  (parse(sWrong.stdout)?.refused ?? '').includes(BARE_EVIDENCE),
+  sWrong.stdout,
+);
+
+const sFixture = fixture();
+land(
+  sFixture.repo,
+  { [BARE_EVIDENCE]: closeout(String(MILESTONE), sFixture.landed, [[1, 11, sFixture.landed]], undefined, undefined, BARE_TITLE) },
+  'docs(docs): closeout M15 (#174)',
+);
+const s = run(sFixture.repo, [String(MILESTONE), '--evidence', BARE_EVIDENCE], { title: BARE_TITLE });
+check('a milestone whose title has no M<k> prefix closes against docs/closeout/M<number>.md', s.status === 0, s.stdout);
+check('that close reports the numbered evidence path', parse(s.stdout)?.evidence === BARE_EVIDENCE, s.stdout);
+
+// --- T: a `git` call that cannot run is an { error }, never a refusal -------
+// The fetch runs before the evidence is read, because the closing block
+// records where `main` is now and every ancestry check is only as honest as
+// the ref it runs against. A fetch that cannot reach the remote is a broken
+// checkout needing a person, not a verdict on the closeout.
+const tFixture = goodRepo();
+git(['remote', 'set-url', 'origin', join(tFixture.repo, 'no-such-origin.git')], tFixture.repo);
+const t = run(tFixture.repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+check('a git fetch that cannot reach origin exits 1', t.status === 1, t.stdout);
+check(
+  'a git fetch that cannot reach origin reports { error }, never { refused }',
+  typeof parse(t.stdout)?.error === 'string' && parse(t.stdout)?.refused === undefined,
+  t.stdout,
+);
+check('a git fetch that cannot reach origin wrote nothing', noWrite(t.log) && t.patch === null, t.log);
+
+// --- U: the evidence is unreadable because the ref itself is gone -----------
+// `refs/remotes/origin/main` is where the evidence and every sha are read
+// from. A checkout whose origin no longer carries `main` cannot answer the
+// question at all — an `evidence:missing` refusal there would blame the
+// closeout for a broken remote.
+const uFixture = goodRepo();
+const emptyOrigin = mkdtempSync(join(tmpdir(), 'agentic-empty-origin-'));
+cleanup(() => rmSync(emptyOrigin, { recursive: true, force: true }));
+git(['init', '-q', '--bare', '-b', 'main'], emptyOrigin);
+git(['remote', 'set-url', 'origin', emptyOrigin], uFixture.repo);
+const u = run(uFixture.repo, [String(MILESTONE), '--evidence', EVIDENCE]);
+check('an origin with no main leaves the evidence unreadable and exits 1', u.status === 1, u.stdout);
+check(
+  'an origin with no main reports { error } naming the ref, never a refusal',
+  /refs\/remotes\/origin\/main/.test(parse(u.stdout)?.error ?? '') && parse(u.stdout)?.refused === undefined,
+  u.stdout,
+);
+check('an origin with no main wrote nothing', noWrite(u.log) && u.patch === null, u.log);
+
+// --- V: the temporary directory for the description cannot be made ---------
+// The one write stages the new description in a file, because `-F` reads
+// `@<file>` and a description carries newlines. A full or read-only `TMPDIR`
+// threw out of the process, past every `{ error }` the header promises —
+// and `{ error }` is the one shape the orchestrator's step 6 reads (#227).
+const vFixture = goodRepo();
+const vState = stateDir();
+const v = close(vFixture.repo, [String(MILESTONE), '--evidence', EVIDENCE], vState, {
+  TMPDIR: join(vState, 'no-such-temporary-directory'),
+});
+check('an unusable TMPDIR exits 1', v.status === 1, v.stdout);
+check(
+  'an unusable TMPDIR reports { error } about staging the description',
+  /could not stage the milestone description/.test(parse(v.stdout)?.error ?? ''),
+  v.stdout,
+);
+check('an unusable TMPDIR never patched the milestone', noWrite(v.log) && v.patch === null, v.log);
+check(
+  'an unusable TMPDIR failed at the write, every check before it having passed',
+  v.log.split('\n').some((line) => line.startsWith('issue list ') && line.includes('--state closed')),
+  v.log,
 );
 
 finish();

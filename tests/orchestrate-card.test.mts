@@ -41,9 +41,31 @@ check(
 );
 const closeStep = card.slice(card.indexOf('## 6. Close the milestone'));
 check('SKILL.md step 6 exists', closeStep.length > 0 && closeStep.length < card.length);
+// #227: step 6 actually closes the milestone, and closes it the one way a
+// milestone closes — `scripts/close-milestone.mts` against the phase's
+// evidence (#172). This case used to require the card to carry the
+// hand-typed `gh api -X PATCH … milestones/<n> -f state=closed` that the
+// script replaced; once #199 rewrote the step, the old regex went on passing
+// only because it matched the sentence **forbidding** that PATCH. The pin
+// now reads the step the way an orchestrator would: the runnable blocks
+// carry the script, and no runnable block anywhere in the card types the
+// state=closed PATCH by hand. The prohibition is prose and stays prose.
 check(
-  'SKILL.md step 6 actually closes the milestone (not just the heading)',
-  /gh api -X PATCH repos\/\{owner\}\/\{repo\}\/milestones\/<n>\s+-f\s+state=closed/.test(closeStep),
+  'SKILL.md step 6 closes the milestone through scripts/close-milestone.mts with --evidence',
+  /close-milestone\.mts/.test(closeStep) && /--evidence\s+docs\/closeout\/M<n>\.md/.test(closeStep),
+  closeStep.slice(0, 400),
+);
+const runnable = [...card.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+const handTypedClose = runnable.filter((block) => /-X\s+PATCH/.test(block) && /state=closed/.test(block));
+check(
+  'no runnable block in SKILL.md types the milestone state=closed PATCH by hand',
+  handTypedClose.length === 0,
+  handTypedClose.join('\n---\n'),
+);
+check(
+  'SKILL.md step 6 still forbids the hand-typed state=closed PATCH in prose',
+  /Never run[\s\S]{0,160}state=closed/.test(closeStep),
+  closeStep.slice(0, 400),
 );
 
 // AC5: the label transitions live in the orchestrator's own step, not the reviewer's.
