@@ -81,11 +81,11 @@ not a detail of item 8:
   20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
   number is the one after the highest in the index below, not the one after the
   highest-numbered file in this directory.
-- **Three exceptions exist today, recorded in the index rather than hidden.** Items 16,
-  18 and 19, and the dated note under item 13, were written into `../decisions.md` and
-  still live there — each because its issue's `## Files` listed `../decisions.md` and no
-  path in this directory, and an implementer never widens its own globs. Relocating them
-  is its own issue.
+- **Four exceptions exist today, recorded in the index rather than hidden.** Items 16,
+  18, 19 and 20 — and the dated note under item 13, which holds no number of its own —
+  were written into `../decisions.md` and still live there, each because its issue's
+  `## Files` listed `../decisions.md` and no path in this directory, and an implementer
+  never widens its own globs. Relocating them is its own issue.
 - [`0000-template.md`](0000-template.md) is the shape such a file takes. It is a
   template, not a decision, and holds no number of its own.
 - A PR that adds a decision file adds its line to the index below in the same diff.
