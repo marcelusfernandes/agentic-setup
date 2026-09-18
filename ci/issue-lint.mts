@@ -2,8 +2,11 @@
 // issue-lint — validates an issue's contract before it is dispatched:
 // sections present, the optional `Declaration:` line of `## Proof` naming a
 // `proof/<slug>.json` path, globs that parse and match something (or are
-// `new`), globs disjoint from the issues already in flight in the same
-// milestone, a `Blocked by:` graph with no cycle in it, and every
+// `new`), the `authorised:` grants of `## Files` held to those same two
+// rules — a grant resolves like a glob and is compared for overlap like one,
+// because it is what widens the scope check (#232) — globs disjoint from the
+// issues already in flight in the same milestone, a `Blocked by:` graph with
+// no cycle in it, and every
 // `Blocked by: #N` number in the issue actually
 // exists. It never
 // reads a diff — the mechanical form of the #3 guard (a rename that drops a
@@ -41,7 +44,13 @@
 // and a cycle in that graph is a failure naming the issues in it, never a
 // hang. `failures` entries are either a plain string or,
 // for AC3 (glob overlap), the object shape the issue's acceptance criteria
-// name. --markdown prints a Markdown rendering instead (for the workflow's
+// name. Each `globs` entry carries `grant: true` when it came from an
+// `authorised:` line and `grant: false` when it came from a bullet, so a
+// reader can tell a granted path from a declared one; the Markdown rendering
+// lists the grants under their own heading and marks a granted new path. A
+// path that is both declared as a bullet and granted is reported once, as
+// the bullet glob it already is — the grant widens nothing there.
+// --markdown prints a Markdown rendering instead (for the workflow's
 // issue comment), starting with the `<!-- agentic-issue-lint -->` marker
 // the workflow greps for; it no longer has a Warnings section. Exit 0 when
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
@@ -55,7 +64,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
-import { parseIssueGlobs } from './lib/scope.mts';
+import { parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
 import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDeclaration, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
@@ -64,7 +73,7 @@ const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
 const GH_LIST_LIMIT = '500'; // gh defaults to 30; a milestone can hold more in-flight issues
 
 type Failure = string | { issue: number; files: string[] };
-type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number };
+type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number; grant: boolean };
 type Sequenced = { issue: number; files: string[] };
 type Result = {
   issue: number | null;
@@ -182,6 +191,12 @@ if (sec['Acceptance criteria'] && checkboxes(sec['Acceptance criteria']).length 
   failures.push('## Acceptance criteria has no "- [ ]" item');
 }
 const issueGlobs = parseIssueGlobs(body);
+// The grants are the issue's *declared* scope widened by one line each, and
+// since #231 no grant of either shape reaches `parseIssueGlobs` — so they are
+// read here, separately, and checked below as globs are (#232). They are
+// deliberately not counted by the "no bullet glob" failure: an issue whose
+// `## Files` carries only grants declares no scope of its own (0022).
+const issueGrants = parseIssueAuthorisedGlobs(body);
 if (sec['Files'] && issueGlobs.length === 0) {
   failures.push('## Files has no bullet glob');
 }
@@ -235,20 +250,28 @@ function fixedDirPrefix(glob: string): string {
 }
 
 const globs: GlobReport[] = [];
-for (const glob of issueGlobs) {
+
+/**
+ * Classifies one declared path — a bullet glob or an `authorised:` grant —
+ * as matched/new, or records the one failure this check can produce. Both
+ * kinds go through here so a grant is held to exactly the rule a bullet
+ * glob is held to (#232); `grant` changes only what the report entry is
+ * marked as and how the failure names the line, never the verdict.
+ */
+function classifyGlob(glob: string, grant: boolean): void {
   // globToRegExp never throws (ci/lib/globs.mts): every character it sees is
   // either one of its wildcard tokens (`**`, `*`, `?`) or gets escaped before
   // reaching `new RegExp` (#42), so there is no "glob does not parse" case.
   const regex = globToRegExp(glob);
   const matches = trackedFiles.filter((f) => regex.test(f));
   if (matches.length > 0) {
-    globs.push({ glob, status: 'matched', matches: matches.length });
+    globs.push({ glob, status: 'matched', matches: matches.length, grant });
   } else if (isLiteralPath(glob)) {
     // A literal path names a file the issue creates. Its parent directory
     // may not exist yet on disk — that is exactly what "new" means when the
     // issue also introduces a new directory (#37) — so only a wildcard that
     // matches nothing is treated as a mistake.
-    globs.push({ glob, status: 'new', matches: 0 });
+    globs.push({ glob, status: 'new', matches: 0, grant });
   } else {
     // A wildcard that matches nothing is "new" too, but only when its fixed
     // prefix names a directory that does not exist anywhere in the tracked
@@ -258,11 +281,21 @@ for (const glob of issueGlobs) {
     const dirPrefix = fixedDirPrefix(glob);
     const dirExists = dirPrefix !== '' && trackedFiles.some((f) => f.startsWith(dirPrefix));
     if (dirPrefix !== '' && !dirExists) {
-      globs.push({ glob, status: 'new', matches: 0 });
+      globs.push({ glob, status: 'new', matches: 0, grant });
     } else {
-      failures.push(`wildcard glob matches no tracked file: ${glob}`);
+      failures.push(`${grant ? '`authorised:` grant matches no tracked file' : 'wildcard glob matches no tracked file'}: ${glob}`);
     }
   }
+}
+
+for (const glob of issueGlobs) classifyGlob(glob, false);
+// A grant naming a path the issue already declares as a bullet is classified
+// once, as that bullet: it widens nothing, and reporting it twice would put
+// the same path in `globs` under both markings — and, for a wildcard that
+// matches nothing, raise the identical failure twice, once worded as a glob
+// and once as a grant.
+for (const glob of issueGrants) {
+  if (!issueGlobs.includes(glob)) classifyGlob(glob, true);
 }
 
 /** Literal (non-wildcard) globs from `list` that name no tracked file — the
@@ -358,20 +391,25 @@ if (blockedByCycle !== null) {
 }
 
 // --- AC3: disjointness against issues in flight in the same milestone -----
-const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, issueGlobs));
-const selfNewPaths = newLiteralPaths(issueGlobs);
-const selfNewPrefixes = newWildcardPrefixes(issueGlobs);
+// Both sides of every comparison below are "what this issue may touch" —
+// its bullet globs plus its grants — because that is the set `scope` checks
+// a diff against (`ci/lib/scope.mts:174`). A file granted to one issue and
+// declared by another is the same collision as two declarations of it (#232).
+const selfScope = [...issueGlobs, ...issueGrants];
+const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, selfScope));
+const selfNewPaths = newLiteralPaths(selfScope);
+const selfNewPrefixes = newWildcardPrefixes(selfScope);
 const sequenced: Sequenced[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
-  const otherGlobs = parseIssueGlobs(other.body);
-  if (otherGlobs.length === 0) continue;
-  const otherNewPaths = newLiteralPaths(otherGlobs);
-  const otherNewPrefixes = newWildcardPrefixes(otherGlobs);
-  const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherGlobs));
+  const otherScope = [...parseIssueGlobs(other.body), ...parseIssueAuthorisedGlobs(other.body)];
+  if (otherScope.length === 0) continue;
+  const otherNewPaths = newLiteralPaths(otherScope);
+  const otherNewPrefixes = newWildcardPrefixes(otherScope);
+  const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherScope));
   const overlapNewPaths = [
-    ...selfNewPaths.filter((p) => matchesAny(p, otherGlobs)),
-    ...otherNewPaths.filter((p) => matchesAny(p, issueGlobs)),
+    ...selfNewPaths.filter((p) => matchesAny(p, otherScope)),
+    ...otherNewPaths.filter((p) => matchesAny(p, selfScope)),
   ];
   // Wildcard-vs-wildcard (and literal-vs-wildcard-prefix) new-directory
   // overlap: the fixed-prefix comparison the regex-based check above can't
@@ -384,8 +422,8 @@ for (const other of others) {
   // (`tests/newsub/**`, new, under `tests/**`, matched — `tests/**` never
   // lands in `otherNewPrefixes` since `tests/` is tracked).
   const overlapNewPrefixes = [
-    ...selfNewPrefixes.filter((p) => matchesAny(p, otherGlobs)),
-    ...otherNewPrefixes.filter((p) => matchesAny(p, issueGlobs)),
+    ...selfNewPrefixes.filter((p) => matchesAny(p, otherScope)),
+    ...otherNewPrefixes.filter((p) => matchesAny(p, selfScope)),
     ...selfNewPrefixes.filter((p) => [...otherNewPrefixes, ...otherNewPaths].some((q) => newPathsOverlap(p, q))),
     ...otherNewPrefixes.filter((p) => [...selfNewPrefixes, ...selfNewPaths].some((q) => newPathsOverlap(p, q))),
   ];
@@ -429,7 +467,13 @@ function renderMarkdown(result: Result): string {
   const newGlobs = result.globs.filter((g) => g.status === 'new');
   if (newGlobs.length > 0) {
     lines.push('**New** (literal path the issue creates; no tracked file matches it yet):', '');
-    for (const g of newGlobs) lines.push(`- \`${g.glob}\``);
+    for (const g of newGlobs) lines.push(`- \`${g.glob}\`${g.grant ? ' (`authorised:` grant)' : ''}`);
+    lines.push('');
+  }
+  const grants = result.globs.filter((g) => g.grant);
+  if (grants.length > 0) {
+    lines.push('**Grants** (`authorised:` lines, checked like the globs — not the issue\'s own declared scope):', '');
+    for (const g of grants) lines.push(`- \`${g.glob}\` — ${g.status}`);
     lines.push('');
   }
   return lines.join('\n');

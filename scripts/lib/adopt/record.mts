@@ -31,6 +31,10 @@
 // had not landed, and the review of #193 read them as the shape the record
 // promises. `tests/adopt-record.test.mts` pins the rule, so a name that is
 // genuinely needed is exported together with the call that needs it (#233).
+// The converse is written down too: an export that stays says which modules
+// read it, in its own docstring, and the same file holds that reason to the
+// tree — see `PROOF_DIR` below, the one name #233 asked for and could not
+// have (#326).
 //
 // **Crash policy: fail closed.** Every function here either returns the
 // answer or throws a `RecordError` carrying a named `reason`; none of them
@@ -58,6 +62,24 @@ export const GENERATED_BY = 'agentic-setup/adopt';
 /**
  * Where a branch slug declares its proof (`proof/<slug>.json`, #164). Recorded
  * rather than assumed, so the proof runner reads one answer.
+ *
+ * **Exported, and it stays exported.** #233's criterion asked for this name
+ * and `LABELS_SOURCE` to stop being exported, on the reason that neither had
+ * a caller. `LABELS_SOURCE` still has none and is module-private below; this
+ * one has two, and both import it from here: `scripts/lib/proof.mts` is the
+ * proof runner's directory when a repository carries no record, and
+ * `scripts/lib/adopt/pr.mts` builds the adoption pull request's declared globs
+ * from it. The first landed with #236 while #233 was open, the second with
+ * #268 after it closed. Withdrawing the export would delete two callers, and
+ * moving the constant elsewhere would leave it reachable under another name
+ * while the check passed — so #326 records that half of #233's criterion as
+ * partially met rather than making it look delivered.
+ *
+ * `tests/adopt-record.test.mts` holds this paragraph to the tree in both
+ * directions: every module named here must import `PROOF_DIR` from this file,
+ * and every module that imports it must be named here — so the reason fails
+ * the suite when it goes stale instead of outliving, or outlasting, the
+ * callers it claims.
  */
 export const PROOF_DIR = 'proof';
 

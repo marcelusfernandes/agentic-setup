@@ -41,7 +41,8 @@ Before that push, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and r
 the result is not `ok: true` — a normal failure, or the lint's own `{ error }` when it
 could not even run: `{ refused: "issue-lint failed", lint: <the lint JSON> }`, exit 1,
 nothing pushed or relabelled. `issue-lint` checks the contract only — sections, globs,
-`Blocked by:` numbers — and has nothing else to pass through: the entry-point-reference
+the `authorised:` grants of `## Files`, `Blocked by:` numbers — and has nothing else to
+pass through: the entry-point-reference
 warning it used to run, and its opt-in strict flag, were both removed in #62 (see "Write
 sub-issues" below); `--no-lint` skips the check entirely, and the success JSON then
 reports `"lint": "skipped"` instead of `"lint": { "ok": true }`.
@@ -106,7 +107,9 @@ elapses. If CI or the reviewer sends it back, the implementer fixes in the same 
 - Issue `## Files`, `authorised:` lines: a line starting `authorised:` (bullet or bare)
   grants one glob outside those bullets, and **only the orchestrator writes it**. The glob
   stands alone on the line (backticked, or the first token); the justification goes on the
-  next line, indented.
+  next line, indented. `issue-lint` holds a grant to the two rules it holds the bullet
+  globs to — the glob resolves, and no other issue in flight claims the file — and names
+  it as a grant when it fails (#232).
 - PR `## Files`: prose. It grants nothing — the implementer writes that body, so a grant
   there would be a self-grant, and since #155 `scope` reports it as ignored and fails on
   the file anyway. An implementer that needs a file outside its globs asks the
@@ -145,7 +148,10 @@ lint invocation. What CI, and `issue-lint`, will hold the issue to:
   issues in flight cannot have intersecting globs — `issue-lint` fails a sub-issue over
   this itself, against every other `state:ready`/`state:in-progress`/`state:in-review`
   issue in the same milestone, unless a `Blocked by:` relation orders the two (then it is
-  reported as `sequenced`, not a failure).
+  reported as `sequenced`, not a failure). An `authorised:` grant counts on both sides of
+  that comparison: a granted file is a file the pull request may touch, so a grant of
+  yours against another issue's glob or grant — and the reverse — is the same
+  intersection (#232).
 - **Proof** names the test command and what it covers; `negative-control` reads the PR's
   diff, not the `test(red):` commit, to decide the red — the changed test files are copied
   onto the base and the suite must fail there. A branch may say otherwise in
@@ -175,7 +181,7 @@ lint invocation. What CI, and `issue-lint`, will hold the issue to:
   the rest of the tree and warn on a hit, but that fired on any ordinary import, doc or
   workflow mention of a covered path (not only a rename or removal), so it was removed in
   #62 along with its opt-in strict flag — `issue-lint` checks the contract only now
-  (sections, globs, `Blocked by:` numbers). The mechanical form of this gap — a path a PR
+  (sections, globs, the `authorised:` grants, `Blocked by:` numbers). The mechanical form of this gap — a path a PR
   removes or
   renames while another tracked file outside the diff still names it, the shape #3 needed
   — moved to PR time instead, where a diff exists to tell a rename from an in-place edit:

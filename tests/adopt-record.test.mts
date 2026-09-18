@@ -17,9 +17,11 @@
 // Negative control: on the base there is no `--record` flag at all, so every
 // `--record` spawn exits 1 on usage with nothing to parse, and no report
 // carries a `record` key or the `record:stale` gap — nothing on the base
-// compares a record with detection anywhere in the tree. Section M is the
-// exception: `record.mts` is tracked, so its red there is an assertion red —
-// the file exports six names nothing outside it reads.
+// compares a record with detection anywhere in the tree. Sections M and N are
+// the exception: `record.mts` is tracked, so their red there is an assertion
+// red — on the base of #233 the file exported six names nothing outside it
+// read, and on the base of #326 `PROOF_DIR`'s docstring names neither of the
+// two modules that import it.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -473,6 +475,83 @@ check(
   'every export of record.mts is named somewhere outside it',
   orphans.length === 0,
   `exported and never read: ${orphans.join(', ')}`,
+);
+
+// --- N: the one export #233 could not withdraw says why it stays (#326) -----
+// #233's criterion asked for two names to stop being exported. `LABELS_SOURCE`
+// is module-private; `PROOF_DIR` is not, and cannot be — `scripts/lib/proof.mts`
+// and `scripts/lib/adopt/pr.mts` import it, so withdrawing the export deletes
+// two callers rather than a placeholder. Nothing in the tree said that, so
+// re-reading the closed criterion against the file read the export as an
+// unfixed leftover and #326 was filed on that reading.
+//
+// Section M answers "does this export have a caller" for the suite. This one
+// answers it for a person and holds the answer to the tree, in both
+// directions: every module the docstring names must really import the constant
+// from this file, and every module in the tree that imports it must be named.
+// One direction alone would let the paragraph go stale silently — a third
+// caller added without a line here is exactly the kind of drift that left #233
+// half met. The docstring is read as the block immediately above the export,
+// not by a search of the whole file, and every file is read with its line
+// breaks collapsed first: a wrapped import list is one statement.
+const PROOF_DIR_AT = RECORD_SRC.indexOf('\nexport const PROOF_DIR');
+const PROOF_DIR_BLOCKS = PROOF_DIR_AT < 0 ? [] : [...RECORD_SRC.slice(0, PROOF_DIR_AT).matchAll(/\/\*\*([\s\S]*?)\*\//g)];
+const PROOF_DIR_DOC = PROOF_DIR_BLOCKS.at(-1)?.[1] ?? '';
+
+/**
+ * Every `<path>.mts` the docstring names in backticks, in the order it names
+ * them, minus this file: the paragraph names the pin that reads it, and a pin
+ * is not a caller — counting it would let the docstring satisfy this case by
+ * pointing at the case.
+ */
+const NAMED_CALLERS = [...PROOF_DIR_DOC.matchAll(/`([\w./-]+\.mts)`/g)]
+  .map((m) => m[1] ?? '')
+  .filter((rel) => !rel.startsWith('tests/'));
+
+/** A file's text as one line, so an import list that wraps still reads as one statement. */
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ');
+
+/** The names one file imports from any `record.mts`, `type` prefixes and aliases removed. */
+function importedFromRecord(text: string): string[] {
+  return [...oneLine(text).matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'[^']*record\.mts'/g)]
+    .flatMap((m) => (m[1] ?? '').split(','))
+    .map((name) => name.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0]?.trim() ?? '')
+    .filter((name) => name.length > 0);
+}
+
+/**
+ * Every module of the tree that imports `PROOF_DIR` from a `record.mts`, by
+ * path relative to the root. The test tree is left out of both sides of the
+ * comparison: a case that imported the constant to assert something about it
+ * would otherwise have to be listed in the docstring as a caller.
+ */
+const REAL_CALLERS = ['hooks', 'ci', 'scripts', join('.agents', 'skills')]
+  .flatMap((dir) => sources(join(ROOT, dir)))
+  .filter((path) => path !== join(ROOT, RECORD_REL))
+  .filter((path) => importedFromRecord(readFileSync(path, 'utf8')).includes('PROOF_DIR'))
+  .map((path) => path.slice(ROOT.length + 1));
+
+check('record.mts still exports PROOF_DIR (this case reads the docstring above it)', PROOF_DIR_AT >= 0, RECORD_REL);
+check(
+  "PROOF_DIR's docstring names the modules outside record.mts that import it",
+  NAMED_CALLERS.length >= 2,
+  `named by the docstring: ${NAMED_CALLERS.join(', ') || 'none'}`,
+);
+for (const rel of NAMED_CALLERS) {
+  const path = join(ROOT, rel);
+  const present = existsSync(path);
+  const imported = present ? importedFromRecord(readFileSync(path, 'utf8')) : [];
+  check(
+    `${rel}, which PROOF_DIR's docstring names, imports PROOF_DIR from record.mts`,
+    imported.includes('PROOF_DIR'),
+    present ? `imported from record.mts: ${imported.join(', ') || 'nothing'}` : `${rel} is not in the tree`,
+  );
+}
+const unnamed = REAL_CALLERS.filter((rel) => !NAMED_CALLERS.includes(rel));
+check(
+  "every module that imports PROOF_DIR is named by PROOF_DIR's docstring",
+  unnamed.length === 0,
+  `imports PROOF_DIR and is not named: ${unnamed.join(', ') || 'none'} (named: ${NAMED_CALLERS.join(', ') || 'none'})`,
 );
 
 finish();

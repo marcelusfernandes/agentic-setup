@@ -186,4 +186,69 @@ check(
   decide.slice(0, 600),
 );
 
+// --- #289: `land.mts --wait` (#260) makes the merge a step of the script, so no card
+// tells a person to poll for it. Every case below is bounded on a structural marker —
+// step 5's own `## ` slice, and inside it the fenced blocks themselves — never on a
+// blank line, which is what let #279's pin read a paragraph it did not own. The prose
+// cases run on a whitespace-collapsed copy of that slice: this card wraps its prose
+// under a hundred columns (step 5's lines average 86), so every sentence a case below
+// reads is split across two or three lines and invisible to a regex that assumes one.
+
+/** Collapses every whitespace run to one space, so a wrapped sentence compares as one line. */
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+/** The contents of every fenced block in `text`. */
+const fencedBlocks = (text: string): string[] =>
+  [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+
+const landBlocks = fencedBlocks(decide).filter((block) => /\$LAND/.test(block));
+check(
+  'SKILL.md step 5 has a runnable block that invokes `$LAND`',
+  landBlocks.length > 0,
+  decide.slice(0, 600),
+);
+check(
+  'SKILL.md step 5 invokes `land.mts` with `--wait`',
+  landBlocks.length > 0 && landBlocks.every((block) => /node\s+"\$LAND"\s+<pr>[^\n]*--wait/.test(block)),
+  landBlocks.join('\n---\n'),
+);
+// The card-wide form of the same pin: a second invocation anywhere in the card that
+// drops the flag puts the hand-wait back, and the step-5 case above would not see it.
+const bareLand = runnable.filter((block) => /node\s+"\$LAND"/.test(block) && !/--wait/.test(block));
+check(
+  'no runnable block in SKILL.md invokes `land.mts` without `--wait`',
+  bareLand.length === 0,
+  bareLand.join('\n---\n'),
+);
+
+const decideFlat = oneLine(decide);
+check(
+  'SKILL.md step 5 names `{ merged: pr, gate, mode }` as the outcome of a wait that ended in the merge',
+  /\{ merged: pr, gate, mode \}/.test(decideFlat),
+  decideFlat.slice(0, 900),
+);
+check(
+  'SKILL.md step 5 names the bound outcome, `{ queued … timeout }`, as the second one',
+  /\{ queued: pr, gate, mode, timeout[^}]*\}/.test(decideFlat),
+  decideFlat.slice(0, 900),
+);
+check(
+  'SKILL.md step 5 names `{ error }` on a closed or unreadable pull request as the third',
+  /\{ error[^}]*\}/.test(decideFlat) && /closed[^.]*unreadable|unreadable[^.]*closed/i.test(decideFlat),
+  decideFlat.slice(0, 900),
+);
+check(
+  'SKILL.md step 5 says mode `agent` never leaves a queue, so it is not a mode `--wait` waits in',
+  /mode `agent`[^.]*(never|no)[^.]*queue/i.test(decideFlat) || /never[^.]*\{ queued \}[^.]*mode `agent`/i.test(decideFlat),
+  decideFlat.slice(0, 900),
+);
+check(
+  'SKILL.md step 5 no longer tells the orchestrator to poll `reconcile.mts` until the PR is merged',
+  // The code span the card used to carry ran on past the script name
+  // (`scripts/reconcile.mts --milestone "<current>"`), so neither pattern may
+  // require a closing backtick right after `.mts`.
+  !/poll `scripts\/reconcile\.mts/i.test(decideFlat) && !/poll `reconcile\.mts/i.test(decideFlat),
+  decideFlat.slice(0, 900),
+);
+
 finish();
