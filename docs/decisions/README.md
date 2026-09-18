@@ -117,4 +117,4 @@ not a detail of item 8:
 | 21 | [The negative control never exempts a change to its own installed code](0021-the-gate-does-not-exempt-its-own-code.md) | proposed |
 | 22 | [A grant bullet is read once, as a grant, and never as a glob of the issue](0022-a-grant-bullet-is-never-also-a-glob.md) | proposed |
 | 23 | [A `--ruleset-name` that matches nothing refuses, and no failed read reaches the create path](0023-a-ruleset-name-that-matches-nothing-refuses.md) | proposed |
-| 24 | [An `authorised:` grant is never written from inside the worktree it would exempt](0024-a-grant-is-never-written-from-a-worktree.md) | accepted |
+| 24 | [An `authorised:` grant is never written from inside the worktree it would exempt](0024-a-grant-is-never-written-from-a-worktree.md) | proposed |

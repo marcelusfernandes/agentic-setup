@@ -7,9 +7,10 @@
 // real linked worktree of it, since the worktree is the discriminator. Also
 // asserts the declarative deny list that ships next to the hook, since the two
 // state the same rule and drift silently otherwise.
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ROOT, check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
+import { ROOT, check, cleanup, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
 
 const bash = (command: string, cwd: string, env?: Record<string, string>) =>
   hook('protect-main.mts', { tool_name: 'Bash', tool_input: { command }, cwd }, { cwd, env });
@@ -174,6 +175,21 @@ check(
 check(
   'protect-main denies the issue edit even with the push valve in the environment',
   agentBash('gh issue edit 42 --body-file x', grantWt, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 2,
+);
+
+// #237: the header's crash policy for item 4 is ALLOW — a `git` that cannot say
+// where the session is standing is not evidence of a grant. Both halves of the
+// worktree test are exercised: a directory that is no repository at all, and a
+// cwd `git` cannot even enter.
+const notARepo = mkdtempSync(join(tmpdir(), 'agentic-nonrepo-'));
+cleanup(() => rmSync(notARepo, { recursive: true, force: true }));
+check(
+  'protect-main allows the issue edit when the cwd is not a repository at all',
+  agentBash('gh issue edit 42 --body-file x', notARepo).status === 0,
+);
+check(
+  'protect-main allows the issue edit when git cannot read the cwd',
+  hook('protect-main.mts', { tool_name: 'Bash', tool_input: { command: 'gh issue edit 42 --body-file x' }, cwd: join(notARepo, 'no', 'such', 'dir'), agent_id: 'agent-237' }, { cwd: repo }).status === 0,
 );
 
 // #237 AC1: the refusal names the remedy the contract already has.

@@ -307,7 +307,12 @@ person is not watching.
    the PR.
 
 Forbidden: `git stash`, `git reset --hard`, `git checkout <file>`, `git clean`,
-force-push, editing outside the globs, touching the root manifest or lockfile. Need a
+force-push, editing outside the globs, touching the root manifest or lockfile, and
+`gh issue edit` — on the issue being implemented or any other. That last one is enforced,
+not asked for: `protect-main.mts` denies the whole subcommand from inside an agent's
+worktree (#237), because the issue body is where the `## Files` globs and any `authorised:`
+grant that widens them live, so a session editing it can grant itself scope. Need a file
+outside the globs? Comment on the issue, ask the orchestrator for the grant, and stop. Need a
 new dependency? Comment on the issue and stop: that is a `type:deps` issue for the
 orchestrator. Conflict with `main`: `git rebase` only before the first push; a published
 branch uses `git merge origin/main` (the final squash flattens it).

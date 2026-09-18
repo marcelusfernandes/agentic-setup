@@ -1,6 +1,6 @@
 # 0024. An `authorised:` grant is never written from inside the worktree it would exempt
 
-Status: accepted
+Status: proposed
 Date: 2026-09-18
 
 Landed with #237 (this pull request), which implements the rule below in the same diff. The
@@ -9,11 +9,15 @@ diff: it changes what `hooks/protect-main.mts` denies **and** who may write some
 of the five categories `README.md` lists — and it takes a command every implementer runs at
 its step 7 out of that agent's hands.
 
-Accepted, not proposed: the orchestrator's decision comment on #237 (2026-09-18, under the
-standing M11–M16 delegation recorded on #161, the owner may veto) answers the open question
-the issue body poses and says so in as many words — "the hook alone is accepted as the answer
-for now. `Status: accepted` for the hook half." The issue carries `human:decided`. The CI-side
-half is deferred, with a reason, under **Cost accepted** below.
+The issue body leaves one question open — whether the hook alone is the answer, or whether a
+CI-side author check is required before this is closed. The orchestrator's comment on #237
+(2026-09-18) rules that the hook alone is the answer for now and defers the CI-side check,
+for the reason recorded under **Cost accepted** below. That ruling is recorded here; it is
+not acceptance. It was written under the standing M11–M16 delegation on #161 and says in
+its own words that the owner may veto it, and `README.md` ("Silence never accepts") reserves
+`accepted` to an explicit written OK from the person running the loop. So this item lands
+`proposed`, like every dated item since 0021, and the pull request that flips this line will
+cite where that OK was written.
 
 ## Decision
 
