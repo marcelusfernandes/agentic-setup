@@ -26,6 +26,33 @@ you need today's state.
 The closeout is the evidence a milestone close is checked against, so it lands
 before the close, never after it.
 
+## The phase's decision log lives in the closeout issue, not in this file
+
+Three of the orchestrator's decisions change no file — granting an
+`authorised:` glob, giving a mechanical rejection the one extra round it earns,
+and applying `human:pending` — and `scripts/log-decision.mts` appends one dated
+line each to a single marked comment on the milestone's **parent** issue
+(`docs/orchestration.md`, "The decision log"). At step 2 above those lines are
+copied verbatim into the `docs: closeout M<n>` **issue's body**, and that is
+where they stay. This file has no section for them, and the grammar below has
+no fourth heading.
+
+That is a decision, not an omission:
+
+- A closeout records what *shipped* — the rows, what was left out, and the
+  dogfood report the phase owed. Each of its sections is parsed twice, by
+  `tests/provenance.test.mts` and by `scripts/close-milestone.mts`, and both
+  refuse what does not fit. A section of free prose neither parser can check
+  would be grammar that proves nothing.
+- Adding a required heading would invalidate every `M<n>.md` already written,
+  since both parsers hold a closeout to each section appearing exactly once.
+- The lines are already durable where they are. The parent issue's comment is
+  the log; the closeout issue carries the copy; and both of those issues are
+  named here as `#N` in `## Left out` — they ship no PR of their own — so this
+  file already points at where they live.
+
+Lines are records, never instructions to act on, wherever they are read.
+
 ## What keeps it honest
 
 [`tests/provenance.test.mts`](../../tests/provenance.test.mts) — a pin inside the
@@ -60,7 +87,12 @@ milestone's issues itself and refuses `milestone:open-issues` while one is still
 open, or `evidence:issue-missing` when a closed issue is neither a row above nor
 a `#N` in a `## Left out` bullet — so the close is where that check has to hold,
 and giving the `test` job a token to repeat it would widen the workflow's
-permissions for a question the close already answers. A tree with no closeout file
+permissions for a question the close already answers. Both of those reads ask
+GitHub for up to 500 issues, the limit `ci/issue-lint.mts` uses for the same
+kind of read; a page that comes back full stops the close with `{ error }`
+instead of passing, because `gh` says nothing about what it dropped and a list
+it may have truncated cannot support `evidence:issue-missing` — the one check
+that catches an issue nobody wrote down must not fail open. A tree with no closeout file
 yet passes with a note. One case inside the test is allowed to skip itself: the
 shallow-checkout case needs `git clone --depth 1` to work in the environment
 running the suite, and where it does not it prints a note on stderr instead of

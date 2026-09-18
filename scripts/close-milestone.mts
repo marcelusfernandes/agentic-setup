@@ -25,7 +25,11 @@
 // a 404 on the milestone — a network error, a rate limit, a token problem, a
 // missing remote — prints `{ error }` and exits 1 without writing; it is
 // never reported as a refusal, because it is not a verdict on the close. A
-// response that does not parse is treated the same way. This script never
+// response that does not parse is treated the same way, and so do the two
+// things that are not verdicts either: an issue list that comes back as a
+// whole `--limit` page, which may be truncated and cannot support
+// `evidence:issue-missing` (`GH_LIST_LIMIT` below), and a temporary
+// directory or file the description cannot be staged in. This script never
 // opens the next milestone or any issue: that stays the orchestrator's job
 // after the close returns.
 //
@@ -98,6 +102,14 @@ const USAGE = 'usage: node scripts/close-milestone.mts <milestone> --evidence do
 // Fully qualified, same reason as `reconcile.mts`'s #48 note: a local branch
 // literally named `origin/main` would otherwise shadow the remote-tracking ref.
 const MAIN = 'refs/remotes/origin/main';
+// `gh` defaults to 30 and caps a list at `--limit`, saying nothing about what
+// it dropped, so a page that comes back full is indistinguishable from a
+// complete one. `evidence:issue-missing` below compares the closeout against
+// the **closed** list: a short list would let a closeout that omits an issue
+// pass, and that is the one check reading "did everything that shipped get
+// written down". So the limit is `ci/issue-lint.mts`'s, for the same kind of
+// read, and a full page is an `{ error }` rather than a silent pass.
+const GH_LIST_LIMIT = 500;
 
 // --- the closeout grammar (docs/closeout/README.md, "Format") ---------------
 const HEADING = /^# Closeout M(\d+) — (.+)$/;
@@ -309,6 +321,30 @@ function filesOf(sha: string): string[] {
   return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
+/**
+ * Writes the new description to a throwaway file for `-F description=@<file>`.
+ * The directory and the file are made inside the same handler: a full or
+ * read-only `TMPDIR` used to throw out of the process, past every `{ error }`
+ * the crash policy above promises, and `{ error }` is the one shape the
+ * orchestrator's step 6 reads. Nothing has been written to GitHub at this
+ * point, so a failure here leaves the milestone untouched.
+ */
+function stage(text: string): { dir: string; file: string } {
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'agentic-close-milestone-'));
+    const file = join(dir, 'description.md');
+    try {
+      writeFileSync(file, text);
+    } catch (e) {
+      rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
+    return { dir, file };
+  } catch (e) {
+    fail({ error: `could not stage the milestone description: ${(e as Error).message}` });
+  }
+}
+
 /** At most `MAX_NAMED_PATHS` paths, the rest counted, so one reason stays readable. */
 const MAX_NAMED_PATHS = 3;
 function named(paths: string[]): string {
@@ -353,10 +389,18 @@ if (milestone.state !== 'open') {
 
 // --- 3. the milestone is empty -----------------------------------------------
 function issueNumbers(state: string): number[] {
-  const r = gh(['issue', 'list', '--milestone', title, '--state', state, '--json', 'number', '--limit', '200']);
+  const r = gh(['issue', 'list', '--milestone', title, '--state', state, '--json', 'number', '--limit', String(GH_LIST_LIMIT)]);
   if (r.status !== 0) fail({ error: why(r, `gh issue list --state ${state} failed`) });
   const list = safeParse<Array<{ number?: unknown }>>(r.stdout);
   if (!Array.isArray(list)) fail({ error: `could not parse gh's ${state} issue list for "${title}".` });
+  if (list.length >= GH_LIST_LIMIT) {
+    fail({
+      error:
+        `gh returned ${list.length} ${state} issue(s) for "${title}", a whole --limit ${GH_LIST_LIMIT} page: ` +
+        'the list may be truncated, and a truncated list cannot support evidence:issue-missing. ' +
+        'Raise GH_LIST_LIMIT in scripts/close-milestone.mts and run again.',
+    });
+  }
   return list.map((i) => Number(i.number)).filter((n) => Number.isInteger(n));
 }
 
@@ -456,14 +500,7 @@ const body = `${description.replace(/\s+$/, '')}\n\n${block}\n`;
 // carries newlines, which an argument does not survive cleanly. The state
 // change rides the same call, so the milestone is never left described as
 // closed but still open.
-const dir = mkdtempSync(join(tmpdir(), 'agentic-close-milestone-'));
-const bodyFile = join(dir, 'description.md');
-try {
-  writeFileSync(bodyFile, body);
-} catch (e) {
-  rmSync(dir, { recursive: true, force: true });
-  fail({ error: `could not stage the milestone description: ${(e as Error).message}` });
-}
+const { dir, file: bodyFile } = stage(body);
 const patched = gh([
   'api',
   '-X',

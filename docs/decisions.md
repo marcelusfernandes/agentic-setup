@@ -151,10 +151,15 @@ without a human" honest rather than hopeful.
 
 Status: accepted
 
-Every orchestrator step that mutates GitHub — locking an issue, dispatching one, merging a
-PR — is a script that reads live state and refuses rather than guessing, not a prose
-instruction the model is trusted to follow correctly under load: `scripts/claim.mts`
-(lock), `ci/issue-lint.mts` (dispatch gate), `scripts/land.mts` (merge). The model still
+Every orchestrator step that mutates GitHub — locking an issue, dispatching one, opening a
+sub-issue, merging a PR, closing a milestone — is a script that reads live state and
+refuses rather than guessing, not a prose instruction the model is trusted to follow
+correctly under load: `scripts/claim.mts` (lock), `ci/issue-lint.mts` (dispatch gate),
+`scripts/create-subissue.mts` (open a sub-issue linked to its parent, `state:ready` only
+once `issue-lint` reports `ok: true`), `scripts/land.mts` (merge) and
+`scripts/close-milestone.mts` (close a milestone against its closeout — the last
+hand-typed `gh api -X PATCH … -f state=closed` left on this route, replaced by #172).
+Both of the last two were written to satisfy this item. The model still
 plans and decides which issue to pick, which PR to send back, whether to wait; the script
 verifies the precondition and performs the write, and prints what it refused and why
 instead of a stack trace or a silent no-op.
