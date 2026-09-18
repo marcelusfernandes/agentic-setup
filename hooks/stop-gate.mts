@@ -83,12 +83,17 @@ const NESTED = 'AGENTIC_STOP_GATE';
 const STATE_FILE = 'agentic-stop-gate.json';
 const MAX_BLOCKS = 3;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_TIMEOUT_MS = 15 * 60 * 1000;
+/** Two stages at the ceiling is 14 minutes, which still leaves the git calls
+ *  room inside the hook's own 900-second timeout in `hooks.json`. Past that
+ *  the hook is killed mid-run and its command is orphaned, so the ceiling is
+ *  part of the contract, not a formality. */
+const MAX_TIMEOUT_MS = 7 * 60 * 1000;
 
 /** Per command. Twice the default, plus the git calls, stays under the hook's
  *  own 900-second timeout in `hooks.json`. `AGENTIC_STOP_GATE_TIMEOUT_MS`
- *  overrides it (a positive integer, capped) — a project whose suite is slower
- *  than five minutes needs it, and so does a case for the timeout itself. */
+ *  overrides it (a positive integer, clamped to MAX_TIMEOUT_MS) — a project
+ *  whose suite is slower than five minutes needs it, and so does a case for
+ *  the timeout itself. */
 function runTimeout(): number {
   const raw = Number(process.env.AGENTIC_STOP_GATE_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_TIMEOUT_MS;

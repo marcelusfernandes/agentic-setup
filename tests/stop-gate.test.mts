@@ -46,7 +46,7 @@ function gate(cwd: string, env: Record<string, string> = {}, payload: Record<str
   return hook(
     'stop-gate.mts',
     { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1', ...payload },
-    { cwd, env: { AGENTIC_STOP_GATE: '', AGENTIC_TEST_CMD: '', AGENTIC_CHECK_CMD: '', ...env } },
+    { cwd, env: { AGENTIC_STOP_GATE: '', AGENTIC_TEST_CMD: '', AGENTIC_CHECK_CMD: '', AGENTIC_STOP_GATE_TIMEOUT_MS: '', ...env } },
   );
 }
 
