@@ -86,6 +86,17 @@ The canonical remote branch is `codex/task-<issue-number>`: it is independent of
 slug and retry number. `claim` creates it with an empty expected-ref lease and returns
 `held` if it exists. It does not create a checkout or infer agent liveness.
 
+A pushed branch is also how the Claude route locks an issue, as
+`<type>/<issue-number>-<slug>` (its `scripts/claim.mts`), in a namespace this one can
+never collide with. Both routes therefore read the other's shape as a lock. Before
+pushing, `claim` lists the remote heads once and returns `held` with the branch it found —
+exit 2, nothing pushed, no label or assignee written — when a branch of either shape
+already locks the task. `status` reports such a task as `held`, with that branch under
+`foreignLock`, and never selects it as `next`; `labels` leaves its state label to the route
+that holds it; `land` refuses it. A listing that cannot be read refuses the claim instead:
+an unreadable remote is never read as a free issue. Reconcile with the other coordinator
+rather than pushing a second lock over the first.
+
 In the Codex app, use its managed worktree. In the CLI, create a linked worktree for
 the returned branch, for example `git worktree add --track -b codex/task-123 <path>
 origin/codex/task-123`. Inspect existing checkouts before doing this on a resumed task.
@@ -105,7 +116,8 @@ never create or update labels. It is a reconciliation step, not a background wat
 
 The command seeds missing standard labels without replacing existing colors/descriptions,
 then replaces conflicting managed state labels on this objective, its planned tasks,
-listed checkpoints and canonical task PRs only:
+listed checkpoints and canonical task PRs only — never on a task the other route locked,
+whose state label is that coordinator's record and is left exactly as found:
 
 | Label | Evidence represented |
 | --- | --- |
@@ -202,7 +214,9 @@ accounts for decisions, and server-protected review for merging.
 ready_to_finish, or complete. It never mutates GitHub or deletes worktrees.
 `claim` and `land` re-read state before writing. Run only one coordinator per objective;
 these snapshots do not provide distributed scheduling or a transaction across GitHub
-issues and git refs. Stop dependent work if the user changes the objective mid-run.
+issues and git refs. An objective whose remaining tasks are all held by the other route's
+locks reports `blocked` rather than a next task: the exclusion is a refusal to act on work
+another coordinator holds, not a queue that clears itself. Stop dependent work if the user changes the objective mid-run.
 
 `land` requires merge permission, no pending checkpoint blocking the task, a PR from
 the canonical branch to the integration branch, a GitHub APPROVED review, and effective
