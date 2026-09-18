@@ -332,7 +332,7 @@ edits, never merges, never offers to fix.
 | WorktreeCreate | `worktree-create.mts` | creates every agent's worktree itself, outside the main checkout — `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>`, detached HEAD, `node_modules` symlinked in when the checkout has one, path printed on stdout. Ships because Claude Code's own default (`.claude/worktrees/agent-<id>`) sits under a protected path and a headless implementer's writes there were denied (#129 L10/L11); this hook replaces that default once registered. Fails **closed**: any error exits 1 with nothing on stdout, since there is no later layer to catch a bogus or missing worktree the way the ruleset catches a missed push |
 | PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, and **any `gh pr merge` segment, with or without `--admin`** — `node scripts/land.mts <pr>` is the only merge path from a session (it spawns `gh` from inside Node, so the hook never sees a `gh` command string), and no environment variable lifts it. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion and never a merge. Force-push, `reset --hard`, `clean`, `stash` and `gh pr merge` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
 | PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
-| SubagentStop, Stop | `stop-gate.mts` | runs the project's own check command then its test command (`ci/lib/detect.mts`, the same detection `negative-control` uses; a branch's `proof/<slug>.json` `command` replaces the detected test command) **in the directory the event carries as its `cwd`** — the agent's worktree when the agent was spawned with `isolation: "worktree"` (the `WorktreeCreate` path above) or when the session's own cwd is the worktree, and the *session's* checkout for an agent that merely `cd`s into one (see the Known limits) — and **blocks the stop** while either is red — a top-level `{ decision: 'block', reason }` carrying the last lines of the failing output. Four bounds keep it from becoming a second CI: `main`/`master` is never gated (which is what makes the same hook a no-op when it fires on `Stop` in the main session), a last commit whose subject starts with `test(red):` is exempt, a project with no detected test command is let through with a note, and after **three consecutive blocks** on the same branch the stop goes through with a note. The counter lives in the worktree's own git directory, never in a tracked file, and resets three ways — a green run, a change of branch in the same worktree, and the cap pass itself, so the gate is live again for the agent's next turn rather than off for the rest of the branch. The commands run with `AGENTIC_STOP_GATE=1` so the gate cannot recurse into itself |
+| SubagentStop, Stop | `stop-gate.mts` | runs the project's own check command then its test command (`ci/lib/detect.mts`, the same detection `negative-control` uses; a branch's `proof/<slug>.json` `command` replaces the detected test command) **in the directory the event carries as its `cwd`** — the agent's worktree when the agent was spawned with `isolation: "worktree"` (the `WorktreeCreate` path above) or when the session's own cwd is the worktree, and the *session's* checkout for an agent that merely `cd`s into one (see the Known limits) — and **blocks the stop** while either is red — a top-level `{ decision: 'block', reason }` carrying the last lines of the failing output. Four bounds keep it from becoming a second CI: `main`/`master` is never gated (which is what makes the same hook a no-op when it fires on `Stop` in the main session), a last commit whose subject starts with `test(red):` is exempt, a project with no detected test command is let through with a note, and after **three consecutive blocks** on the same branch the stop goes through with a note. The counter lives in the worktree's own git directory, never in a tracked file, and resets three ways — a green run, a change of branch in the same worktree, and the cap pass itself, so the gate is live again for the agent's next turn rather than off for the rest of the branch. A fourth scope: the stop event's `stop_hook_active` (`true` when the stop continues one a stop hook already blocked) is read as a *counter scope*, not a bypass — `false` means a fresh stop, so blocks left on the branch by an abandoned round are not counted against it; `true` counts consecutively, because an early return there would put the cap out of reach and let every stop after the first block through. A command that ran and proved nothing — exit 127 (no such command) or more output than the gate can hold (ENOBUFS) — **blocks** with its own named reason and counts towards the cap, while a command that times out or genuinely cannot be spawned still lets the stop through. The commands run with `AGENTIC_STOP_GATE=1` so the gate cannot recurse into itself, each in its own process group, so the per-command timeout (five minutes, `AGENTIC_STOP_GATE_TIMEOUT_MS` overrides it up to seven) ends the runner *and* whatever it forked |
 
 The gate is *before* CI, not instead of it: `test`, `scope` and `negative-control` are
 still the only thing between a PR and the merge queue. What it removes is the round trip
@@ -346,7 +346,9 @@ plugin updates, for every agent at once. The two `PreToolUse` hooks and `stop-ga
 fail **open** when Node is missing or they crash — the git `pre-push` hook, the ruleset
 (when the plan allows one) and the `guard-main` action are the other layers behind the
 first two, and CI is the layer behind the gate, which also lets the stop through when it
-cannot judge (a command that times out or cannot be spawned, a counter it cannot write).
+cannot judge (a command that times out or cannot be spawned, a counter it cannot write) —
+but not when a command ran and proved nothing (exit 127, or output past the gate's cap),
+which blocks like any other red.
 `worktree-create.mts` is the exception: it fails **closed**, because there is nothing
 behind it to create the worktree if it does not (see the table above).
 
@@ -415,7 +417,24 @@ split is read as pending.
   whenever it cannot judge — no detected test command, a command that times out or cannot
   be spawned, a counter it cannot write. A `test(red):` last commit is exempt by design.
   In every one of those cases the `test` check on the PR is again the first thing that
-  sees the red, exactly as before `stop-gate.mts` existed.
+  sees the red, exactly as before `stop-gate.mts` existed. Two refusals are **not** in
+  that list: a command that ran and proved nothing — exit 127, or more output than the
+  gate can hold (ENOBUFS) — blocks with its own named reason and counts towards the cap,
+  because "your test runner is not installed" arriving as a clean stop is the failure the
+  gate exists to prevent. Three such blocks still release the stop, so a project the gate
+  can never judge is held for three turns, not forever.
+- **The `Stop` registration costs an adopter a full suite at every turn end.** Registered
+  on `Stop` as well as `SubagentStop`, the gate is a no-op only while the session sits on
+  `main`/`master`. On a feature branch **in the main checkout** it runs the detected check
+  command and then the test command at *every* turn end, in the foreground of the user's
+  own session — two runs of up to five minutes each by default
+  (`AGENTIC_STOP_GATE_TIMEOUT_MS` overrides that per command, clamped to seven minutes so
+  two stages still fit inside the 900-second hook budget in `hooks/hooks.json`). The only
+  exits are the trunk rule, a `test(red):` last commit, no detected test command, and the
+  cap of three. Where that cost is not wanted, drop the `Stop` entry from
+  `hooks/hooks.json` and keep `SubagentStop`: the orchestrated loop needs only the latter,
+  and the `Stop` entry is there for the single-session case where the implementer *is* the
+  session.
 - **The server does not verify the review in the default mode.** The reviewer is an
   isolated read-only agent returning `{verdict, reasons}`, and the same identity that runs
   `land.mts` writes `review:approved` from that verdict — an accepted cost, not a gap:

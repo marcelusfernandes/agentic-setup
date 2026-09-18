@@ -24,6 +24,12 @@ const SCRIPTS = {
   'red.mjs': "console.error('boom-line-from-the-suite');\nprocess.exit(1);\n",
   'green.mjs': "console.log('all green');\n",
 };
+/** Prints more than the gate's 8 MiB output cap, then exits 0. */
+const LOUD = "const chunk = 'x'.repeat(1024 * 1024);\nfor (let i = 0; i < 12; i++) process.stdout.write(chunk);\n";
+/** A runner that leaves a child behind and then sits there until killed. */
+const HANG = "import { spawn } from 'node:child_process';\nspawn(process.execPath, ['grandchild.mjs'], { cwd: process.cwd(), stdio: 'ignore' });\nsetTimeout(() => {}, 6000);\n";
+/** The child: it writes `survivor` only if it outlives the timeout. */
+const GRANDCHILD = "import { writeFileSync } from 'node:fs';\nsetTimeout(() => writeFileSync('survivor', '1'), 2000);\n";
 
 /** A repo with the two fixture commands, on a work branch with one commit. */
 function workRepo(branch = 'feat/1-widget'): string {
@@ -34,13 +40,28 @@ function workRepo(branch = 'feat/1-widget'): string {
   return dir;
 }
 
-/** Spawns the gate against `cwd`; env overrides are cleared unless given. */
-function gate(cwd: string, env: Record<string, string> = {}) {
+/** Spawns the gate against `cwd`; env overrides are cleared unless given.
+ *  `payload` adds fields to the stop event itself (`stop_hook_active`). */
+function gate(cwd: string, env: Record<string, string> = {}, payload: Record<string, unknown> = {}) {
   return hook(
     'stop-gate.mts',
-    { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' },
-    { cwd, env: { AGENTIC_STOP_GATE: '', AGENTIC_TEST_CMD: '', AGENTIC_CHECK_CMD: '', ...env } },
+    { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1', ...payload },
+    { cwd, env: { AGENTIC_STOP_GATE: '', AGENTIC_TEST_CMD: '', AGENTIC_CHECK_CMD: '', AGENTIC_STOP_GATE_TIMEOUT_MS: '', ...env } },
   );
+}
+
+/** Blocks this process for `ms` — the timeout cases have to outlive a child. */
+function sleep(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** The file's contents, or '' when it is not there. */
+function readIfAny(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
 }
 
 const red = { AGENTIC_TEST_CMD: RED };
@@ -166,6 +187,63 @@ const stateRepo = workRepo('feat/7-state');
 gate(stateRepo, red);
 check('the block counter lives under the git directory, not the worktree', existsSync(join(stateRepo, '.git', 'agentic-stop-gate.json')), 'no state file under .git/');
 check('the block counter leaves the working tree clean', git(['status', '--porcelain'], stateRepo) === '', git(['status', '--porcelain'], stateRepo));
+
+// --- AC1: `stop_hook_active` scopes the block counter (#309) ---------------
+// The flag is what a stop fired from inside a stop this gate already blocked
+// carries. It must not be a bypass: an early return on `true` would make the
+// cap of three unreachable, and every stop after the first block would pass.
+
+const continuationRepo = workRepo('feat/8-continuation');
+const continued = [
+  gate(continuationRepo, red),
+  gate(continuationRepo, red, { stop_hook_active: true }),
+  gate(continuationRepo, red, { stop_hook_active: true }),
+  gate(continuationRepo, red, { stop_hook_active: true }),
+];
+check(
+  'a stop fired from inside a blocked stop is still gated, up to the cap',
+  continued.slice(0, 3).every((r) => r.status === 2) && continued[3].status === 0,
+  continued.map((r) => r.status).join(','),
+);
+check('the continuation stops count consecutively, so the cap is reachable', /block 3 of 3/.test(continued[2].stderr), continued[2].stderr);
+
+const freshRepo = workRepo('feat/9-fresh');
+for (const _ of [1, 2, 3]) gate(freshRepo, red); // an abandoned round leaves the counter at the cap
+const fresh = gate(freshRepo, red, { stop_hook_active: false });
+check('a fresh stop is not the continuation of an abandoned round: the stale counter does not pass it through', fresh.status === 2, `${fresh.status}\n${fresh.stderr}`);
+check('a fresh stop counts from zero again', /block 1 of 3/.test(fresh.stderr), fresh.stderr);
+check('the fresh stop says the counter it found was stale', /stop_hook_active|abandoned round/.test(fresh.stderr), fresh.stderr);
+
+// --- AC2: the marker the whole re-entrancy story rests on ------------------
+
+const envRepo = workRepo('feat/10-env');
+const envProbe = gate(envRepo, {
+  AGENTIC_TEST_CMD: 'node -e "require(\'node:fs\').writeFileSync(\'gate-env\', String(process.env.AGENTIC_STOP_GATE))"',
+});
+check('the spawned command carries AGENTIC_STOP_GATE=1 in its environment', readIfAny(join(envRepo, 'gate-env')) === '1', `wrote ${JSON.stringify(readIfAny(join(envRepo, 'gate-env')))}\n${envProbe.stderr}`);
+
+// --- AC3: a command that ran and said nothing usable fails closed ----------
+
+const missingRepo = workRepo('feat/11-missing');
+const missing = gate(missingRepo, { AGENTIC_TEST_CMD: 'agentic-no-such-runner --run' });
+check('a test runner that is not installed blocks the stop instead of passing it', missing.status === 2, `${missing.status}\n${missing.stderr}`);
+check('the missing runner has its own named outcome (exit 127)', /exit 127/.test(missing.stderr) && /not found/i.test(missing.stderr), missing.stderr);
+
+const loudRepo = workRepo('feat/12-loud');
+commit(loudRepo, { 'loud.mjs': LOUD }, 'chore: a suite louder than the gate can hold');
+const loud = gate(loudRepo, { AGENTIC_TEST_CMD: 'node loud.mjs' });
+check('a suite that outruns the output cap blocks the stop instead of passing it', loud.status === 2, `${loud.status}\n${loud.stderr.slice(-400)}`);
+check('the noisy suite has its own named outcome (ENOBUFS), not "could not be spawned"', /ENOBUFS/.test(loud.stderr) && !/could not be spawned/.test(loud.stderr), loud.stderr.slice(-400));
+
+// --- AC4: the timeout ends the process group, not only the shell -----------
+
+const hangRepo = workRepo('feat/13-hang');
+commit(hangRepo, { 'hang.mjs': HANG, 'grandchild.mjs': GRANDCHILD }, 'chore: a runner that outlives its shell');
+const hung = gate(hangRepo, { AGENTIC_TEST_CMD: 'node hang.mjs', AGENTIC_STOP_GATE_TIMEOUT_MS: '1000' });
+sleep(4000); // longer than the grandchild's own delay, so a survivor has written by now
+check('a command that does not finish in time says so on stderr', /did not finish within/.test(hung.stderr), hung.stderr);
+check('the timeout ends the process group: no grandchild outlives it', !existsSync(join(hangRepo, 'survivor')), 'the grandchild survived the timeout that was supposed to end it');
+check('a command the gate could not judge still lets the stop through (crash policy: allow)', hung.status === 0, `${hung.status}\n${hung.stderr}`);
 
 // --- AC2: hooks.json wires the gate on both stop events --------------------
 

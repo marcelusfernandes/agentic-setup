@@ -46,7 +46,10 @@ of it. What is left is below.
    (`hooks/stop-gate.mts`) runs the detected check and test commands when you try to stop
    and blocks the stop while either is red, but it is a backstop, not your turn: it caps
    at three consecutive blocks, exempts a `test(red):` last commit, and lets the stop
-   through whenever it cannot judge. A block arrives as
+   through when it cannot judge — a command that times out or cannot be spawned, a counter
+   it cannot write. A command that *ran* and proved nothing is not in that list: an exit
+   127 (the runner is not installed) or more output than the gate can hold (ENOBUFS)
+   blocks like any other red, and counts towards the cap. A block arrives as
    `[agentic-setup/stop-gate] the test command … is red`, with the last lines of the
    failing output — fix that, do not work around the gate.
    **A silent green is not proof the gate ran.** It judges the directory the stop event

@@ -20,6 +20,13 @@
 //   4. after MAX_BLOCKS consecutive blocks in the same worktree the stop is
 //      let through with a note. An agent that cannot get to green in three
 //      rounds needs the reviewer, not a fourth identical block.
+// That cap — not an early return — is what keeps the gate from looping. The
+// stop event's `stop_hook_active` (`true` when the stop continues one a stop
+// hook already blocked) therefore scopes the counter instead of bypassing the
+// gate: returning early on `true` would put MAX_BLOCKS out of reach and let
+// every stop after the first block through, which is the gate disarming
+// itself. `false` is a fresh stop, so a counter left behind by an abandoned
+// round is not counted against it; an absent flag leaves the counter alone.
 // A branch that declares its proof (`proof/<slug>.json`, #136) has its
 // `command` run in place of the detected test command, so the gate and the
 // negative control agree on what proves the branch.
@@ -46,15 +53,28 @@
 // on the session's checkout, and on the trunk that means no gate at all —
 // measured, three headless runs, #137 (comment 5715271545).
 //
-// Crash policy: ALLOW. An unreadable payload, a git command that cannot
-// answer, a counter that cannot be read or written, a command that times out
-// or cannot be spawned — every one of them lets the stop through with a note
-// on stderr. A gate that cannot judge must not hold the agent: CI is still
-// behind it, and an unwritable counter would otherwise mean the cap never
-// fires.
+// Each command runs in its own process group (`detached`), so the timeout can
+// end the runner *and* whatever it forked. Killing the shell alone leaves the
+// grandchildren behind, and a hung runner then outlives the timeout that was
+// supposed to end it.
+//
+// Crash policy: ALLOW, with two named exceptions that fail closed. An
+// unreadable payload, a git command that cannot answer, a counter that cannot
+// be read or written, a command that times out or genuinely cannot be spawned
+// — every one of them lets the stop through with a note on stderr. A gate that
+// cannot judge must not hold the agent: CI is still behind it, and an
+// unwritable counter would otherwise mean the cap never fires.
+// The exceptions are the two refusals where the command *did* run and said
+// something: exit 127 (no such command — nothing ran, so nothing is proven)
+// and more output than MAX_OUTPUT (ENOBUFS — the result cannot be read). Those
+// are judged red and block, because "the test runner is missing" reaching the
+// agent as "the gate is happy" is the quiet failure this hook exists to
+// prevent. They count towards MAX_BLOCKS like any other block, so three of
+// them still release the stop.
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { blockStop, currentBranch, git, note, parsePayload, readStdin, run } from './lib/common.mts';
+import { blockStop, currentBranch, git, note, parsePayload, readStdin } from './lib/common.mts';
 import { detectCommands } from '../ci/lib/detect.mts';
 
 const HOOK = 'stop-gate';
@@ -62,9 +82,25 @@ const HOOK = 'stop-gate';
 const NESTED = 'AGENTIC_STOP_GATE';
 const STATE_FILE = 'agentic-stop-gate.json';
 const MAX_BLOCKS = 3;
-/** Per command. Twice this, plus the git calls, stays under the hook's own
- *  900-second timeout in `hooks.json`. */
-const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Two stages at the ceiling is 14 minutes, which still leaves the git calls
+ *  room inside the hook's own 900-second timeout in `hooks.json`. Past that
+ *  the hook is killed mid-run and its command is orphaned, so the ceiling is
+ *  part of the contract, not a formality. */
+const MAX_TIMEOUT_MS = 7 * 60 * 1000;
+
+/** Per command. Twice the default, plus the git calls, stays under the hook's
+ *  own 900-second timeout in `hooks.json`. `AGENTIC_STOP_GATE_TIMEOUT_MS`
+ *  overrides it (a positive integer, clamped to MAX_TIMEOUT_MS) — a project
+ *  whose suite is slower than five minutes needs it, and so does a case for
+ *  the timeout itself. */
+function runTimeout(): number {
+  const raw = Number(process.env.AGENTIC_STOP_GATE_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.trunc(raw), MAX_TIMEOUT_MS);
+}
+
+const RUN_TIMEOUT_MS = runTimeout();
 const MAX_OUTPUT = 8 * 1024 * 1024;
 const REASON_LINES = 25;
 const REASON_CHARS = 4000;
@@ -78,6 +114,9 @@ function tail(text: string): string {
   const lines = text.trim().split('\n').slice(-REASON_LINES).join('\n');
   return lines.length > REASON_CHARS ? `…${lines.slice(-REASON_CHARS)}` : lines;
 }
+
+/** An error's message, whatever was thrown. */
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** The `<slug>` of a `<type>/<n>-<slug>` branch, or `null` for any other shape. */
 function branchSlug(branch: string): string | null {
@@ -103,7 +142,7 @@ function declaredCommand(root: string, branch: string): { path: string; command:
   try {
     parsed = JSON.parse(readFileSync(absolute, 'utf8'));
   } catch (error) {
-    note(HOOK, `\`${path}\` does not parse (${error instanceof Error ? error.message : String(error)}); using the detected command instead.`);
+    note(HOOK, `\`${path}\` does not parse (${message(error)}); using the detected command instead.`);
     return null;
   }
   const command = (parsed as Record<string, unknown> | null)?.command;
@@ -142,27 +181,109 @@ function writeState(file: string, state: State): boolean {
   }
 }
 
-type Ran = { ok: boolean; output: string; unusable: string | null };
+/**
+ * One command's outcome. `unusable` is a refusal the gate cannot judge (the
+ * stop is let through, crash policy above); `red` is a refusal it *can* judge
+ * (the stop is blocked, with this as the named reason); neither set means the
+ * exit status decides.
+ */
+type Ran = { ok: boolean; output: string; red: string | null; unusable: string | null };
 
-/** Runs one shell command in the worktree. Never throws. */
-function runCommand(command: string, root: string): Ran {
-  const r = run(command, [], {
-    cwd: root,
-    shell: true,
-    timeout: RUN_TIMEOUT_MS,
-    maxBuffer: MAX_OUTPUT,
-    env: { ...process.env, [NESTED]: '1' },
+/**
+ * Kills the command's whole process group, so a runner that forked children
+ * dies with its shell. Falls back to the shell alone when the group is
+ * already gone, and says so when even that fails.
+ */
+function killGroup(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch (error) {
+      note(HOOK, `the command could not be killed (${message(error)}); it may still be running.`);
+    }
+  }
+}
+
+/** The verdict for a command that ran to the end of its output. */
+function judge(status: number | null, output: string, overflowed: boolean, timedOut: boolean): Ran {
+  if (timedOut) {
+    return { ok: false, output, red: null, unusable: `it did not finish within ${RUN_TIMEOUT_MS / 60000} minutes (its process group was killed)` };
+  }
+  if (overflowed) {
+    return {
+      ok: false,
+      output,
+      red: `it printed more than ${MAX_OUTPUT / (1024 * 1024)} MiB, more than the gate can hold (ENOBUFS), so its result cannot be read. Quiet the command, or name a quieter one in \`proof/<slug>.json\`.`,
+      unusable: null,
+    };
+  }
+  if (status === 127) {
+    return {
+      ok: false,
+      output,
+      red: 'the command was not found (exit 127), so nothing ran and nothing is proven. Install the runner, set `AGENTIC_TEST_CMD`, or name the command in `proof/<slug>.json`.',
+      unusable: null,
+    };
+  }
+  return { ok: status === 0, output, red: null, unusable: null };
+}
+
+/** Runs one shell command in the worktree, in its own process group. Never throws. */
+function runCommand(command: string, root: string): Promise<Ran> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(command, {
+        cwd: root,
+        shell: true,
+        detached: true, // its own process group: the timeout ends the children too
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, [NESTED]: '1' },
+      });
+    } catch (error) {
+      resolve({ ok: false, output: '', red: null, unusable: `it could not be spawned (${message(error)})` });
+      return;
+    }
+
+    let output = '';
+    let overflowed = false;
+    let timedOut = false;
+    let settled = false;
+    const settle = (ran: Ran) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ran);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup(child);
+    }, RUN_TIMEOUT_MS);
+    const collect = (chunk: string) => {
+      if (overflowed) return;
+      output += chunk;
+      if (output.length <= MAX_OUTPUT) return;
+      overflowed = true;
+      output = output.slice(0, MAX_OUTPUT);
+      killGroup(child);
+    };
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', collect);
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', collect);
+    child.on('error', (error) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOBUFS') {
+        settle(judge(null, output, true, false));
+        return;
+      }
+      settle({ ok: false, output, red: null, unusable: `it could not be spawned (${error.message})` });
+    });
+    child.on('close', (status) => settle(judge(status, output, overflowed, timedOut)));
   });
-  const output = `${r.stdout}${r.stderr}`;
-  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
-  const unusable = code === 'ETIMEDOUT'
-    ? `it did not finish within ${RUN_TIMEOUT_MS / 60000} minutes`
-    : r.error
-      ? `it could not be spawned (${r.error.message})`
-      : r.status === 127
-        ? 'the command was not found'
-        : null;
-  return { ok: r.ok, output, unusable };
 }
 
 async function main() {
@@ -205,7 +326,16 @@ async function main() {
     return;
   }
   const stateFile = join(dir, STATE_FILE);
-  const state = readState(stateFile, branch);
+  let state = readState(stateFile, branch);
+  // Fourth scope of the counter: `stop_hook_active` is false, so this stop is
+  // not continuing one a stop hook blocked, and whatever this branch's counter
+  // holds belongs to a round that was abandoned. Counting it would let a fresh
+  // red stop through on someone else's blocks. It is deliberately not written
+  // back here: the run below writes the counter it ends on.
+  if (payload.stop_hook_active === false && state.blocks > 0) {
+    note(HOOK, `\`stop_hook_active\` is false, so this stop continues none that this gate blocked: the ${state.blocks} block(s) recorded for \`${branch}\` are from an abandoned round and do not count here. Counting from zero.`);
+    state = { blocks: 0, branch };
+  }
   if (state.blocks >= MAX_BLOCKS) {
     // Third reset: the cap pass clears the counter, so the gate is live again
     // for the agent's next turn instead of being off for the rest of the
@@ -220,7 +350,7 @@ async function main() {
   stages.push({ label: 'test', command: testCommand });
 
   for (const stage of stages) {
-    const result = runCommand(stage.command, root);
+    const result = await runCommand(stage.command, root);
     if (result.unusable) {
       note(HOOK, `the ${stage.label} command \`${stage.command}\` could not be judged: ${result.unusable}. Letting the stop through.`);
       return;
@@ -231,10 +361,10 @@ async function main() {
     const counter = stored
       ? `This is block ${blocks} of ${MAX_BLOCKS}; after ${MAX_BLOCKS} the stop goes through and CI becomes the gate again.`
       : `The block counter could not be written (${stateFile}), so this block does not count towards the cap of ${MAX_BLOCKS}.`;
-    blockStop(
-      HOOK,
-      `the ${stage.label} command \`${stage.command}\` is red in ${root}. Fix it, or commit the failing test as \`test(red): …\` if the red is the point. ${counter}\nLast lines:\n${tail(result.output)}`,
-    );
+    const why = result.red
+      ? `the ${stage.label} command \`${stage.command}\` proved nothing in ${root}: ${result.red}`
+      : `the ${stage.label} command \`${stage.command}\` is red in ${root}. Fix it, or commit the failing test as \`test(red): …\` if the red is the point.`;
+    blockStop(HOOK, `${why} ${counter}\nLast lines:\n${tail(result.output)}`);
   }
 
   writeState(stateFile, { blocks: 0, branch });

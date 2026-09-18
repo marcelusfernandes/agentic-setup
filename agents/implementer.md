@@ -61,7 +61,13 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    and you get
    `[agentic-setup/stop-gate] the <check|test> command <cmd> is red in <worktree>`, the
    block number, and the last lines of the failing output: read those lines, fix the
-   cause, and try to stop again. It does not run on `main`/`master`, and it does not run
+   cause, and try to stop again. A command that ran and proved nothing blocks too, in the
+   other shape —
+   `[agentic-setup/stop-gate] the <check|test> command <cmd> proved nothing in <worktree>:
+   the command was not found (exit 127) …` or the same for a command that printed more
+   than the gate can hold (ENOBUFS). Those count towards the cap as well: install the
+   runner, set `AGENTIC_TEST_CMD`, or name the command in `proof/<slug>.json` — do not
+   wait for the cap to let you out. It does not run on `main`/`master`, and it does not run
    when your last commit is a `test(red):` — that red is the point of the commit, so
    commit the red test *before* you stop rather than working around the gate. Three
    consecutive blocks on the same branch is the cap: the fourth stop goes through with the
