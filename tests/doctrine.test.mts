@@ -681,4 +681,78 @@ for (const { finding, step, text } of CITATIONS) {
   );
 }
 
+// --- #266: the two limits the "Known limits" section owes a reader ----------------
+// Both were found by paying for them: `isolation: worktree` makes a worktree of the
+// *session's* repository (`docs/dogfood/2026-09-06.md`, F5), and an agent declaring
+// `memory: project` writes its memory into a worktree that is removed with the pass
+// (`docs/dogfood/2026-09-10.md`, L15). "Known limits" is where a reader looks for both,
+// and before this block that section carried no pin at all — the file was pinned
+// throughout the days its step 5 described a merge gate that no longer existed, because
+// the stale sentence sat outside every pinned span. Every assertion below is scoped to
+// the section that owes the sentence: `isolation: "worktree"`, `main checkout` and
+// `absolute path` all appear elsewhere in the same file and would otherwise pass on a
+// document that still omits them where they belong.
+
+/** The normalized span of `text` from `heading` to the next `## ` heading, or the end. */
+function section(text: string, heading: string): string {
+  const start = text.indexOf(heading);
+  if (start === -1) return '';
+  const next = text.indexOf(' ## ', start + heading.length);
+  return next === -1 ? text.slice(start) : text.slice(start, next);
+}
+
+const knownLimits = section(orchestration, '## Known limits');
+check('#266 docs/orchestration.md still has a "Known limits" section to read', knownLimits.length > 0);
+
+// --- AC1: the cross-repository limit (F5) ---
+
+check(
+  '#266 AC1 "Known limits" says `isolation: worktree` makes a worktree of the session\'s own repository',
+  knownLimits.includes("`isolation: worktree` makes a worktree of the session's own repository"),
+  knownLimits.slice(0, 900),
+);
+check(
+  '#266 AC1 it says orchestrating another repository means the implementer creates its own worktree with absolute paths',
+  /orchestrating another repository from one session means the implementer creates its own worktree with absolute paths/i.test(knownLimits),
+  knownLimits.slice(0, 900),
+);
+check(
+  '#266 AC1 it names the designed mode: a session rooted in the target repository',
+  /designed mode is a session rooted in the target repository/.test(knownLimits),
+  knownLimits.slice(0, 900),
+);
+check(
+  '#266 AC1 it cites the pass that measured it, by report path and finding',
+  knownLimits.includes('docs/dogfood/2026-09-06.md') && /\bF5\b/.test(knownLimits),
+  knownLimits.slice(0, 900),
+);
+
+// --- AC2: where an agent's memory lives (L15) ---
+
+check(
+  '#266 AC2 "Known limits" says an agent declaring `memory: project` writes its memory inside its worktree',
+  knownLimits.includes('declares `memory: project` writes its memory inside its worktree'),
+  knownLimits.slice(0, 1200),
+);
+check(
+  '#266 AC2 it says that worktree is removed with the pass',
+  /removed with the pass/.test(knownLimits),
+  knownLimits.slice(0, 1200),
+);
+check(
+  '#266 AC2 it draws the consequence: agent memory does not survive a pass',
+  /agent memory does not survive a pass/.test(knownLimits),
+  knownLimits.slice(0, 1200),
+);
+check(
+  '#266 AC2 it says a durable memory has to be given a path in the main checkout',
+  /durable memory has to be given a path in the main checkout/.test(knownLimits),
+  knownLimits.slice(0, 1200),
+);
+check(
+  '#266 AC2 it cites the pass that measured it, by report path and finding',
+  knownLimits.includes('docs/dogfood/2026-09-10.md') && /\bL15\b/.test(knownLimits),
+  knownLimits.slice(0, 1200),
+);
+
 finish();
