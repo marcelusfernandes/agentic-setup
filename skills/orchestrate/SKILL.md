@@ -202,10 +202,13 @@ node "$LINT" <n>
 
 Prints `{ issue, ok, failures, globs, sequenced }`; dispatch only `ok: true`. issue-lint
 checks the issue's contract only — sections present, globs that parse and match
-something (or are `new`), globs disjoint from the other issues already in flight, and
-every `Blocked by:` number exists — it never reads a diff, so there is no entry-point
-warning to read here any more (`docs/decisions.md` item 12, superseded by item 13). A
-`failures` entry (a missing section, a wildcard glob that matches no tracked file, a
+something (or are `new`), the `authorised:` grants of `## Files` held to those same two
+rules (each `globs` entry says which it was, `grant: true` or `grant: false`), globs
+disjoint from the other issues already in flight, and every `Blocked by:` number exists —
+it never reads a diff, so there is no entry-point warning to read here any more
+(`docs/decisions.md` item 12, superseded by item 13). A `failures` entry (a missing
+section, a wildcard glob that matches no tracked file, an `authorised:` grant that matches
+no tracked file, a
 `Blocked by:` number `gh` cannot find, a `Blocked by:` cycle among the milestone's issues
 — a string naming every issue in it, since a cycle is no order at all — or a
 `{ issue, files }` overlap with another issue in flight) drops the candidate from this pass — a literal path with no `*`, `?` or `**`
@@ -219,7 +222,8 @@ two issues are already ordered by a `Blocked by:` relation.
 
 Read each candidate's `## Files`. Two issues whose globs could match the same file do not
 run together — `issue-lint`'s own `failures`/`sequenced` already checked this against every
-other issue in flight in the milestone, so a candidate that reached `ok: true` has no
+other issue in flight in the milestone, grants on both sides included (a granted file is a
+file that pull request may touch), so a candidate that reached `ok: true` has no
 undeclared overlap left to find by hand. Four is the practical ceiling; file conflict is
 the real limit, not the subagent count.
 

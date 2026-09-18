@@ -184,4 +184,40 @@ replaced.
 
 ## Updates
 
-None yet.
+*2026-09-18 (#232, #328):* `ci/issue-lint.mts` reads the grants too now, and holds them
+to the two rules it holds the bullet globs to. It calls `parseIssueAuthorisedGlobs`
+(`ci/issue-lint.mts:199`), resolves a grant and a bullet glob through one
+`classifyGlob(glob, grant)` by the same literal-path/new-prefix rule, and runs the
+disjointness comparison over `[...globs, ...grants]` on both sides (`:398`, `:405`).
+**The decision above is unchanged and still in force**: a grant bullet is read once, as
+a grant, and never as one of the issue's globs — `parseIssueGlobs` still skips it, and
+the lint now tells a granted path from a declared one rather than conflating them, which
+is what this item said it could not do. What no longer describes the code is the last
+sentence of the third bullet of **Decision**, that the lint's disjointness set "stops
+treating a grant as scope": it compares grants again, *as grants* and through the second
+parser, and each `globs` entry carries `grant: true`/`grant: false` so the two stay
+distinguishable in the output. That adds two refusals at dispatch — a grant whose
+wildcard matches no tracked file, and a granted file another in-flight issue of the
+milestone also covers unless a `Blocked by:` sequences the two — and by this item's own
+test, a change that adds a refusal is not a measurement of existing behaviour, which is
+what earns this line. **Cost accepted** is untouched: `## Files has no bullet glob`
+still counts bullets only, so an issue whose `## Files` carries grants alone still
+declares no scope of its own. The same pull request moved this item's citations into
+that file (the header gained the sentence naming grants, the body gained the grant
+parsing): the three under **Decision** read `:67`, `:193` and `:405`, and the one under
+**Cost accepted** reads `:200-201`. A seventh citation moved as well, into a different
+cited file: **Decision**'s `skills/issue-and-pr/SKILL.md:98`, the card sentence stating the
+bullet exception, is at `:99` because that pull request added a line above it. The wording
+above keeps the numbers it was written with, per the template, and every number in this
+paragraph is read at the head that records it rather than computed from an earlier one.
+
+**The rule, stated over the relation it has to close: when a branch moves a file, every
+citation into that file is re-pointed — every one this item carries, whoever wrote it and
+whenever, not only the ones the moving pull request typed — corrected where a glob or a
+grant covers the document the citation sits in, and reported where neither does.** Three
+rounds of #328 each read that relation too narrowly and each missed what the narrowing hid:
+one corrected a citation in a workflow header and left six here; the next swept those six,
+all into one cited file, and left the seventh, which points into another; the third stated
+the rule with an authorship qualifier — "citations this pull request has written" — that
+would itself have excluded four of those seven, the seventh included, since they were
+written by the pull request that created this item and not by the one that moved them.
