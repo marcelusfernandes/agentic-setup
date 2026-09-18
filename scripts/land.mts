@@ -21,11 +21,14 @@
 //   node scripts/land.mts <pr> [--require-review] [--wait [--timeout <seconds>]]
 //
 // Refuses (exit 1, { refused, pr, missing, mode }) unless OPEN and approved
-// under the mode it declares. Every output — each refusal, the merge and the
-// queue — names that mode, so no path is silent about which binding it ran
-// under (#144, #156), and each mode carries its *complete* set of
-// conditions: there is no downgrade from one to the other, and no mode is
-// ever selected by the absence of something.
+// under the mode it declares. Every output names that mode — each refusal,
+// the merge, the queue, and the { error } lines too, which are exactly what an
+// operator reads when no merge happened: the usage line names mode null,
+// because it is printed before a mode can be read, and every { error } after
+// it carries { pr, gate, mode } beside gh's own message (#238). So no path is
+// silent about which binding it ran under (#144, #156), and each mode carries
+// its *complete* set of conditions: there is no downgrade from one to the
+// other, and no mode is ever selected by the absence of something.
 //
 //   'agent'    the default, and the binding this repository runs. The
 //              reviewer is an isolated agent that returns { verdict, reasons }
@@ -39,7 +42,21 @@
 //              `pass`.
 //   'approved' opt-in: everything 'agent' requires *plus*
 //              `reviewDecision === 'APPROVED'`, a review the server itself
-//              verified and carries. Selected by `--require-review`, or by a
+//              verified and carries, *cast against this very head*. The newest
+//              APPROVED entry of `gh pr view <pr> --json reviews` carries the
+//              `commit.oid` it was submitted on, and that oid must equal
+//              `headRefOid` too, or the run refuses with missing
+//              ['head:changed'] (#238). Without that read a stale approval
+//              merges the head whenever some marker equal to it exists:
+//              GitHub dismisses a stale review only where the repository
+//              raised `dismiss_stale_reviews_on_push`, and the marker records
+//              what the *orchestrator* reviewed, never what the server-side
+//              review was cast on. `--json latestReviews` is the read that
+//              cannot answer this — gh returns `commit: { oid: "" }` on every
+//              entry there, so `reviews` is the field. A reviews read that
+//              cannot answer refuses with missing ['gh-pr-reviews'] and merges
+//              nothing, failing closed as the comments read does.
+//              Selected by `--require-review`, or by a
 //              base branch whose effective rules already require an approving
 //              review (`pull_request` with
 //              `required_approving_review_count > 0`) — never by whether
@@ -80,6 +97,13 @@
 // the merge commit f624902 landed behind it on the queued `--auto`). A
 // comments read that cannot answer refuses with missing ['gh-pr-comments']
 // and attempts no merge.
+//
+// That marker binds a commit, not a person. Any identity that can comment on
+// the pull request can write one, and nothing here reads the comment's author:
+// which identity counts as the orchestrator is the question #156 and #237
+// carry, and until that decision lands the marker is read for its oid alone.
+// Mode 'approved' is where that gap is narrowest, because there the server
+// keeps a record of its own — see that mode's entry above.
 //
 // A head GitHub does not report as MERGEABLE refuses with missing
 // ['merge:not-mergeable'] — CONFLICTING, and UNKNOWN too, because a
@@ -128,8 +152,8 @@
 // print { queued: pr, gate, mode } — there, the review requirement the
 // server itself enforces (or the absence of any review to outrun) is what
 // the queue answers to. A merge call that still fails (the initial one, the
-// clean-status retry, or the disarm) prints { error } with gh's message,
-// exit 1. No relabel and no worktree removal either way.
+// clean-status retry, or the disarm) prints { error, pr, gate, mode } with
+// gh's message, exit 1. No relabel and no worktree removal either way.
 //
 // `--wait` makes that queue a bounded step of this script instead of a
 // person watching `gh pr checks` (measured: `docs/dogfood/2026-09-10.md`,
@@ -170,6 +194,8 @@ type PRView = {
   mergeable?: string;
 };
 type PRComments = { comments?: Array<{ body?: unknown }> };
+type PRReview = { state?: unknown; commit?: { oid?: unknown } | null };
+type PRReviews = { reviews?: PRReview[] };
 type Rule = { type?: string; parameters?: { required_approving_review_count?: number } };
 type Check = { bucket?: unknown };
 type Mode = 'agent' | 'approved' | 'docs';
@@ -193,6 +219,22 @@ function newestReviewedSha(bodies: readonly string[]): string | null {
   for (let i = bodies.length - 1; i >= 0; i -= 1) {
     const marker = [...bodies[i].matchAll(REVIEWED_SHA)].at(-1);
     if (marker) return marker[1].toLowerCase();
+  }
+  return null;
+}
+
+/**
+ * The oid the newest APPROVED review was cast against, lowercased. Null when
+ * nothing approves, and null when the newest approving review records no full
+ * 40-hex oid: a review that names no commit binds no head, exactly as a label
+ * does not. Reviews arrive oldest-first, so this reads from the end for the
+ * same reason `newestReviewedSha` does — the newest one is the one in force.
+ */
+function newestApprovedReviewOid(reviews: readonly PRReview[]): string | null {
+  for (let i = reviews.length - 1; i >= 0; i -= 1) {
+    if (reviews[i]?.state !== 'APPROVED') continue;
+    const oid = reviews[i]?.commit?.oid;
+    return typeof oid === 'string' && /^[0-9a-f]{40}$/i.test(oid) ? oid.toLowerCase() : null;
   }
   return null;
 }
@@ -312,7 +354,7 @@ function parseArgs(argv: readonly string[]): Options | null {
 }
 
 const options = parseArgs(process.argv.slice(2));
-if (!options) fail({ error: USAGE });
+if (!options) fail({ error: USAGE, mode: null });
 const { pr, requireReview, wait, timeout } = options;
 
 const view = ghJson<PRView | null>(
@@ -381,6 +423,39 @@ if (mode === 'agent' || mode === 'approved') {
   }
 }
 
+// Mode 'approved' adds the server's own record of that commit. The marker
+// above is a pull request comment; the PullRequestReview the server verified
+// carries the oid it was cast against, and GitHub does not dismiss a stale
+// approval unless the repository raised dismiss_stale_reviews_on_push — so
+// without this read a review of an older commit still merges the head
+// whenever some marker equal to it exists. A reviews read that cannot answer
+// refuses with missing ['gh-pr-reviews'] and merges nothing (invariant 3).
+if (mode === 'approved') {
+  const reviewsView = ghJson<PRReviews | null>(['pr', 'view', String(pr), '--json', 'reviews'], null);
+  const reviews = reviewsView && Array.isArray(reviewsView.reviews) ? reviewsView.reviews : null;
+  if (reviews === null) {
+    fail({
+      refused: `PR #${pr}: could not read its reviews from gh, so the commit the approving review was cast against is unknown.`,
+      pr,
+      missing: ['gh-pr-reviews'],
+      mode,
+    });
+  }
+  const approvedAt = newestApprovedReviewOid(reviews);
+  if (approvedAt !== view.headRefOid.toLowerCase()) {
+    const why =
+      approvedAt === null
+        ? 'no approving review on it records a commit'
+        : `the approving review was cast against ${approvedAt}`;
+    fail({
+      refused: `PR #${pr}: its head ${view.headRefOid} is not the commit the server-verified review approved — ${why}.`,
+      pr,
+      missing: ['head:changed'],
+      mode,
+    });
+  }
+}
+
 const gate: 'ruleset' | 'client-checks' = rules.some((r) => r.type === 'required_status_checks') ? 'ruleset' : 'client-checks';
 
 // A head that cannot merge must not have a merge armed on it: the commit
@@ -402,13 +477,13 @@ if (!everyRequiredCheckPasses(pr)) {
 const autoMergeResult = gh(['pr', 'merge', String(pr), '--squash', '--auto', '--match-head-commit', view.headRefOid]);
 if (autoMergeResult.status !== 0) {
   const message = (autoMergeResult.stderr || autoMergeResult.stdout || 'gh pr merge failed').trim();
-  if (!/is in clean status/.test(message)) fail({ error: message });
+  if (!/is in clean status/.test(message)) fail({ error: message, pr, gate, mode });
   // #78: gh chose "enable auto-merge" off a stale mergeStateStatus, but
   // GitHub now considers the PR clean and refuses that mutation. The exact
   // same intent, minus --auto, merges it outright.
   const retryResult = gh(['pr', 'merge', String(pr), '--squash', '--match-head-commit', view.headRefOid]);
   if (retryResult.status !== 0) {
-    fail({ error: (retryResult.stderr || retryResult.stdout || 'gh pr merge failed').trim() });
+    fail({ error: (retryResult.stderr || retryResult.stdout || 'gh pr merge failed').trim(), pr, gate, mode });
   }
 }
 
@@ -419,7 +494,7 @@ if (after?.state !== 'MERGED' && mode === 'agent') {
   // queue is enabled, not when it fires (#191). Disarm it and refuse.
   const disarm = gh(['pr', 'merge', String(pr), '--disable-auto']);
   if (disarm.status !== 0) {
-    fail({ error: (disarm.stderr || disarm.stdout || 'gh pr merge --disable-auto failed').trim() });
+    fail({ error: (disarm.stderr || disarm.stdout || 'gh pr merge --disable-auto failed').trim(), pr, gate, mode });
   }
   fail({
     refused: `PR #${pr}: GitHub queued the merge instead of performing it, so the auto-merge was disabled again — mode agent merges the reviewed commit or nothing. Clear what blocks it and run land again.`,
