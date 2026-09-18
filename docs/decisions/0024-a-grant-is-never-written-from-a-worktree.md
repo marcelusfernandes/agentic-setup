@@ -57,12 +57,15 @@ What is in force, as `hooks/protect-main.mts` implements it:
 - **No valve, and none is going to be added.** `AGENTIC_ALLOW_PUSH_MAIN=1` lifts item 2's
   push form only. A valve on this rule would be the self-grant the rule exists to refuse.
   The hook header states this beside the same sentence for item 3, and
-  `tests/protect-main.test.mts:169-177` asserts it for the inline and the environment form.
+  `tests/protect-main.test.mts:170-178` asserts it for the inline and the environment form.
 - **The crash policy is unchanged: ALLOW.** A `git` that cannot say where the session is
   standing returns `false` and the call goes through (`:133`). An unreadable repository is
   not evidence of a grant, and this hook is layer three.
-- **The docs that carry it.** `docs/orchestration.md:349` (the hooks table row) names the
-  new denial, its discriminator and what stays allowed.
+- **The docs that carry it.** `docs/orchestration.md:354` (the hooks table row) names the
+  new denial, its discriminator and what stays allowed, and `docs/orchestration.md:309-315`
+  (the implementer's `Forbidden:` list) names `gh issue edit` beside the other refused
+  commands, with the remedy. Two documents state the same rule and this item is where they
+  are held to each other.
 
 Unchanged by this item: a grant still counts only in the body of an issue the pull request
 closes and never from a pull-request body (#155); it is still read once, as a grant, and
