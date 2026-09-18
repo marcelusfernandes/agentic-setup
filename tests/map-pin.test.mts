@@ -22,6 +22,11 @@
 // cannot catch that thing drifting. Crash policy: fails closed — an unreadable
 // file or an unparseable Map throws, and a bullet or sentence that cannot be
 // located is an assertion red rather than a silent pass.
+//
+// Since #330 this file pins one more thing, and it is about itself: invariant 10 is
+// asserted to exist, once, inside the `## Invariants` section of both documents and
+// identical between them, and the two corrected headers are read back for the rule
+// they cite. A citation nothing checks is how a wrong one survived two reviews.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';
@@ -197,5 +202,115 @@ check(
   first?.bullet !== null && first?.bullet === second?.bullet,
   `${first?.file}:\n      ${first?.bullet}\n      ${second?.file}:\n      ${second?.bullet}`,
 );
+
+// --- #330: the invariant these pin headers cite exists, in both documents --------
+// A citation is worth no more than the rule behind it. Both headers this issue
+// corrected cited invariant 6 for an exemption invariant 6 does not grant, and nothing
+// failed — the defect waited for a reader. Invariant 10 is the rule that licenses the
+// shape of both files, so it is pinned the way AC3 above pins the bullet: present, in
+// the `## Invariants` section, stated once, and identical across the two documents.
+// Same shape as tests/doctrine.test.mts's doctrine pin, done here because these two
+// documents are already this file's subject.
+
+/** The invariant both pin headers cite, character for character, collapsed to one line. */
+const PIN_INVARIANT =
+  '10. **A pin states what it pins.** A test over prose or data — a Map bullet, a proof '
+  + 'declaration, a catalogue — writes the expected shape out itself rather than importing '
+  + 'the parser or the list it checks: a pin that reuses the thing it pins cannot catch '
+  + 'that thing drifting. The duplication is the point; the pin names what it mirrors.';
+
+/** Its first and last words, used to extract each file's copy so a drifted middle is
+ *  reported with the divergent text rather than as a bare "not found". */
+const INVARIANT_HEAD = '10. **A pin states what it pins.**';
+const INVARIANT_TAIL = 'the pin names what it mirrors.';
+
+/** Every whitespace run collapsed to one space, so a wrapped item compares as one line. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** The body of the `## Invariants …` section. The heading carries a parenthetical, so it
+ *  is found by prefix and the body starts after that heading's own line; null when absent. */
+function invariantsSection(text: string): string | null {
+  const at = text.indexOf('\n## Invariants');
+  if (at === -1) return null;
+  const from = text.indexOf('\n', at + 1);
+  if (from === -1) return null;
+  const rest = text.slice(from + 1);
+  const end = rest.indexOf('\n## ');
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** The invariant-shaped span of a collapsed section; null when either end is missing. */
+function invariantSpan(flat: string): string | null {
+  const start = flat.indexOf(INVARIANT_HEAD);
+  if (start === -1) return null;
+  const end = flat.indexOf(INVARIANT_TAIL, start);
+  return end === -1 ? null : flat.slice(start, end + INVARIANT_TAIL.length);
+}
+
+const invariants = MAP_FILES.map((file) => {
+  const body = invariantsSection(read(file));
+  const flat = body === null ? null : oneLine(body);
+  return { file, flat };
+});
+
+for (const { file, flat } of invariants) {
+  check(`#330 ${file} has an \`## Invariants\` section to read`, flat !== null);
+  if (flat === null) continue;
+  check(
+    `#330 ${file} states the invariant both pin headers cite, character for character`,
+    flat.includes(PIN_INVARIANT),
+    `expected inside ${file}'s ## Invariants:\n      ${PIN_INVARIANT}`,
+  );
+  check(
+    `#330 ${file} states it exactly once`,
+    flat.split(PIN_INVARIANT).length === 2,
+    `${flat.split(PIN_INVARIANT).length - 1} occurrence(s)`,
+  );
+}
+
+const [firstInvariant, secondInvariant] = invariants.map(({ file, flat }) => ({
+  file,
+  span: flat === null ? null : invariantSpan(flat),
+}));
+check(
+  `#330 the invariant is identical in ${MAP_FILES.join(' and ')}`,
+  firstInvariant?.span != null && firstInvariant.span === secondInvariant?.span,
+  `${firstInvariant?.file}:\n      ${firstInvariant?.span}\n      ${secondInvariant?.file}:\n      ${secondInvariant?.span}`,
+);
+
+// --- #330: and the two headers cite it, without the claim invariant 6 never made ---
+// Each header is read only down to that file's first `import` line, so the two constants
+// above and below — which necessarily carry the phrases they pin — are outside what is
+// read. The `//` markers are stripped and the lines joined before matching, because the
+// wrong claim straddles a line break in both files at the base: a matcher that reads the
+// lines apart finds nothing and reports a clean that is not there.
+
+const HEADER_FILES = ['tests/map-pin.test.mts', 'tests/proof-declarations.test.mts'] as const;
+const WRONG_CLAIM = 'invariant 6 exempts catalogue reads';
+
+/** A file's leading comment block as one line of prose, markers stripped. */
+function headerProse(text: string): string | null {
+  const cut = text.indexOf('\nimport ');
+  if (cut === -1) return null;
+  return oneLine(text.slice(0, cut).split('\n').map((line) => line.replace(/^\s*(?:#!.*|\/\/ ?)/, '')).join(' '));
+}
+
+for (const file of HEADER_FILES) {
+  const header = headerProse(read(file));
+  check(`#330 ${file} has a header to read`, header !== null);
+  if (header === null) continue;
+  check(
+    `#330 ${file}'s header does not claim invariant 6 exempts catalogue reads`,
+    !header.includes(WRONG_CLAIM),
+    header,
+  );
+  check(
+    `#330 ${file}'s header cites invariant 10 for the shape it uses`,
+    /\binvariant 10\b/.test(header),
+    header,
+  );
+}
 
 finish();
