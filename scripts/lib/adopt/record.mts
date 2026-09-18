@@ -65,18 +65,21 @@ export const GENERATED_BY = 'agentic-setup/adopt';
  *
  * **Exported, and it stays exported.** #233's criterion asked for this name
  * and `LABELS_SOURCE` to stop being exported, on the reason that neither had
- * a caller. `LABELS_SOURCE` still has none and is module-private above; this
- * one gained two while #233 was open, and both import it from here:
- * `scripts/lib/proof.mts` is the proof runner's directory when a repository
- * carries no record, and `scripts/lib/adopt/pr.mts` builds the adoption pull
- * request's declared globs from it. Withdrawing the export would delete two
- * callers, and moving the constant elsewhere would leave it reachable under
- * another name while the check passed — so #326 records that half of #233's
- * criterion as partially met rather than making it look delivered.
+ * a caller. `LABELS_SOURCE` still has none and is module-private below; this
+ * one has two, and both import it from here: `scripts/lib/proof.mts` is the
+ * proof runner's directory when a repository carries no record, and
+ * `scripts/lib/adopt/pr.mts` builds the adoption pull request's declared globs
+ * from it. The first landed with #236 while #233 was open, the second with
+ * #268 after it closed. Withdrawing the export would delete two callers, and
+ * moving the constant elsewhere would leave it reachable under another name
+ * while the check passed — so #326 records that half of #233's criterion as
+ * partially met rather than making it look delivered.
  *
- * `tests/adopt-record.test.mts` holds this paragraph to the tree: every path
- * it names must import `PROOF_DIR` from this file, so the reason fails the
- * suite when it goes stale instead of outliving the callers it claims.
+ * `tests/adopt-record.test.mts` holds this paragraph to the tree in both
+ * directions: every module named here must import `PROOF_DIR` from this file,
+ * and every module that imports it must be named here — so the reason fails
+ * the suite when it goes stale instead of outliving, or outlasting, the
+ * callers it claims.
  */
 export const PROOF_DIR = 'proof';
 

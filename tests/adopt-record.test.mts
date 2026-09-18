@@ -486,12 +486,14 @@ check(
 // unfixed leftover and #326 was filed on that reading.
 //
 // Section M answers "does this export have a caller" for the suite. This one
-// answers it for a person and holds the answer to the tree: every module the
-// constant's docstring names must really import it from this file, so the
-// paragraph fails the suite when it goes stale instead of outliving the
-// callers it claims. The docstring is read as the block immediately above the
-// export, not by a search of the whole file, and each named path is read with
-// its line breaks collapsed first — a wrapped import list is one statement.
+// answers it for a person and holds the answer to the tree, in both
+// directions: every module the docstring names must really import the constant
+// from this file, and every module in the tree that imports it must be named.
+// One direction alone would let the paragraph go stale silently — a third
+// caller added without a line here is exactly the kind of drift that left #233
+// half met. The docstring is read as the block immediately above the export,
+// not by a search of the whole file, and every file is read with its line
+// breaks collapsed first: a wrapped import list is one statement.
 const PROOF_DIR_AT = RECORD_SRC.indexOf('\nexport const PROOF_DIR');
 const PROOF_DIR_BLOCKS = PROOF_DIR_AT < 0 ? [] : [...RECORD_SRC.slice(0, PROOF_DIR_AT).matchAll(/\/\*\*([\s\S]*?)\*\//g)];
 const PROOF_DIR_DOC = PROOF_DIR_BLOCKS.at(-1)?.[1] ?? '';
@@ -517,6 +519,18 @@ function importedFromRecord(text: string): string[] {
     .filter((name) => name.length > 0);
 }
 
+/**
+ * Every module of the tree that imports `PROOF_DIR` from a `record.mts`, by
+ * path relative to the root. The test tree is left out of both sides of the
+ * comparison: a case that imported the constant to assert something about it
+ * would otherwise have to be listed in the docstring as a caller.
+ */
+const REAL_CALLERS = ['hooks', 'ci', 'scripts', join('.agents', 'skills')]
+  .flatMap((dir) => sources(join(ROOT, dir)))
+  .filter((path) => path !== join(ROOT, RECORD_REL))
+  .filter((path) => importedFromRecord(readFileSync(path, 'utf8')).includes('PROOF_DIR'))
+  .map((path) => path.slice(ROOT.length + 1));
+
 check('record.mts still exports PROOF_DIR (this case reads the docstring above it)', PROOF_DIR_AT >= 0, RECORD_REL);
 check(
   "PROOF_DIR's docstring names the modules outside record.mts that import it",
@@ -533,5 +547,11 @@ for (const rel of NAMED_CALLERS) {
     present ? `imported from record.mts: ${imported.join(', ') || 'nothing'}` : `${rel} is not in the tree`,
   );
 }
+const unnamed = REAL_CALLERS.filter((rel) => !NAMED_CALLERS.includes(rel));
+check(
+  "every module that imports PROOF_DIR is named by PROOF_DIR's docstring",
+  unnamed.length === 0,
+  `imports PROOF_DIR and is not named: ${unnamed.join(', ') || 'none'} (named: ${NAMED_CALLERS.join(', ') || 'none'})`,
+);
 
 finish();
