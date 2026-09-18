@@ -166,16 +166,23 @@ comma-separated, backticked or not.** The parser reads bullets and ignores every
 line in the section as prose. Prose inside a bullet (a parenthetical, an em-dash aside)
 gets comma-split too and becomes a bogus glob that matches nothing — the `scope` job
 then reports a false violation on every real file. Put the reason on its own
-non-bullet line under the glob.
+non-bullet line under the glob. The one bullet that is *not* a glob is a bullet whose
+content starts `authorised:`: that is a grant, read once by the grant parser below and
+never as an ordinary glob of the issue (#231).
 
 **`authorised:` is written only by the orchestrator, in the issue's `## Files`, and the
 glob stands alone on the line.** It grants a file outside the issue's globs, and `scope`
 reads it from the body of an issue the PR closes — never from the pull request, because
 the implementer writes that body and would be granting itself (#155). An implementer that
-needs a file outside its globs asks the orchestrator and stops. The parser splits
-everything after `authorised:` on commas; any prose on the same line becomes a second,
-invalid glob and the `scope` job fails even though the grant was legitimate. The
-justification goes on the next line, indented, which the parser skips:
+needs a file outside its globs asks the orchestrator and stops. The line may be a bullet
+or bare, and the word is matched in any case. What follows it is read once, like this:
+**every backticked span on the line is a granted glob** when there is at least one —
+so a justification on the same line must contain no backticks of its own, or it grants
+whatever it quotes — and **otherwise the first whitespace-delimited token** is the glob,
+with a trailing `,` or `;` stripped and the rest of the line ignored. There is no comma
+split: `authorised: a.ts, b.ts` grants `a.ts` alone. One glob per line; a second grant
+gets a second line. The justification goes on the next line, indented, which the parser
+skips:
 
 ```
 - authorised: `src/api/admin-create-user.ts`
@@ -273,10 +280,13 @@ orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type thr
 `chore`/`test`/`ci` → `type:infra`) and copied across from there.
 
 **Which check reads a label, and which reads only the body.** `scope` reads no label at
-all: it takes the closing keywords from the PR's **body**, and the globs and the
-`authorised:` grants from the **issues** those keywords link (`ci/lib/scope.mts`,
-`ci/scope-check.mts`). Two things do read labels, and both read the **PR's**, never the
-issue's: `negative-control` reads the `type:` labels — only to print a `note:` line, since
+all: it takes the globs and the `authorised:` grants from the **issues** the PR links
+(`ci/lib/scope.mts`, `ci/scope-check.mts`). It reads the PR's **body** for two things,
+and grants nothing from either: the closing keywords that name those issues, and
+`authorised:` lines, which it reports as ignored when they sit in the PR's `## Files`
+(`parseAuthorisedGlobs`) and as misplaced when they sit anywhere else in that body
+(`findMisplacedAuthorisedLines`, #83). Two things do read labels, and both read the
+**PR's**, never the issue's: `negative-control` reads the `type:` labels — only to print a `note:` line, since
 #135, because the skip is by path class (below) — and `land.mts` reads two, `type:docs`
 (`scripts/land.mts:230`, the exemption from the *review*, never from the checks) and
 `review:approved` (`:255`, the marker label an agent review leaves behind in both modes;

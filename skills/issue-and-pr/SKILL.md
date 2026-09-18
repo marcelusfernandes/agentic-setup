@@ -95,7 +95,8 @@ elapses. If CI or the reviewer sends it back, the implementer fixes in the same 
 - Issue `## Files`: only **bullet lines** count. One or more globs per bullet, backticked
   (`` `src/**` ``) or bare, comma-separated. Prose on a non-bullet line is ignored; prose
   inside a bullet becomes a bogus glob and fails every real file. Put the reason on its own
-  line under the bullet.
+  line under the bullet. The one exception is a bullet whose content starts `authorised:`:
+  that is a grant, read once by the rule below and never as a glob of the issue (#231).
 - Issue `## Files`, `authorised:` lines: a line starting `authorised:` (bullet or bare)
   grants one glob outside those bullets, and **only the orchestrator writes it**. The glob
   stands alone on the line (backticked, or the first token); the justification goes on the
