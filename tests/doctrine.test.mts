@@ -602,19 +602,48 @@ check(
   worktreeStep,
 );
 
-// --- AC4 and AC5: the PR step relabels the issue (L14) and appends to the body (L21) ---
+// --- AC4 and AC5: who moves the issue (L14) and the body is appended to (L21) ---
+//
+// #264 AC4 pinned the relabel to the implementer's own PR step, which was right while the
+// implementer ran it. #237 denies `gh issue edit` from inside a worktree, so the step moved
+// to the orchestrator's step 4 and these assertions moved with it: the implementer card
+// must now *forbid* the command and name who runs it, and the orchestrate card must carry
+// it. The L14 reason the step exists at all is asserted where the step now lives — an
+// assertion that stayed on the old card would pass while saying something untrue.
 
 const prStep = span(implementer, '7. Open the PR', '8. Stop');
 check('#264 AC4 implementer.md still has a PR step to read', prStep.length > 0);
 check(
-  '#264 AC4 the PR step carries the exact `gh issue edit` command that moves the issue',
-  prStep.includes('gh issue edit <n> --add-label state:in-review --remove-label state:in-progress'),
+  '#237 the PR step forbids `gh issue edit` instead of prescribing it',
+  /\*\*Never run `gh issue edit`\*\*/.test(prStep) && prStep.includes('denies the whole subcommand from inside your worktree'),
   prStep,
 );
 check(
-  "#264 AC4 the PR step says that is what keeps the issue out of `reconcile`'s stale list",
+  '#237 the PR step names the orchestrator as the one who moves the issue, at its step 4',
+  /orchestrator moves the issue to `state:in-review` at that same step 4/.test(prStep),
+  prStep,
+);
+check(
+  "#264 AC4 the PR step still carries the L14 reason the move matters — `reconcile`'s stale list",
   prStep.includes('reconcile') && /stale list/.test(prStep),
   prStep,
+);
+const orchestrateReviewStep = span(orchestrateText, '## 4. PR opened', '## 5. Decide');
+check('#237 the orchestrate card still has a step 4 to read', orchestrateReviewStep.length > 0);
+check(
+  '#237 the orchestrate card carries the exact `gh issue edit` command that moves the issue',
+  orchestrateReviewStep.includes('gh issue edit <n> --add-label state:in-review --remove-label state:in-progress'),
+  ORCHESTRATE_CARD,
+);
+check(
+  '#237 the orchestrate card says the step can be forgotten, where the implementer could not skip it',
+  /step you can forget/.test(orchestrateReviewStep),
+  ORCHESTRATE_CARD,
+);
+check(
+  '#237 the orchestrate card names where a forgotten relabel surfaces, since nothing enforces it',
+  /`inProgress`/.test(orchestrateReviewStep) && /foreignLock/.test(orchestrateReviewStep),
+  ORCHESTRATE_CARD,
 );
 check(
   '#264 AC4 the PR step still says the PR itself carries `state:in-review` and nothing else',
