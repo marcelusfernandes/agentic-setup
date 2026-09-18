@@ -8,7 +8,7 @@ type Issue = { number: number; title: string; body: string | null; state: string
 type Comment = { body: string; html_url: string; user: { login: string; type: string } };
 type PR = { number: number; state: string; headRefName: string; headRefOid: string; baseRefName: string; reviewDecision: string | null; isDraft: boolean; isCrossRepository: boolean; labels?: Array<{ name: string }> };
 type Checkpoint = { number: number; title: string; revision: string; blocks: 'all' | number[]; reply: string; answer: { text: string; author: string; url: string } | null; labels: string[] };
-type Task = { number: number; title: string; branch: string; state: string; missing: string[]; dependencies: number[]; blockers: number[]; pr: PR | null; labels: string[] };
+type Task = { number: number; title: string; branch: string; state: string; missing: string[]; dependencies: number[]; blockers: number[]; pr: PR | null; foreignLock: string | null; labels: string[] };
 
 function run(command: string, args: string[]) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
@@ -42,6 +42,22 @@ function refs(text: string): number[] {
   }))];
 }
 const branchFor = (number: number) => `codex/task-${number}`;
+// Both routes lock an issue by pushing a branch, in namespaces that cannot collide:
+// `codex/task-<n>` here and `<type>/<n>-<slug>` in the Claude route's scripts/claim.mts.
+// This skill ships standalone, so that shape is restated here rather than imported.
+// Either shape locks the task for `claim`. The other route's is also carried on the task as
+// `foreignLock` — it reads as `held` where it would have read `ready` — and a task holding
+// one is never dispatched, relabeled or landed from here (references/contract.md, ## Task).
+const foreignLockShape = (number: number) => new RegExp(`^[a-z]+/${number}-`);
+const locksTask = (branch: string, number: number) => branch === branchFor(number) || foreignLockShape(number).test(branch);
+// One read of the remote's heads per snapshot or claim: the other route's branch is one
+// this script never pushes and never collides with, so nothing but a read can find it.
+// Reads fail closed — an `ls-remote` that cannot answer throws through run() and is never
+// taken for an issue nobody holds.
+function remoteHeads(): string[] {
+  return run('git', ['ls-remote', '--heads', 'origin']).split('\n')
+    .map((line) => line.trim().split('\t')[1] ?? '').filter(Boolean).map((ref) => ref.replace(/^refs\/heads\//, ''));
+}
 function dependencyRefs(text: string): number[] {
   // Existing adopters may still have CI requiring the legacy dependency line.
   const legacy = text.match(/^Blocked by: *(none|#[1-9]\d*(?: *, *#[1-9]\d*)*)$/i);
@@ -60,7 +76,8 @@ function snapshot(goalNumber: number) {
   const integrationBranch = section(body, 'Integration branch', defaultBranch);
   if (!integrationBranch) throw new Error('Integration branch must be nonempty when present');
   if (run('git', ['check-ref-format', '--branch', integrationBranch]) !== integrationBranch) throw new Error('integration branch must be a literal branch name');
-  if (!run('git', ['ls-remote', '--heads', 'origin', `refs/heads/${integrationBranch}`])) throw new Error('integration branch does not exist on origin');
+  const heads = remoteHeads();
+  if (!heads.includes(integrationBranch)) throw new Error('integration branch does not exist on origin');
   for (const name of ['Goal', 'Success criteria', 'Boundaries']) if (!section(body, name)) throw new Error(`objective is missing ## ${name}`);
   const permissions = section(body, 'Permissions');
   const allowed = (name: string) => new RegExp(`^${name}: yes$`, 'mi').test(permissions) && !new RegExp(`^${name}: no$`, 'mi').test(permissions);
@@ -97,11 +114,14 @@ function snapshot(goalNumber: number) {
     const open = own.filter((p) => p.state === 'OPEN');
     if (open.length > 1) throw new Error(`multiple open PRs for #${number}`);
     const pr = open[0] ?? own.find((p) => p.state === 'MERGED' && p.baseRefName === integrationBranch) ?? null;
-    const remote = run('git', ['ls-remote', '--heads', 'origin', `refs/heads/${branch}`]);
+    const remote = heads.includes(branch);
+    // The other route's lock, read from the same listing: work this route does not own.
+    const foreignLock = heads.find((head) => foreignLockShape(number).test(head)) ?? null;
     const completedWithoutPR = finished(item) && !own.some((p) => ['OPEN', 'MERGED'].includes(p.state));
     const state = item.state_reason === 'not_planned' ? 'cancelled' : pr?.state === 'MERGED' || completedWithoutPR ? 'done'
-      : missing.length ? 'needs_spec' : pr ? (pr.reviewDecision === 'APPROVED' ? 'waiting_ci' : 'review') : remote ? 'in_progress' : 'ready';
-    return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state, labels: (item.labels ?? []).map((label) => label.name) };
+      : missing.length ? 'needs_spec' : pr ? (pr.reviewDecision === 'APPROVED' ? 'waiting_ci' : 'review') : remote ? 'in_progress'
+      : foreignLock ? 'held' : 'ready';
+    return { number, title: item.title, branch, missing, dependencies, blockers: [], pr, state, foreignLock, labels: (item.labels ?? []).map((label) => label.name) };
   });
   // Exact names only: `human:decided` records a past decision and never gates.
   const pendingHuman = (labels: string[]) => labels.find((label) => PENDING_HUMAN.has(label.toLowerCase())) ?? null;
@@ -137,7 +157,9 @@ function snapshot(goalNumber: number) {
   for (let pass = 0; pass < tasks.length; pass++) for (const task of tasks) {
     task.blockers = [...new Set([...task.blockers, ...task.dependencies.flatMap((n) => tasks.find((t) => t.number === n)?.blockers ?? [])])];
   }
-  const actionable = tasks.filter((t) => t.state !== 'done' && t.state !== 'cancelled' && !t.blockers.length);
+  // A task the other route locked is never actionable here, so it is never `next`:
+  // reported, and left to the coordinator that holds it.
+  const actionable = tasks.filter((t) => t.state !== 'done' && t.state !== 'cancelled' && !t.foreignLock && !t.blockers.length);
   const next = actionable.find((t) => ['in_progress', 'review', 'waiting_ci'].includes(t.state)) ?? actionable[0] ?? null;
   const allDone = tasks.length > 0 && tasks.every((t) => t.state === 'done') && !pending.length && !humanRequests.length;
   const status = goal.state === 'closed' ? (goal.state_reason !== 'not_planned' && allDone ? 'complete' : 'blocked')
@@ -198,6 +220,10 @@ function reconcileLabels(state: ReturnType<typeof snapshot>) {
     : ['waiting_ci', 'ready_to_finish'].includes(state.status) ? 'state:in-review' : 'state:in-progress';
   const targets: Target[] = [{ kind: 'issue', number: state.goal, labels: state.labels, desired: objectiveState }];
   for (const task of state.tasks) {
+    // A task the other route locked is reported, never relabeled: its state label is that
+    // coordinator's record of its own work, and rewriting it would publish this route's
+    // reading of an issue it does not hold.
+    if (task.foreignLock) continue;
     const desired = taskState(task);
     targets.push({ kind: 'issue', number: task.number, labels: task.labels, desired });
     if (task.pr) targets.push({ kind: 'pr', number: task.pr.number, labels: (task.pr.labels ?? []).map((label) => label.name),
@@ -255,6 +281,13 @@ function main() {
     if (state.tasks.some((t) => t.number !== task.number && !t.blockers.length && ['in_progress', 'review', 'waiting_ci'].includes(t.state))) throw new Error('another task is active; finish or pause it before claiming');
     const base = state.integrationBranch;
     run('git', ['fetch', 'origin']);
+    // Pre-push read: any branch that already locks this issue, in either route's namespace.
+    // The push below is still the lock that decides a race between two coordinators of this
+    // route; this read is what catches the lock a push can never collide with — the Claude
+    // route's `<type>/<n>-<slug>`. It fails closed: an `ls-remote` that errors exits 1 with
+    // { error } and nothing is pushed.
+    const locked = remoteHeads().find((head) => locksTask(head, task.number));
+    if (locked) { process.exitCode = 2; return { held: task.number, branch: locked }; }
     const ref = `refs/heads/${task.branch}`;
     const push = spawnSync('git', ['push', '--porcelain', `--force-with-lease=${ref}:`, 'origin', `refs/remotes/origin/${base}:${ref}`], { encoding: 'utf8', timeout: 60_000 });
     if (push.status === 0 && (push.stdout ?? '').split('\n').some((l) => l.startsWith('*\t'))) return { claimed: task.number, branch: task.branch };
@@ -264,6 +297,9 @@ function main() {
     throw new Error((push.stderr || push.error?.message || 'branch claim failed').trim().slice(0, 600));
   }
   if (!state.permissions.merge) throw new Error('merge is not authorized by the objective');
+  // The same lock, read once more where the other mutating command acts: an issue the other
+  // route holds is reconciled with that coordinator, not merged from here.
+  if (task.foreignLock) throw new Error(`task is held by another route's branch ${task.foreignLock}; reconcile before landing`);
   const pr = task.pr;
   if (!pr || pr.state !== 'OPEN' || pr.isDraft || pr.reviewDecision !== 'APPROVED' || pr.baseRefName !== state.integrationBranch) throw new Error('task needs an approved, non-draft PR to the objective integration branch');
   const rules = api<Array<{ type: string; parameters?: { required_status_checks?: unknown[]; required_approving_review_count?: number; dismiss_stale_reviews_on_push?: boolean } }>>(`rules/branches/${encodeURIComponent(pr.baseRefName)}`);

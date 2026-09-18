@@ -201,4 +201,147 @@ check(
 );
 check('a failed remote read does not assign or relabel the issue', !readFails.log.includes('issue edit'), readFails.log);
 
+// --- and the mirror: the Codex route reads the Claude route's lock (#158) ---
+// The same rule from the other side. `.agents/skills/autonomous-loop/scripts/
+// github.mts claim` pushes `codex/task-<n>`, a namespace the Claude route's
+// `<type>/<n>-<slug>` can never collide with, so only a read of the remote's
+// heads can find it. The refusal keeps this route's vocabulary: `{ held }`
+// with the branch found, exit 2, nothing written.
+const codexHelper = join(ROOT, '.agents', 'skills', 'autonomous-loop', 'scripts', 'github.mts');
+const codexFixtures = mkdtempSync(join(tmpdir(), 'agentic-coexistence-codex-'));
+cleanup(() => rmSync(codexFixtures, { recursive: true, force: true }));
+
+// Issue bodies come from files the cases rewrite, so the fake `gh` needs no
+// escaping and each case runs against exactly the plan it declares.
+const CODEX_GH = `#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */comments) echo '[[]]'; exit 0 ;;
+  esac
+  file="$CODEX_FIXTURES/issue-\${2##*/}.json"
+  if [ -f "$file" ]; then cat "$file"; exit 0; fi
+  echo "fake-gh: no fixture for $2" >&2
+  exit 1
+fi
+case "$1 $2" in
+  "repo view")
+    echo '{"defaultBranchRef":{"name":"main"}}'
+    ;;
+  "pr list")
+    echo '[]'
+    ;;
+  *)
+    echo "fake-gh: unknown command: $*" >&2
+    exit 1
+    ;;
+esac
+`;
+
+// Only the bare listing fails: every `ls-remote` that names a refspec is the
+// real git, so the refusal below can only come from the new lock read.
+const FAKE_GIT_LISTING = `#!/usr/bin/env bash
+if [ "$1" = "ls-remote" ] && [ "$#" -eq 3 ]; then
+  echo "fatal: could not read from remote repository (simulated)" >&2
+  exit 128
+fi
+exec ${realGit} "$@"
+`;
+
+const codexGhDir = mkdtempSync(join(tmpdir(), 'agentic-coexistence-codex-gh-'));
+cleanup(() => rmSync(codexGhDir, { recursive: true, force: true }));
+writeFileSync(join(codexGhDir, 'gh'), CODEX_GH);
+chmodSync(join(codexGhDir, 'gh'), 0o755);
+
+const listingGitDir = mkdtempSync(join(tmpdir(), 'agentic-coexistence-listing-'));
+cleanup(() => rmSync(listingGitDir, { recursive: true, force: true }));
+writeFileSync(join(listingGitDir, 'git'), FAKE_GIT_LISTING);
+chmodSync(join(listingGitDir, 'git'), 0o755);
+
+const OBJECTIVE = 9;
+function objectiveBody(plan: string): string {
+  return ['## Goal', 'Exercise the cross-route lock.', '', '## Success criteria',
+    '- A task the other route locked is refused.', '', '## Boundaries', 'Test fixture only.', '',
+    '## Permissions', 'publish: yes', 'merge: yes', '', '## Decision makers', '@owner', '',
+    '## Plan', plan, '', '## Checkpoints', ''].join('\n');
+}
+const TASK_BODY = ['## Goal', 'One change.', '', '## Acceptance criteria', '- [ ] it works', '',
+  '## Validation', 'npm test', '', '## Dependencies', 'none', ''].join('\n');
+
+function fixture(number: number, body: string): void {
+  writeFileSync(join(codexFixtures, `issue-${number}.json`),
+    JSON.stringify({ number, title: `Item ${number}`, body, state: 'open', labels: [] }));
+}
+
+function codexClaim(task: number, extraPath = '') {
+  const log = join(codexGhDir, `log-${lockLogCounter++}.txt`);
+  const path = `${extraPath ? `${extraPath}:` : ''}${codexGhDir}:${process.env.PATH ?? ''}`;
+  const r = spawnSync(RUNTIME, [codexHelper, 'claim', String(OBJECTIVE), String(task)], {
+    cwd: lockRepo,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: path, GH_LOG: log, CODEX_FIXTURES: codexFixtures },
+  });
+  let json: any = null;
+  try {
+    json = JSON.parse(r.stdout.trim().split('\n').at(-1) ?? '');
+  } catch {
+    json = null;
+  }
+  let logText = '';
+  try {
+    logText = readFileSync(log, 'utf8');
+  } catch {
+    logText = '';
+  }
+  return { status: r.status, out: `${r.stdout}${r.stderr}`, json, log: logText };
+}
+
+// The Claude route takes the lock first: `feat/10-x` on the shared remote.
+fixture(OBJECTIVE, objectiveBody('- #10'));
+fixture(10, TASK_BODY);
+git(['push', '-q', 'origin', 'main:refs/heads/feat/10-x'], lockRepo);
+
+const claudeHeld = codexClaim(10);
+check(
+  'an issue locked by the Claude route is held by the Codex claim, exit 2',
+  claudeHeld.status === 2 && claudeHeld.json?.held === 10 && claudeHeld.json?.branch === 'feat/10-x',
+  `${JSON.stringify(claudeHeld.json)} (exit ${claudeHeld.status}) ${claudeHeld.out}`,
+);
+check(
+  'a held Codex claim never pushes its own lock branch',
+  !remoteBranches().includes('codex/task-10'),
+  JSON.stringify(remoteBranches()),
+);
+check('a held Codex claim writes no label or assignee',
+  !/issue edit|pr edit|label create/.test(claudeHeld.log), claudeHeld.log);
+
+// The same read fails closed on this side too.
+fixture(OBJECTIVE, objectiveBody('- #12'));
+fixture(12, TASK_BODY);
+const codexReadFails = codexClaim(12, listingGitDir);
+check(
+  'a failed remote read refuses the Codex claim, exit 1',
+  codexReadFails.status === 1 && typeof codexReadFails.json?.error === 'string'
+    && /ls-remote/.test(codexReadFails.json.error),
+  `${JSON.stringify(codexReadFails.json)} (exit ${codexReadFails.status}) ${codexReadFails.out}`,
+);
+check(
+  'a failed remote read never creates the Codex lock branch',
+  !remoteBranches().includes('codex/task-12'),
+  JSON.stringify(remoteBranches()),
+);
+check('a failed remote read writes no label or assignee',
+  !/issue edit|pr edit|label create/.test(codexReadFails.log), codexReadFails.log);
+
+// The refusal is the other route's branch, not every read: an unlocked issue
+// still claims.
+fixture(OBJECTIVE, objectiveBody('- #11'));
+fixture(11, TASK_BODY);
+const codexFree = codexClaim(11);
+check(
+  'an unlocked issue is still claimed by the Codex route',
+  codexFree.status === 0 && codexFree.json?.claimed === 11 && remoteBranches().includes('codex/task-11'),
+  `${JSON.stringify(codexFree.json)} (exit ${codexFree.status}) ${codexFree.out}`,
+);
+
 finish();

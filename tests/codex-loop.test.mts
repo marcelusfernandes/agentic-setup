@@ -349,6 +349,35 @@ r = status(); check('integration branch must be a valid literal git branch name'
 fixture.issues[1].body = pilotObjective('- #6', '', 'codex/task-6'); save();
 r = status(); check('a task branch cannot become its own integration destination', r.code === 1 && /task branch/.test(r.out), r.out);
 
+// The other route's lock is read as a lock (#158): the Claude route locks an issue by
+// pushing `<type>/<n>-<slug>` (scripts/claim.mts), a shape this route never pushes and
+// only a read of the remote's heads can find. Such a task is reported, never dispatched,
+// never claimed and never relabeled from here.
+fixture = { issues: { 1: item(1, objective('- #7')), 7: item(7, task()) }, comments: {}, prs: {}, rules: [], checks: [{ name: 'test', bucket: 'pass' }], catalog: [] };
+fixture.issues[7].labels = [{ name: 'state:in-progress' }]; save();
+git(['push', '-q', 'origin', `${base}:refs/heads/feat/7-locked-elsewhere`], repo);
+r = status();
+check('a task locked by the Claude route is held rather than ready',
+  r.data.tasks?.[0]?.state === 'held' && r.data.tasks?.[0]?.foreignLock === 'feat/7-locked-elsewhere', r.out);
+check('a task locked by the other route is never the next dispatch',
+  r.data.next === null && r.data.status === 'blocked', r.out);
+const callsBeforeForeign = readFileSync(log, 'utf8').trim().split('\n').length;
+r = invoke(['labels', '1']); refresh();
+check('labels never rewrite the state of work the other route holds', r.code === 0 &&
+  fixture.issues[7].labels.some((label: any) => label.name === 'state:in-progress') &&
+  readFileSync(log, 'utf8').trim().split('\n').slice(callsBeforeForeign)
+    .every((line: string) => !/"issue","edit","7"/.test(line)), r.out);
+r = invoke(['claim', '1', '7']);
+check('claim refuses a task the other route already locked',
+  r.code === 2 && r.data.held === 7 && r.data.branch === 'feat/7-locked-elsewhere'
+  && !git(['ls-remote', '--heads', 'origin', 'codex/task-7'], repo), r.out);
+fixture.prs[70] = { number: 70, state: 'OPEN', headRefName: 'codex/task-7', headRefOid: implemented, baseRefName: 'main', reviewDecision: 'APPROVED', isDraft: false, isCrossRepository: false };
+fixture.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'test' }] } }, { type: 'pull_request', parameters: { required_approving_review_count: 1, dismiss_stale_reviews_on_push: true } }]; save();
+r = invoke(['land', '1', '7']); refresh();
+check('an approved PR is not landed while the other route holds the issue',
+  r.code === 1 && /another route/.test(r.out) && fixture.prs[70].state === 'OPEN', r.out);
+git(['push', '-q', 'origin', ':refs/heads/feat/7-locked-elsewhere'], repo);
+
 // Headless driver uses the same state helper; fake Codex makes observable transitions.
 const fakeCodex = `#!/usr/bin/env node
 const fs=require('node:fs'); const a=process.argv.slice(2); const p=process.env.LOOP_FIXTURE; const s=JSON.parse(fs.readFileSync(p,'utf8'));
