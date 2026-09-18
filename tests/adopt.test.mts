@@ -396,4 +396,40 @@ if ((shellcheck.stdout ?? '').trim() === '') {
   }
 }
 
+// --- H: one definition of the constants three files used to restate (#302) ---
+// The hook marker and the superseded deny rules lived in three places at once,
+// each comment pointing at the other two and asking that they move together.
+// A comment is not a mechanism; one definition is.
+const SHARED = ['scripts/init.mts', 'scripts/lib/adopt/hooks.mts', 'scripts/lib/adopt/inventory.mts', 'scripts/lib/adopt/constants.mts'];
+const sourceOf = (rel: string): string => {
+  try {
+    return readFileSync(join(ROOT, rel), 'utf8');
+  } catch {
+    return '';
+  }
+};
+check('the shared adoption constants have a module of their own', sourceOf('scripts/lib/adopt/constants.mts').length > 0, 'scripts/lib/adopt/constants.mts');
+const denyDefiners = SHARED.filter((rel) => /SUPERSEDED_DENY_RULES: Record<string, string> =/.test(sourceOf(rel)));
+check(
+  'the superseded deny rules are defined exactly once, in that module',
+  denyDefiners.length === 1 && denyDefiners[0] === 'scripts/lib/adopt/constants.mts',
+  denyDefiners.join(', ') || '(defined nowhere)',
+);
+const markerDefiners = SHARED.filter((rel) => /^(export )?const [A-Z_]*MARKER = 'agentic-setup';$/m.test(sourceOf(rel)));
+check(
+  'the hook marker is defined exactly once, in that module',
+  markerDefiners.length === 1 && markerDefiners[0] === 'scripts/lib/adopt/constants.mts',
+  markerDefiners.join(', ') || '(defined nowhere)',
+);
+check(
+  'scripts/init.mts tests for the marker it shares rather than an inline literal of its own',
+  !/\/agentic-setup\/\.test\(/.test(sourceOf('scripts/init.mts')),
+  'inline marker regex',
+);
+
+// --- I: `record:stale` is one of the gap names, not a name beside them -------
+const gapNames = sourceOf('scripts/lib/adopt/inventory.mts').match(/const GAP_NAMES = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
+check('the inventory names the gaps at all (the source was read)', gapNames.includes('ruleset:absent'), gapNames || '(no GAP_NAMES)');
+check("the inventory's gap names include record:stale", gapNames.includes("'record:stale'"), gapNames);
+
 finish();

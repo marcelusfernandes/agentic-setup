@@ -32,7 +32,7 @@
 // usage, no branch is ever pushed, and the negative-control case has no
 // generated diff to run over.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
@@ -721,6 +721,95 @@ check(
   'docs/adopt.md says which plan issue authorises when two share the title, and names the ambiguous refusal',
   docs.includes('pr:plan-ambiguous') && /open/.test(docs.split('## `--pr`')[1] ?? ''),
   'ambiguity',
+);
+
+// --- K: the residuals the two reviews of #167 left behind (#302) ------------
+// K1. the `--pr` block is a module of its own, so the CLI has room to grow.
+check(
+  'the --pr command is lifted out of the CLI into a module of its own',
+  existsSync(join(ROOT, 'scripts', 'lib', 'adopt', 'pr-run.mts')),
+  'scripts/lib/adopt/pr-run.mts',
+);
+
+// K2. every `git` this tool spawns names its own buffer, and an answer that
+// outgrows it is a named reason rather than the empty detail a `ls-tree` of a
+// large repository used to fail closed with.
+type GitModule = {
+  GIT_MAX_BUFFER: number;
+  runGit: (cwd: string, args: string[], options?: { maxBuffer?: number }) => { status: number; stdout: string; stderr: string };
+};
+let gitMod: GitModule | null = null;
+try {
+  gitMod = (await import('../scripts/lib/adopt/git.mts')) as unknown as GitModule;
+} catch {
+  gitMod = null;
+}
+check('the git runner names one explicit maxBuffer', gitMod?.GIT_MAX_BUFFER === 64 * 1024 * 1024, String(gitMod?.GIT_MAX_BUFFER));
+const overflow = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
+check(
+  'a git answer that outgrows the buffer reports a named reason and never an empty detail',
+  overflow !== undefined && overflow.status !== 0 && /ENOBUFS/.test(overflow.stderr),
+  JSON.stringify(overflow),
+);
+
+// K3. the two checks the adoption pull request cannot pass, stated on it the
+// way `skills/init/SKILL.md` states them for the bootstrap pull request.
+const bodyReds = mod && p ? mod.renderBody(p, { issue: PLAN_ISSUE, defaultBranch: 'main', record: recordValue }) : '';
+check(
+  'the body states the two checks that are expected red on the adoption pull request',
+  /expected red on this pull request/.test(bodyReds) && bodyReds.includes('scope') && bodyReds.includes('.github/scripts/agentic/'),
+  bodyReds.split('\n').filter((line) => /expected red/.test(line)).join('\n') || 'no such line',
+);
+check(
+  'docs/adopt.md says which of the generated checks cannot run on the adoption pull request',
+  docs.includes('expected red') && docs.includes('.github/scripts/agentic/'),
+  'docs expected red',
+);
+
+// K4. a question that has already been answered is not asked again.
+const answered = fixture();
+const answeredRun = adopt(['--plan-issue'], answered.repo, { FAKE_GH_PLAN: 'decided' });
+const answeredOut = parse(answeredRun.stdout);
+check(
+  '--plan-issue refuses by name when the open plan issue already carries human:decided',
+  answeredRun.status === 1 && answeredOut?.reason === 'plan-issue:already-decided' && answeredOut?.issue === PLAN_ISSUE,
+  `${answeredRun.stdout}\n${answeredRun.stderr}`,
+);
+check('a decided plan issue is not asked again', !existsSync(join(answeredRun.stateDir, 'issue-create.args')), answeredRun.stateDir);
+
+// K5. a base tree whose path cannot be read leaves no temporary index behind.
+const broken = fixture({ [SETTINGS]: `${JSON.stringify({ permissions: { deny: [] } }, null, 2)}\n` });
+const blob = git(['rev-parse', `HEAD:${SETTINGS}`], broken.repo).trim();
+rmSync(join(broken.repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)), { force: true });
+const ownTmp = mkdtempSync(join(tmpdir(), 'agentic-prtmp-'));
+cleanup(() => rmSync(ownTmp, { recursive: true, force: true }));
+const unreadable = adopt(['--pr'], broken.repo, { FAKE_GH_PLAN: 'decided', TMPDIR: ownTmp });
+check(
+  'a base path the tree names and git cannot read is pr:base-unreadable',
+  unreadable.status === 1 && parse(unreadable.stdout)?.error === 'pr:base-unreadable',
+  `${unreadable.stdout}\n${unreadable.stderr}`,
+);
+check(
+  'the temporary index directory is removed after pr:base-unreadable',
+  readdirSync(ownTmp).filter((name) => name.startsWith('agentic-adopt-index-')).length === 0,
+  readdirSync(ownTmp).join(',') || '(empty)',
+);
+check('a base path that cannot be read pushes nothing', remoteSha(broken.origin, `refs/heads/${BRANCH}`) === '', BRANCH);
+
+// K6. what the record says enters the plan issue as data, never as markup.
+const WEIRD_BY = 'agentic-setup/adopt`x`';
+const weird = fixture({ [RECORD_FILE]: `${JSON.stringify({ ...recordValue, generatedBy: WEIRD_BY }, null, 2)}\n` });
+const weirdRun = adopt(['--plan-issue'], weird.repo, { FAKE_GH_PLAN: 'none' });
+const weirdBody = bodyOf(weirdRun.stateDir, 'issue-create.args');
+check(
+  'a generatedBy holding a backtick enters the plan issue as a code span it cannot break out of',
+  weirdBody.includes(`\`\` ${WEIRD_BY} \`\``),
+  weirdBody.split('\n').find((line) => line.includes('Adoption record')) ?? `${weirdRun.stdout}\n${weirdRun.stderr}`,
+);
+check(
+  'the record’s generatedAt is a code span too',
+  new RegExp(`\`${recordValue.generatedAt}\``).test(weirdBody),
+  weirdBody.split('\n').find((line) => line.includes('Adoption record')) ?? '',
 );
 
 finish();

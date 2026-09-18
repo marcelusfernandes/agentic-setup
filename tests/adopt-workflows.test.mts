@@ -400,4 +400,22 @@ check('docs/adopt.md documents the --workflows flag', /node scripts\/adopt\.mts 
 check('docs/adopt.md documents the marker that protects a hand-written file', docs.includes(MARKER));
 check('docs/adopt.md says which templates are still copied verbatim', /verbatim/.test(docs) && /guard-main\.yml/.test(docs) && /issue-lint\.yml/.test(docs));
 
+// --- M: the generated jobs are never appended after a key we did not write ---
+// `renderChecks` adds its jobs at the end of the file. That is only the `jobs:`
+// mapping while `jobs:` is the last top-level key of the template; a key after
+// it would swallow them, and the workflow would run neither — silently, since
+// there is no YAML parser among the built-ins to notice (#302).
+const withTrailingKey = { ...templates, 'agentic-checks.yml': `${templates['agentic-checks.yml'] ?? ''}\nenv:\n  SOMETHING: 1\n` };
+check(
+  'a template carrying a top-level key after jobs: is refused by name',
+  renderReason(recordOf('npm test', 'npm run check'), withTrailingKey) === 'workflows:jobs-not-last',
+  renderReason(recordOf('npm test', 'npm run check'), withTrailingKey) || '(rendered without refusing)',
+);
+check(
+  'nothing is rendered past a key the module did not write',
+  render(recordOf('npm test', 'npm run check'), withTrailingKey) === null,
+  'rendered anyway',
+);
+check('docs/adopt.md names that refusal', docs.includes('workflows:jobs-not-last'), 'jobs-not-last');
+
 finish();

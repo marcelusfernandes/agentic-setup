@@ -371,4 +371,43 @@ check('docs/adopt.md documents the --hooks flag', /node scripts\/adopt\.mts --ho
 check('docs/adopt.md documents the skip reasons', ['not-ours', 'unchanged', 'not-recorded', 'plugin-provided'].every((reason) => docs.includes(reason)), 'skip reasons');
 check('docs/adopt.md documents the re-run guarantee', /re-run|run again|twice/i.test(docs) && docs.includes('hooks[]'), 'rerun');
 
+// --- J: a write that cannot be made leaves nothing installed (#302) ---------
+// The header promises a fail-closed install and never a partial one, but the
+// write loop installed the git hook before it reached the settings file: a
+// settings write that fails used to leave the hook behind and report only
+// `hooks:not-written`. A read-only `.claude/` is the cheapest way to make the
+// second write fail *after* the first one succeeded: the plan is complete
+// (there is no settings file to read), and only the write of it is refused.
+const blocked = fixture({ [RECORD_FILE]: recordOf([GIT_HOOK]) });
+mkdirSync(join(blocked, '.claude'), { recursive: true });
+chmodSync(join(blocked, '.claude'), 0o555);
+const j = adopt(['--hooks'], blocked);
+check(
+  'a settings file that cannot be written is hooks:not-written',
+  j.status === 1 && parse(j.stdout)?.error === 'hooks:not-written',
+  `${j.stdout}\n${j.stderr}`,
+);
+check('a --hooks run that could not finish leaves no hook installed', !existsSync(join(blocked, PRE_PUSH)), PRE_PUSH);
+
+// --- K: a deny entry that is not a string is a refusal, not a silent drop ----
+const poisoned = fixture({
+  [RECORD_FILE]: recordOf([GIT_HOOK]),
+  [SETTINGS]: `${JSON.stringify({ permissions: { deny: [CUSTOM_DENY, 7] } }, null, 2)}\n`,
+});
+const k = adopt(['--hooks'], poisoned);
+check(
+  'a deny entry that is not a string is a named refusal',
+  k.status === 1 && parse(k.stdout)?.error === 'hooks:settings-unparsable' && parse(k.stdout)?.field === SETTINGS,
+  `${k.stdout}\n${k.stderr}`,
+);
+check('a deny entry that is not a string installs nothing', !existsSync(join(poisoned, PRE_PUSH)), PRE_PUSH);
+check('a deny entry that is not a string is left exactly as it was', read(join(poisoned, SETTINGS)).includes('7'), read(join(poisoned, SETTINGS)));
+
+// --- L: the record carries the hooks adoption intends, so no hand edit is it -
+check(
+  'docs/adopt.md documents no hand edit of hooks[] as the way to install a hook',
+  !/name them in `hooks\[\]` before running/.test(docs),
+  'hand edit still documented',
+);
+
 finish();

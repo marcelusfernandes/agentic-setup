@@ -6,7 +6,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './lib/harness.mts';
-import { ghLog, initWithGh } from './lib/init-gh.mts';
+import { ghLog, ghState, initWithGh } from './lib/init-gh.mts';
 
 const repo = tempRepo();
 commit(repo, { 'README.md': '# x\n' }, 'init');
@@ -253,5 +253,43 @@ for (const [name, text, reason] of [
   check(`init refuses ${name} instead of seeding a partial set`, r.status !== 0 && /labels\.json/.test(r.out) && reason.test(r.out), r.out);
   check(`init refuses ${name} before writing anything into the repository`, !r.wrote, r.out);
 }
+
+// --- the ruleset's checks and the generated workflow's jobs are one list -----
+// `--rules` used to compute the required check names with its own
+// `detectTestCheckName` while `scripts/adopt.mts --workflows` generated the
+// workflow from the adoption record: two answers to one question, and a
+// ruleset that can require a check the generated workflow never produces
+// (#302). With a record present the ruleset reads the record's rendering.
+const recorded = tempRepo();
+commit(
+  recorded,
+  {
+    'README.md': '# x\n',
+    'agentic.config.json': `${JSON.stringify(
+      {
+        version: 1,
+        stack: 'node',
+        commands: { test: 'npm test', check: 'npm run check' },
+        checks: [],
+        hooks: ['pre-push'],
+        proof: { dir: 'proof' },
+        labels: { source: 'scripts/init.mts' },
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        generatedBy: 'agentic-setup/adopt',
+      },
+      null,
+      2,
+    )}\n`,
+  },
+  'init',
+);
+const recordedState = ghState('recorded-checks');
+const recordedRun = initWithGh(recorded, recordedState, '--rules', '--dry-run');
+const contexts = [...recordedRun.stdout.matchAll(/"context": "([^"]+)"/g)].map((m) => m[1]);
+check(
+  '--rules over a recorded repository requires exactly the jobs the generated workflow produces',
+  contexts.join(',') === 'scope,negative-control,test,check',
+  `${contexts.join(',')}\n${recordedRun.stdout.split('\n').slice(-30).join('\n')}`,
+);
 
 finish();
