@@ -482,13 +482,26 @@ const PR_SRC = readFileSync(join(ROOT, PR_REL), 'utf8');
  * 238 characters over lines 81-87 — one of that file's two `PROOF_DIR`
  * occurrences with them.
  *
- * A regex literal is not tracked: a `//` inside one still opens a line
- * comment. That direction hides code, so it can only produce a false orphan —
- * a red to look at — never a false caller.
+ * Regex literals are tracked too, because they carry quotes: reading the `'`
+ * of `hooks/protect-main.mts:83` (`/^(['"])(.*)\1$/`) or the backtick of
+ * `ci/lib/scope.mts:38` as the start of a string swallowed the rest of the
+ * file into one, and every comment inside that span survived as code — a
+ * commented-out import counting as a caller, which is the direction that
+ * fails silently. Whether a `/` opens a regex or divides is decided by the
+ * character before it, the way a tokeniser does it; a division misread as a
+ * regex stops at the end of its line rather than running away.
  */
+const QUOTES = new Set(["'", '"', '`']);
+
+/** The characters after which a `/` opens a regex literal rather than dividing. */
+const BEFORE_REGEX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '^', '~', '<', '>', '\n']);
+
+/** The keywords after which it opens one too. */
+const KEYWORD_BEFORE_REGEX = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await']);
+
 function code(text: string): string {
-  const QUOTES = new Set(["'", '"', '`']);
   let out = '';
+  let previous = '';
   let i = 0;
   while (i < text.length) {
     const ch = text[i] ?? '';
@@ -502,26 +515,55 @@ function code(text: string): string {
       i = end < 0 ? text.length : end + 2;
       continue;
     }
-    if (!QUOTES.has(ch)) {
+    if (QUOTES.has(ch)) {
       out += ch;
       i++;
+      while (i < text.length) {
+        const inner = text[i] ?? '';
+        out += inner;
+        i++;
+        if (inner === '\\') {
+          out += text[i] ?? '';
+          i++;
+          continue;
+        }
+        if (inner === ch) break;
+      }
+      previous = ch;
+      continue;
+    }
+    if (ch === '/' && opensRegex(previous, out)) {
+      out += ch;
+      i++;
+      let inClass = false;
+      while (i < text.length) {
+        const inner = text[i] ?? '';
+        out += inner;
+        i++;
+        if (inner === '\\') {
+          out += text[i] ?? '';
+          i++;
+          continue;
+        }
+        if (inner === '[') inClass = true;
+        else if (inner === ']') inClass = false;
+        else if (inner === '\n' || (inner === '/' && !inClass)) break;
+      }
+      previous = '/';
       continue;
     }
     out += ch;
     i++;
-    while (i < text.length) {
-      const inner = text[i] ?? '';
-      out += inner;
-      i++;
-      if (inner === '\\') {
-        out += text[i] ?? '';
-        i++;
-        continue;
-      }
-      if (inner === ch) break;
-    }
+    if (ch.trim().length > 0) previous = ch;
+    else if (ch === '\n') previous = '\n';
   }
   return out;
+}
+
+/** Whether the `/` that follows this much code opens a regex literal. */
+function opensRegex(previous: string, out: string): boolean {
+  if (BEFORE_REGEX.has(previous)) return true;
+  return KEYWORD_BEFORE_REGEX.has(out.match(/([A-Za-z_$][\w$]*)\s*$/)?.[1] ?? '');
 }
 
 /** How many times one name appears as a whole word in a text. */
