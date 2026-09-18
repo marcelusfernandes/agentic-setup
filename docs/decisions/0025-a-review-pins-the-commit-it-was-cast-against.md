@@ -28,25 +28,25 @@ What is in force, as `scripts/land.mts` implements it:
   `gh pr view <pr> --json reviews`. Mode `agent` makes no such read — its reviewer casts
   nothing on the server (item 18), so there is no `PullRequestReview` to read a commit off
   — and mode `docs` reviews nothing at all.
-- **Which review counts.** `newestApprovedReviewOid` (`scripts/land.mts:233-241`) reads the
+- **Which review counts.** `newestApprovedReviewOid` (`scripts/land.mts:233-240`) reads the
   list from the end and takes the **newest** entry whose `state` is `APPROVED`. That is the
-  same rule `newestReviewedSha` (`:207-213`) applies to the marker comments, for the same
+  same rule `newestReviewedSha` (`:217-224`) applies to the marker comments, for the same
   reason: the newest is the one in force, and an older approval must not be reachable past
   a newer one.
 - **What it must equal.** That entry's `commit.oid`, lowercased, must equal the
   `headRefOid` read in the first `gh pr view` of the run, or the run refuses with
-  `missing: ['head:changed']` (`scripts/land.mts:446-456`). The refusal names the commit
+  `missing: ['head:changed']` (`scripts/land.mts:445-456`). The refusal names the commit
   the review was cast against, so the operator reads which commit, not only that it was the
   wrong one.
 - **A review that records no commit binds nothing.** An `APPROVED` entry whose `commit.oid`
-  is absent, empty or not a full 40-hex oid yields `null` (`scripts/land.mts:235-236`), and
+  is absent, empty or not a full 40-hex oid yields `null` (`scripts/land.mts:236-237`), and
   `null` never equals a head — so it refuses, in the same shape a missing marker does. This
   is deliberate and load-bearing: see **Reason**.
 - **The field is `reviews`, never `latestReviews`.** `gh pr view --json latestReviews`
   returns `commit: { oid: "" }` on every entry — measured with gh 2.83.1 against
   `cli/cli#14447`, `#14446` and `#14437`, human and bot reviewers alike — while
   `--json reviews` returns the real oid. The two are **not** interchangeable here, and the
-  reason is recorded at `scripts/land.mts:52-57` and in the fixture comment in
+  reason is recorded at `scripts/land.mts:54-56` and in the fixture comment in
   `tests/land.test.mts`, which are the two places the next person to "simplify" this will
   read.
 - **The read fails closed.** `gh` answering non-zero, or with something that does not parse
