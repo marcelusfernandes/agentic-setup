@@ -471,4 +471,198 @@ check(
     ruleBody(stateRulesDryLive, 'put') === null,
   ghLog(stateRulesDryLive),
 );
+// --- #229: every remaining read on this path that could fail quietly. Each
+// case asserts the refusal by name *and* that nothing mutating left the
+// process: a report line alone would not prove the run stopped short of the
+// create path, which is the whole defect.
+
+/** Nothing was POSTed and nothing was PUT — the run refused before mutating. */
+function madeNoMutatingCall(stateDir: string): boolean {
+  return (
+    !ghLog(stateDir).includes('-X POST') &&
+    !ghLog(stateDir).includes('-X PUT') &&
+    ruleBody(stateDir, 'post') === null &&
+    ruleBody(stateDir, 'put') === null
+  );
+}
+/** No outcome line was printed: neither "+ ruleset created" nor "= ruleset updated". */
+const claimedNoOutcome = (out: string): boolean => !/\+ ruleset created/.test(out) && !/= ruleset updated/.test(out);
+
+// AC1: the rulesets *list* is the one read on this path that answered
+// "there is no ruleset" for a failure that was not that. `parseJson(..., [])`
+// turned an error body into an empty list, `unreadable` stayed null, and the
+// run took the create path — POSTing exactly the second ruleset #143 exists
+// to prevent, over a branch an existing ruleset may well govern.
+const stateListObject = ghState('rules-list-object');
+writeFileSync(join(stateListObject, 'rulesets-list.json'), '{"message":"Not Found","status":"404"}');
+const listObject = initWithGh(ghRepo, stateListObject, '--rules');
+check('init --rules exits 0 when the rulesets list is not an array', listObject.status === 0, `${listObject.stdout}${listObject.stderr}`);
+check(
+  'init --rules refuses a rulesets list that is not a JSON array, naming what it could not read',
+  /! ruleset: the rulesets list is not a JSON array/.test(listObject.stdout) && claimedNoOutcome(listObject.stdout),
+  listObject.stdout,
+);
+check('init --rules creates no ruleset when the rulesets list is not an array', madeNoMutatingCall(stateListObject), ghLog(stateListObject));
+
+// The same read, second entrance, found while verifying #229 and not listed
+// in it: a list that is not valid JSON at all was swallowed into the `[]`
+// fallback, passed `Array.isArray`, and reached the create path just as
+// quietly as the object above.
+const stateListJunk = ghState('rules-list-junk');
+writeFileSync(join(stateListJunk, 'rulesets-list.json'), '<html>502 Bad Gateway</html>');
+const listJunk = initWithGh(ghRepo, stateListJunk, '--rules');
+check('init --rules exits 0 when the rulesets list does not parse', listJunk.status === 0, `${listJunk.stdout}${listJunk.stderr}`);
+check(
+  'init --rules refuses a rulesets list that is not valid JSON instead of reading it as an empty list',
+  /! ruleset: the rulesets list is not valid JSON/.test(listJunk.stdout) && claimedNoOutcome(listJunk.stdout),
+  listJunk.stdout,
+);
+check('init --rules creates no ruleset when the rulesets list does not parse', madeNoMutatingCall(stateListJunk), ghLog(stateListJunk));
+
+// AC2: `gh repo view` failing used to fall back to "main" and say nothing.
+// On a repository whose default branch is not main that guess is wrong, so
+// every governsDefaultBranch test compares against the wrong ref, nothing
+// matches, and the run creates a ruleset over a branch the ruleset in this
+// fixture already governs. The fixture is exactly that shape: the read fails
+// and a ruleset governs refs/heads/trunk.
+const stateBranchUnread = rulesState('branch-unread', [
+  { id: 81, name: 'trunk', target: 'branch', conditions: { ref_name: { include: ['refs/heads/trunk'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateBranchUnread, 'repo-view-fail'), '');
+const branchUnread = initWithGh(ghRepo, stateBranchUnread, '--rules');
+check('init --rules exits 0 when the default branch cannot be read', branchUnread.status === 0, `${branchUnread.stdout}${branchUnread.stderr}`);
+check(
+  'init --rules refuses when gh repo view fails, naming the default-branch read and gh first error line',
+  /! ruleset: could not read the default branch: /.test(branchUnread.stdout) && /HTTP 502/.test(branchUnread.stdout),
+  branchUnread.stdout,
+);
+check(
+  'init --rules never guesses main and creates a ruleset over a branch another one governs',
+  madeNoMutatingCall(stateBranchUnread) && claimedNoOutcome(branchUnread.stdout),
+  `${branchUnread.stdout}\n${ghLog(stateBranchUnread)}`,
+);
+check(
+  'init names the unreadable default branch rather than printing nothing about its guess',
+  /! could not read the default branch: /.test(branchUnread.stdout),
+  branchUnread.stdout,
+);
+
+// AC3, first half: `--ruleset-name` as the last argument on the command line
+// became "no override" and the run fell back to matching by conditions, with
+// nothing in the report to say the flag had been dropped.
+const stateNameMissing = rulesState('name-missing', [
+  { id: 91, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+const nameMissing = initWithGh(ghRepo, stateNameMissing, '--rules', '--ruleset-name');
+check('init --rules --ruleset-name with no value exits 0', nameMissing.status === 0, `${nameMissing.stdout}${nameMissing.stderr}`);
+check(
+  'init reports --ruleset-name with no value as a usage error instead of dropping it silently',
+  /! --ruleset-name: no name follows it/.test(nameMissing.stdout),
+  nameMissing.stdout,
+);
+check(
+  'init --rules --ruleset-name with no value does not fall back to matching by conditions',
+  madeNoMutatingCall(stateNameMissing) && claimedNoOutcome(nameMissing.stdout),
+  `${nameMissing.stdout}\n${ghLog(stateNameMissing)}`,
+);
+
+// The same failure class one argument over: the next token is another flag,
+// which used to be taken as the ruleset's name.
+const stateNameFlag = rulesState('name-flag', [
+  { id: 92, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+const nameFlag = initWithGh(ghRepo, stateNameFlag, '--ruleset-name', '--rules');
+check('init --ruleset-name followed by another flag exits 0', nameFlag.status === 0, `${nameFlag.stdout}${nameFlag.stderr}`);
+check(
+  'init does not take the next flag as the ruleset name',
+  /! --ruleset-name: no name follows it/.test(nameFlag.stdout) && madeNoMutatingCall(stateNameFlag),
+  `${nameFlag.stdout}\n${ghLog(stateNameFlag)}`,
+);
+
+// AC3, second half: a --ruleset-name that matches nothing used to POST a new
+// ruleset under that name, over a default branch another ruleset governs.
+// The operator asked to update one specific ruleset; creating a second one is
+// not a smaller version of that request, it is the opposite of it. The
+// refusal names the rulesets that do exist so the operator can pick one.
+const stateNameNoMatch = rulesState('name-nomatch', [
+  { id: 93, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+  { id: 94, name: 'release', target: 'branch', conditions: { ref_name: { include: ['refs/heads/release'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+const nameNoMatch = initWithGh(ghRepo, stateNameNoMatch, '--rules', '--ruleset-name', 'typo');
+check('init --rules --ruleset-name with no match exits 0', nameNoMatch.status === 0, `${nameNoMatch.stdout}${nameNoMatch.stderr}`);
+check(
+  'init --rules refuses a --ruleset-name that matches nothing and names the rulesets that do exist',
+  /! ruleset: no branch ruleset is named "typo"/.test(nameNoMatch.stdout) &&
+    /"main" \(#93\)/.test(nameNoMatch.stdout) &&
+    /"release" \(#94\)/.test(nameNoMatch.stdout),
+  nameNoMatch.stdout,
+);
+check(
+  'init --rules POSTs no ruleset named after an override that matched nothing',
+  madeNoMutatingCall(stateNameNoMatch) && claimedNoOutcome(nameNoMatch.stdout),
+  `${nameNoMatch.stdout}\n${ghLog(stateNameNoMatch)}`,
+);
+
+// AC4: the plan diagnosis used to be produced by matching `403` anywhere in
+// a message, and the same function is handed the `unreadable` refusal text.
+// A ruleset whose id merely contains those digits was therefore reported as
+// "not available on this plan" — a different, non-actionable diagnosis that
+// sends the operator to their billing page over an HTTP 500.
+const stateId403 = rulesState('id-403', [
+  { id: 4031, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateId403, 'ruleset-4031-fail'), '');
+const id403 = initWithGh(ghRepo, stateId403, '--rules');
+check('init --rules exits 0 when an unreadable ruleset id contains 403', id403.status === 0, `${id403.stdout}${id403.stderr}`);
+check(
+  'init --rules reports the unreadable ruleset by its own text, not as the free-plan limit',
+  /! ruleset: could not read ruleset #4031: /.test(id403.stdout) &&
+    /HTTP 500/.test(id403.stdout) &&
+    !/not available on this plan/.test(id403.stdout),
+  id403.stdout,
+);
+check('init --rules makes no mutating call when an unreadable ruleset id contains 403', madeNoMutatingCall(stateId403), ghLog(stateId403));
+
+// The genuine 403 still reads as the plan limit — the case above must not be
+// bought by making the diagnosis disappear. (`rulesets-403` makes the fake
+// gh fail the call itself, which is where a real 403 comes from.)
+const state403Still = ghState('rules-403-still');
+writeFileSync(join(state403Still, 'rulesets-403'), '');
+const still403 = initWithGh(ghRepo, state403Still, '--rules');
+check(
+  'init --rules still reports a genuine 403 from the gh call as the free-plan limit',
+  still403.status === 0 && still403.stdout.includes('! ruleset: not available on this plan for a private repository'),
+  still403.stdout,
+);
+
+// AC5: a detail whose shape is not a ruleset's used to reach
+// buildRulesetPayload, where `.find` and the spread of `rules` throw a
+// TypeError out of the process. `bypass_actors` and `conditions` are quieter
+// still: they are assigned, not spread, so a malformed one is shipped to the
+// API in the request body rather than throwing. Both are unreadable details,
+// and the refusal is the one the lookup already has.
+for (const [label, id, field, detail] of [
+  ['rules that is not an array', 95, 'rules', { rules: { pull_request: {} } }],
+  ['bypass_actors that is not an array', 96, 'bypass_actors', { rules: [], bypass_actors: { 0: 'everyone' } }],
+  ['conditions that is not an object', 97, 'conditions', { rules: [], bypass_actors: [], conditions: 'refs/heads/main' }],
+  ['a ref_name.include that is not an array', 98, 'conditions.ref_name.include', { rules: [], bypass_actors: [], conditions: { ref_name: { include: 'refs/heads/main' } } }],
+] as Array<[string, number, string, Record<string, unknown>]>) {
+  const st = rulesState(`detail-shape-${id}`, [
+    { id, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+  ]);
+  writeFileSync(join(st, `ruleset-${id}.json`), JSON.stringify({ id, name: 'main', target: 'branch', ...detail }));
+  const r = initWithGh(ghRepo, st, '--rules');
+  check(`init --rules exits 0 on a detail with ${label}`, r.status === 0, `${r.stdout}${r.stderr}`);
+  check(
+    `init --rules treats a detail with ${label} as unreadable and names the field`,
+    new RegExp(`! ruleset: could not read ruleset #${id}: `).test(r.stdout) && r.stdout.includes(`"${field}"`),
+    r.stdout,
+  );
+  check(
+    `init --rules neither throws nor mutates on a detail with ${label}`,
+    madeNoMutatingCall(st) && claimedNoOutcome(r.stdout) && !/TypeError/.test(`${r.stdout}${r.stderr}`),
+    `${r.stdout}${r.stderr}`,
+  );
+}
+
 finish();
