@@ -94,8 +94,9 @@ feature parity between the two runtimes.
   `scripts/lib/issues.mts`), and `.agents/skills/autonomous-loop/scripts/github.mts claim`
   reads `<type>/<n>-<slug>` alongside its own. Each lists the remote's heads before pushing
   and reports the branch it found as `held`, exit 2, writing nothing; a listing that cannot
-  be read refuses too. The rules are in `docs/workflow.md` and the loop's
-  `references/contract.md`. Preserve existing sessions/worktrees;
+  be read refuses too. Each route states its own read where that route is documented:
+  `docs/workflow.md` for the Claude one, the loop's `references/contract.md` for this one.
+  Preserve existing sessions/worktrees;
   an absent remote branch or a label is not proof that another session is abandoned.
 - Maintenance PRs in this repository retain the existing issue/CI contract during
   migration: valid closing keywords, issue Files globs, accurate type labels and the

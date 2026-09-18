@@ -91,9 +91,11 @@ A pushed branch is also how the Claude route locks an issue, as
 never collide with. Both routes therefore read the other's shape as a lock. Before
 pushing, `claim` lists the remote heads once and returns `held` with the branch it found —
 exit 2, nothing pushed, no label or assignee written — when a branch of either shape
-already locks the task. `status` reports such a task as `held`, with that branch under
-`foreignLock`, and never selects it as `next`; `labels` leaves its state label to the route
-that holds it; `land` refuses it. A listing that cannot be read refuses the claim instead:
+already locks the task. `status` reports the other route's branch under `foreignLock`: a
+task this route has not started reads as `held` where it would have read `ready`, and one
+this route already has a branch or PR on keeps its own state and carries the field. Either
+way it is never selected as `next`; `labels` leaves its state label to the route that holds
+it; `land` refuses it. A listing that cannot be read refuses the claim instead:
 an unreadable remote is never read as a free issue. Reconcile with the other coordinator
 rather than pushing a second lock over the first.
 

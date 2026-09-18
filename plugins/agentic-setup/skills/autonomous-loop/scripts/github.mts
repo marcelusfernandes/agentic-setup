@@ -45,8 +45,9 @@ const branchFor = (number: number) => `codex/task-${number}`;
 // Both routes lock an issue by pushing a branch, in namespaces that cannot collide:
 // `codex/task-<n>` here and `<type>/<n>-<slug>` in the Claude route's scripts/claim.mts.
 // This skill ships standalone, so that shape is restated here rather than imported.
-// A branch of either shape is a lock: the task is reported with `foreignLock`, never
-// dispatched, claimed or relabeled from this route (references/contract.md, ## Task).
+// Either shape locks the task for `claim`. The other route's is also carried on the task as
+// `foreignLock` — it reads as `held` where it would have read `ready` — and a task holding
+// one is never dispatched, relabeled or landed from here (references/contract.md, ## Task).
 const foreignLockShape = (number: number) => new RegExp(`^[a-z]+/${number}-`);
 const locksTask = (branch: string, number: number) => branch === branchFor(number) || foreignLockShape(number).test(branch);
 // One read of the remote's heads per snapshot or claim: the other route's branch is one
