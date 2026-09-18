@@ -193,6 +193,7 @@ export type PrReason =
   | 'pr:stack-not-supported'
   | 'pr:no-test-command'
   | 'pr:nothing-to-commit'
+  | 'pr:base-unreadable'
   | 'pr:git-failed';
 
 /**
@@ -355,7 +356,15 @@ function planSettings(base: string | null, shipped: Shipped): PlannedFile {
     }
   }
   const currentDeny = settings === null ? [] : ((settings.permissions as { deny?: unknown } | undefined)?.deny ?? []);
-  const current = Array.isArray(currentDeny) ? currentDeny.filter((rule): rule is string => typeof rule === 'string') : [];
+  // A deny list this module cannot read is one it must not rewrite. Filtering
+  // the entries that are not strings and writing the rest back would delete a
+  // rule the adopter wrote, silently, in a pull request about adopting a
+  // *protection* (#302). It is reported and skipped, like a settings file that
+  // is not JSON at all; `scripts/adopt.mts --hooks` refuses on the same shape.
+  if (!Array.isArray(currentDeny) || currentDeny.some((rule) => typeof rule !== 'string')) {
+    return { path: SETTINGS_FILE, content: null, outcome: 'skipped', reason: 'deny-not-strings', commit: 'adopt' };
+  }
+  const current = currentDeny as string[];
   const { deny, merge } = mergeDeny(current, shipped.deny);
 
   if (settings !== null && merge.added.length === 0 && merge.replaced.length === 0) {
@@ -550,6 +559,21 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     '`ci/negative-control.mts` copies it onto a checkout of the base and requires that',
     'run to fail; an adoption whose own checks cannot go green is one nobody should',
     'trust. The red is committed on its own, first, as `test(red):`.',
+    '',
+    // The two checks the generated workflow declares but cannot run *here*,
+    // stated the way `skills/init/SKILL.md` states the bootstrap pull
+    // request's two reds. `agentic-checks.yml` runs them out of
+    // `.github/scripts/agentic/`, which `node scripts/init.mts` copies and
+    // this branch does not carry, so they fail on the pull request that
+    // introduces them and pass on every one after it (#302).
+    '**`scope` and `negative-control` are expected red on this pull request, and only your',
+    "own test job is expected green on it.** The generated `agentic-checks.yml` runs them",
+    'with `node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
+    '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
+    'two checks it installs cannot run on the pull request that installs them. Both reds are',
+    'correct here — nothing is wrong with the adoption, so do not debug it over them — and',
+    'they stop at the first pull request opened after this one is merged. Until then, do not',
+    'make them required checks on the default branch, or this pull request cannot land.',
     '',
     '## Files',
     '',

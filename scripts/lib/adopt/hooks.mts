@@ -36,31 +36,35 @@
 //
 // **Crash policy: fail closed.** Every function either returns the answer or
 // throws a named `HookError`. A shipped file that is not there, a manifest
-// that is not the shape, a settings file that is not JSON and a target that
-// exists and cannot be read are each a named refusal — never a partial
+// that is not the shape, a settings file that is not JSON *or whose
+// `permissions.deny` holds an entry that is not a string* (#302), and a target
+// that exists and cannot be read are each a named refusal — never a partial
 // install, and never a merge over a file this module could not look at. Only
 // ENOENT reads as "it is not there"; every other errno fails closed. That is
 // stricter than `scripts/init.mts`, which reports an unparsable settings file
 // and carries on; a caller of this module asked for a plan, and half a plan is
-// worse than none.
+// worse than none. Every entry also carries `previous`, what the file holds
+// today, so the caller that executes the plan can put back what it wrote when
+// a later write of the same plan fails: half an install is worse than none
+// too, and only the caller knows that it happened.
 //
 // Node built-ins only.
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AdoptionRecord } from './record.mts';
+import { GIT_HOOKS, HOOK_MARKER, SUPERSEDED_DENY_RULES } from './constants.mts';
 
 /**
- * The text a hook of this setup carries, and the whole ownership test.
- * `scripts/lib/adopt/inventory.mts` keeps the same literal, unexported, as
- * `HOOK_MARKER`, and the `git pre-push` section of `scripts/init.mts` tests for
- * it with the same regex; both files are outside this change's globs, so the
- * literal is restated here rather than shared. The three must move together.
+ * The text a hook of this setup carries, and the whole ownership test. It has
+ * one definition, in `./constants.mts`, which `scripts/init.mts` and
+ * `scripts/lib/adopt/inventory.mts` read too (#302); this name is the one the
+ * rest of this module and its cases were written against.
  */
-export const MARKER = 'agentic-setup';
+export const MARKER = HOOK_MARKER;
 
 /** The one git hook this setup installs, named as the record names it. */
-export const GIT_HOOK = 'pre-push';
+export const GIT_HOOK = GIT_HOOKS[0];
 
 /** The file the git hook is copied from, under this repository's `hooks/`. */
 export const GIT_HOOK_SOURCE = 'git-pre-push';
@@ -84,17 +88,6 @@ export const HOOKS_MANIFEST = join('hooks', 'hooks.json');
 
 /** The file the deny list is read from, relative to this repository's root. */
 export const SETTINGS_TEMPLATE = join('templates', 'claude-settings.json');
-
-/**
- * Every deny rule this installer has ever seeded, keyed by the wording it was
- * written as and answering with the wording it is written as today (#204,
- * #242). A rule this map knows is replaced, not kept beside its successor.
- * `scripts/init.mts` holds the same table under the same name, unexported and
- * outside this change's globs; the two must move together.
- */
-export const SUPERSEDED_DENY_RULES: Record<string, string> = {
-  'Bash(gh pr merge *--admin*)': 'Bash(gh pr merge *)',
-};
 
 /** Every named reason this module can refuse for. */
 export type HookReason =
@@ -162,6 +155,13 @@ export type HookPlanEntry = {
   reason: HookPlanReason;
   /** The bytes to write, or `null` on a `skip`. */
   content: string | null;
+  /**
+   * What the file holds today, or `null` when there is no such file. It is
+   * what `scripts/adopt.mts --hooks` puts back when a later write of the same
+   * plan fails: the header promises a fail-closed install and never a partial
+   * one, and a plan executed halfway is exactly a partial one (#302).
+   */
+  previous: string | null;
   /** The mode to set after writing, or `null` when the default will do. */
   mode: number | null;
   /** The deny-list report, on the permission file's entry and nowhere else. */
@@ -285,7 +285,7 @@ function shown(root: string, path: string): string {
 /** The plan entry for the git hook the record named, or the reason it has none. */
 function planGitHook(root: string, hooksDir: string, shipped: Shipped, recorded: boolean): HookPlanEntry {
   const path = join(hooksDir, GIT_HOOK);
-  const entry = { hook: GIT_HOOK, path: shown(root, path), content: null, mode: null, deny: null };
+  const entry = { hook: GIT_HOOK, path: shown(root, path), content: null, mode: null, deny: null, previous: null };
   if (!recorded) return { ...entry, action: 'skip', reason: 'not-recorded' };
 
   const current = readTarget(path, 'hooks:unreadable');
@@ -294,11 +294,14 @@ function planGitHook(root: string, hooksDir: string, shipped: Shipped, recorded:
   }
   if (!isOurs(current)) return { ...entry, action: 'skip', reason: 'not-ours' };
   if (current === shipped.prePush) return { ...entry, action: 'skip', reason: 'unchanged' };
-  return { ...entry, action: 'update', reason: 'reinstalled', content: shipped.prePush, mode: GIT_HOOK_MODE };
+  return { ...entry, action: 'update', reason: 'reinstalled', content: shipped.prePush, mode: GIT_HOOK_MODE, previous: current };
 }
 
+/** The settings file as it is on disk, and as it parses; `null` when absent. */
+type Settings = { text: string; value: Record<string, unknown> };
+
 /** The settings file of the adopted repository, parsed, or a named refusal. */
-function readSettings(path: string): Record<string, unknown> | null {
+function readSettings(path: string): Settings | null {
   // A file that exists and cannot be read is `hooks:unreadable`, not
   // `hooks:settings-unparsable`: the reason is the contract, and "could not be
   // read" and "is not JSON" are different answers.
@@ -313,7 +316,36 @@ function readSettings(path: string): Record<string, unknown> | null {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new HookError('hooks:settings-unparsable', `${SETTINGS_FILE} must hold one JSON object`, SETTINGS_FILE);
   }
-  return parsed as Record<string, unknown>;
+  return { text, value: parsed as Record<string, unknown> };
+}
+
+/**
+ * The deny rules the adopted repository holds today, or a named refusal.
+ *
+ * An entry that is not a string used to be dropped on the floor (#302): the
+ * merged list was written back without it, so a rule a person had written as
+ * an object, a number or `null` disappeared from their permission file and
+ * nothing said so. A deny list this module cannot read is a permission file it
+ * must not rewrite — the same rule the marker enforces for a hand-written
+ * hook, and the same one `hooks:settings-unparsable` already states for a file
+ * that is not JSON at all. The remedy is to read the file.
+ */
+function currentDeny(settings: Settings | null): string[] {
+  if (settings === null) return [];
+  const deny = (settings.value.permissions as { deny?: unknown } | undefined)?.deny;
+  if (deny === undefined || deny === null) return [];
+  if (!Array.isArray(deny)) {
+    throw new HookError('hooks:settings-unparsable', `${SETTINGS_FILE} holds a \`permissions.deny\` that is not a list`, SETTINGS_FILE);
+  }
+  const stray = deny.findIndex((rule) => typeof rule !== 'string');
+  if (stray !== -1) {
+    throw new HookError(
+      'hooks:settings-unparsable',
+      `${SETTINGS_FILE} holds a \`permissions.deny\` entry that is not a string (index ${stray}); a rule this tool cannot read is not a rule it may drop`,
+      SETTINGS_FILE,
+    );
+  }
+  return deny as string[];
 }
 
 /**
@@ -336,11 +368,10 @@ export function mergeDeny(current: string[], shipped: string[]): { deny: string[
 function planDenyList(root: string, shipped: Shipped): HookPlanEntry {
   const path = join(root, SETTINGS_FILE);
   const settings = readSettings(path);
-  const currentDeny = settings === null ? [] : ((settings.permissions as { deny?: unknown } | undefined)?.deny ?? []);
-  const current = Array.isArray(currentDeny) ? currentDeny.filter((rule): rule is string => typeof rule === 'string') : [];
+  const current = currentDeny(settings);
   const { deny, merge } = mergeDeny(current, shipped.deny);
 
-  const entry = { hook: DENY_ENTRY, path: shown(root, path), mode: null, deny: merge };
+  const entry = { hook: DENY_ENTRY, path: shown(root, path), mode: null, deny: merge, previous: settings?.text ?? null };
   // A file that already holds every wanted rule is left exactly as it is —
   // formatting, key order and every other setting included. Rewriting it to
   // this tool's own formatting would be a change nobody asked for, and would
@@ -348,7 +379,7 @@ function planDenyList(root: string, shipped: Shipped): HookPlanEntry {
   if (settings !== null && merge.added.length === 0 && merge.replaced.length === 0) {
     return { ...entry, action: 'skip', reason: 'unchanged', content: null };
   }
-  const merged = { ...(settings ?? {}), permissions: { ...((settings?.permissions as Record<string, unknown> | undefined) ?? {}), deny } };
+  const merged = { ...(settings?.value ?? {}), permissions: { ...((settings?.value.permissions as Record<string, unknown> | undefined) ?? {}), deny } };
   const content = `${JSON.stringify(merged, null, 2)}\n`;
   return settings === null
     ? { ...entry, action: 'create', reason: 'absent', content }
@@ -403,6 +434,7 @@ export function planHooks(record: AdoptionRecord, options: PlanOptions): Plan {
       content: null,
       mode: null,
       deny: null,
+      previous: null,
     });
   }
   entries.push(planDenyList(options.root, shipped));

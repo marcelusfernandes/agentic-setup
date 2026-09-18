@@ -141,9 +141,12 @@ the body's checkboxes were rendered from, `record:stale` included — the JSON a
 reads and the issue a person reads never disagree.
 
 A second run never opens a second issue. When an open issue with that exact title
-already exists it refuses — `{ "refused": "…", "reason": "plan-issue:already-open",
-"issue": 7 }`, exit 1 — and makes no `gh issue create` call at all. Close the issue to
-get a new one.
+already exists it refuses, exit 1, and makes no `gh issue create` call at all. Which
+refusal depends on the label that issue carries: `plan-issue:already-open` for one still
+carrying `human:pending` (read it, or close it and run again), and
+`plan-issue:already-decided` for one already carrying `human:decided` — that question has
+been answered, a second issue would put a second decision beside the standing one, and the
+next step there is `--pr`. Both print `{ "refused": "…", "reason": …, "issue": 7 }`.
 
 A repository with nothing to plan is refused too. When the report names no gap there is
 no question to ask — the issue would carry an empty checklist, and a person would have to
@@ -185,7 +188,7 @@ only thing that produces it — one writer, one reader, one validator.
 | `stack` | `ci/lib/detect.mts`'s stack at the moment of writing |
 | `commands.test`, `commands.check` | the commands the loop runs; `null` when nothing was detected and nothing was overridden |
 | `checks[]` | the status checks the merge gate requires on the default branch, as the inventory read them from the branch's effective ruleset. Empty when no ruleset is in force |
-| `hooks[]` | the hooks of this setup that are installed and carry its marker, as the inventory found them. `--hooks` reads it back as the set to install |
+| `hooks[]` | the hooks adoption intends to install: the ones this setup ships, plus any the inventory already found carrying its marker. `--hooks` reads it back as the set to install |
 | `proof.dir` | where a branch slug declares its proof (`proof/<slug>.json`); `scripts/proof.mts` looks there rather than assuming the default |
 | `labels.source` | *where* the label vocabulary is defined — a pointer, never a copy. `scripts/init.mts` today; it becomes `labels.json` when that file is the one dictionary |
 | `generatedAt` | when the file was generated, ISO 8601 |
@@ -340,12 +343,14 @@ Rendering itself is pure: `scripts/lib/adopt/workflows.mts` takes a record and t
 template texts and returns strings. It writes nothing — `adopt.mts` is what writes — and
 it reads nothing in the repository being adopted.
 
-### What this does not close yet
+### The ruleset reads the same list
 
-`node scripts/init.mts --rules` still computes its own check names with
-`detectTestCheckName` when it builds the ruleset payload. Until that path reads the
-`checks` list above, `missingFromRuleset` is how the disagreement is made visible rather
-than prevented: run `--workflows`, and require exactly the names it prints.
+`node scripts/init.mts --rules` requires exactly the `checks` above when the repository has
+an `agentic.config.json`: it renders the workflow from that record and requires its job
+names, so the ruleset cannot ask for a check the generated workflow never produces. Without
+a record there is nothing to render from, and the historical default stands — `scope`,
+`negative-control` and whatever `detectTestCheckName` says the repository's own test job is
+called. `missingFromRuleset` still reports the difference between the two lists.
 
 ## `--hooks` installs the hooks the record names
 
@@ -442,11 +447,11 @@ Like `--workflows`, a repository without `agentic.config.json` is refused —
 `{ "refused": "…", "reason": "hooks:no-record" }`, exit 1, nothing installed. Run `--record`
 first.
 
-One gap remains open, and it is worth naming: `--record` fills `hooks[]` from the hooks the
-inventory found **installed**, so a repository that has adopted nothing yet writes
-`hooks: []` and `--hooks` then installs no hook file for it — only the deny list. Until the
-record can carry the hooks an adoption *intends*, name them in `hooks[]` before running
-this flag, and re-run `--record` afterwards so the record and the repository agree again.
+`hooks[]` is what adoption **intends** to install, not what the inventory found installed:
+`--record` writes the hooks this setup ships (`pre-push`) plus anything already there, so a
+repository that has adopted nothing still gets its hook from `--hooks`. No person edits the
+record to arrange that — invariant 4 says nobody edits it at all. What a repository *has*
+is `--inventory`'s answer, and `hooks:not-installed` is its gap.
 
 ## `node scripts/proof.mts <slug>` runs the proof
 
@@ -632,6 +637,19 @@ that walks the repository (`npm test` running `node --test`, say) finds the file
 runner configured with an explicit list of test paths has to be told about it. The pull
 request's `## Risks` section says so.
 
+### Two of the generated checks are expected red on this one pull request
+
+The generated `agentic-checks.yml` runs `scope` and `negative-control` out of
+`.github/scripts/agentic/`, which `node scripts/init.mts` copies into a repository and this
+branch does not carry: the two checks it installs cannot run on the pull request that
+installs them. The body says so, the way `skills/init/SKILL.md` says it for the bootstrap
+pull request — **both reds are correct there**, only your own test job is expected green,
+and they stop at the first pull request opened after this one is merged. Do not make them
+required checks on the default branch until then, or the adoption pull request cannot land.
+The jobs are not made conditional on the copy existing: a required check that skips itself
+is a gate that reports green without having run, which is the one thing a merge gate must
+never do.
+
 ### The body is the one `ci/scope-check.mts` reads
 
 The generated body follows `.github/pull_request_template.md` exactly: `Closes #<plan
@@ -752,6 +770,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `workflows:template-missing` | a shipped template under `templates/.github/workflows/` is not there; `field` names it |
 | `workflows:template-unreadable` | a shipped template exists and could not be read; `field` names it |
 | `workflows:template-anchor-missing` | a template no longer carries the line the record is substituted into, so the file would be written with the placeholder still in it; `field` names it |
+| `workflows:jobs-not-last` | `agentic-checks.yml` carries a top-level key after its `jobs:` mapping, so the generated jobs would be appended under a key this tool did not write and neither check would run; `field` names the file |
 | `workflows:command-not-renderable` | a recorded command holds a newline or a control character and cannot be put on one line of YAML; `field` names it (`commands.test`, `commands.check`) |
 | `workflows:unreadable` | a file under `.github/workflows` exists and could not be read, so whether it carries the marker is unknown |
 | `workflows:not-written` | a generated workflow could not be written |
@@ -759,11 +778,11 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:source-missing` | a file this repository ships (`hooks/git-pre-push`, `hooks/hooks.json`, `templates/claude-settings.json`) is not there; `field` names it |
 | `hooks:source-unreadable` | one of those exists and could not be read, or is not the shape the installer needs; `field` names it |
 | `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
-| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object; the deny list is never merged into a file this tool could not understand |
-| `hooks:not-written` | a hook file or the settings file could not be written |
+| `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object, or its `permissions.deny` is not a list of strings; the deny list is never merged into a file this tool could not understand, and a rule it cannot read is not a rule it may drop |
+| `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:origin-unreadable` | `git fetch origin` could not answer, so the base the branch would be built on is unknown |
-| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed, or a path the tree holds could not be read — an unreadable file is never planned as an absent one |
+| `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed (a `git` answer that outgrew its buffer counts: a truncated listing is not a shorter one), or a path the tree holds could not be read — an unreadable file is never planned as an absent one; `field` names the path when there is one, and the temporary index directory is removed either way |
 | `pr:stack-not-supported` | the record's `stack` is not `node`, so the generated `node:test` file would never be discovered; `field` names it |
 | `pr:no-test-command` | the record holds no `commands.test`, so the deliberate red has nothing to be red in; `field` names it |
 | `pr:nothing-to-commit` | the base already carries every file the adoption would write |
@@ -780,9 +799,10 @@ point at the line rather than the file.
 `plan-issue:already-open` use, because nothing failed: the repository simply has no
 record yet. `pr:no-plan-issue`, `pr:plan-not-decided` and `pr:plan-ambiguous` are refusals
 of the same shape, with one more field: `missing`, the named list of what a person still
-owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). The first two
-carry `issue`, the one they read; `pr:plan-ambiguous` carries `issues` instead, because the
-refusal *is* that there was more than one.
+owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). Only
+`pr:plan-not-decided` carries `issue`, the one it read: `pr:no-plan-issue` found none to
+name, and `pr:plan-ambiguous` carries `issues` instead, because the refusal *is* that there
+was more than one.
 
 ## What this is not
 

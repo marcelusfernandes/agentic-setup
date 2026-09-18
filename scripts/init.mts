@@ -85,6 +85,9 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { labelsSeededByInit, loadLabels, type LabelEntry } from './lib/labels.mts';
+import { HOOK_MARKER, SUPERSEDED_DENY_RULES } from './lib/adopt/constants.mts';
+import { readRecord, RecordError } from './lib/adopt/record.mts';
+import { readTemplates, renderWorkflows, WorkflowError } from './lib/adopt/workflows.mts';
 
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const LABELS_FILE = join(PLUGIN, 'labels.json');
@@ -154,6 +157,35 @@ function run(cmd: string, args: string[], cwd?: string, input?: string) {
  * never a contract — same philosophy as ci/lib/detect.mts, kept separate
  * here since it reads workflow YAML rather than a test command.
  */
+/**
+ * The checks the ruleset requires, from one place (#302).
+ *
+ * `scripts/adopt.mts --workflows` renders `agentic-checks.yml` from the
+ * adoption record and answers with the job names that file produces; the
+ * ruleset must require exactly those, or it can block every merge on a check
+ * nothing runs. So when the repository has a record, its rendering is the
+ * list. Without one there is nothing to render from, and the historical
+ * default stands: the two checks this setup ships, plus whatever the
+ * repository's own test workflow calls its job — detection, which invariant 4
+ * says is a default and never a contract. A record that is not the shape, or a
+ * rendering that refuses, falls back to the same default rather than stopping
+ * the run: `scripts/adopt.mts` is where a rejected record is fatal, and this
+ * step's own refusals are about the ruleset it could not read.
+ */
+function requiredChecks(repoRoot: string): string[] {
+  try {
+    const record = readRecord(repoRoot);
+    if (record !== null) return renderWorkflows(record, readTemplates()).checks;
+  } catch (err) {
+    if (!(err instanceof RecordError) && !(err instanceof WorkflowError)) throw err;
+    say(`  ! ruleset: ${RECORD_FILE_NAME} could not be rendered from (${(err as Error).message.split('\n')[0]}); falling back to detection for the check names`);
+  }
+  return ['scope', 'negative-control', detectTestCheckName(repoRoot)];
+}
+
+/** The adoption record's file name, as the fallback message above names it. */
+const RECORD_FILE_NAME = 'agentic.config.json';
+
 function detectTestCheckName(repoRoot: string): string {
   const dir = join(repoRoot, '.github', 'workflows');
   if (!existsSync(dir)) return 'test';
@@ -290,7 +322,7 @@ function governsDefaultBranch(ruleset: Ruleset, defaultBranch: string): boolean 
 function buildRulesetPayload(
   existing: Ruleset | null,
   defaultBranch: string,
-  testCheck: string,
+  checks: string[],
   newName: string,
   requireReview: boolean,
 ): Record<string, unknown> {
@@ -321,7 +353,7 @@ function buildRulesetPayload(
       type: 'required_status_checks',
       parameters: {
         ...parametersOf('required_status_checks'),
-        required_status_checks: [{ context: 'scope' }, { context: 'negative-control' }, { context: testCheck }],
+        required_status_checks: checks.map((context) => ({ context })),
         strict_required_status_checks_policy: false,
       },
     },
@@ -413,17 +445,14 @@ copyTree(join(PLUGIN, 'ci'), join(root, '.github', 'scripts', 'agentic'), true);
 
 // 3. permission deny list
 //
-// Every deny rule this installer has ever seeded, keyed by the wording it was
-// written as and answering with the wording it is written as today. A rule in
+// `SUPERSEDED_DENY_RULES` (scripts/lib/adopt/constants.mts) is every rule this
+// installer has ever seeded, keyed by the wording it was written as. A rule in
 // the target's list that this map knows is replaced, not kept beside its
 // successor (#204: a repository that ran an older `init` carried the narrower
 // `Bash(gh pr merge *--admin*)` forever, next to the `Bash(gh pr merge *)` that
-// superseded it). The set is named here on purpose: "whatever the wanted file
-// no longer contains" would also delete rules the adopter wrote themselves.
-const SUPERSEDED_DENY_RULES: Record<string, string> = {
-  'Bash(gh pr merge *--admin*)': 'Bash(gh pr merge *)',
-};
-
+// superseded it). The set is named rather than derived on purpose: "whatever
+// the wanted file no longer contains" would also delete rules the adopter
+// wrote themselves. It had a second, identical definition here until #302.
 say('.claude/settings.json');
 const settingsPath = join(root, '.claude', 'settings.json');
 const wanted = JSON.parse(readFileSync(join(PLUGIN, 'templates', 'claude-settings.json'), 'utf8'));
@@ -457,7 +486,7 @@ say('git pre-push');
 const hooksDir = run('git', ['rev-parse', '--git-path', 'hooks']).out;
 const prePush = resolve(root, hooksDir, 'pre-push');
 const ours = readFileSync(join(PLUGIN, 'hooks', 'git-pre-push'), 'utf8');
-if (existsSync(prePush) && readFileSync(prePush, 'utf8') !== ours && !/agentic-setup/.test(readFileSync(prePush, 'utf8')) && !force) {
+if (existsSync(prePush) && readFileSync(prePush, 'utf8') !== ours && !readFileSync(prePush, 'utf8').includes(HOOK_MARKER) && !force) {
   say(`  ! ${relative(root, prePush)} exists and is not ours; left alone (--force to replace)`);
 } else {
   write(() => {
@@ -563,8 +592,10 @@ if (useGh) {
     // and carries the fetched stale-approval fields through unless
     // --require-review raises them (buildRulesetPayload above), plus
     // the three checks the merge model depends on
-    // (docs/decisions.md item 9(a)): scope, negative-control, and this
-    // repository's own test workflow's job (detectTestCheckName above); an
+    // (docs/decisions.md item 9(a)): the jobs the generated `agentic-checks.yml`
+    // produces when the repository has an adoption record, and scope,
+    // negative-control plus the detected test job when it has none
+    // (requiredChecks above); an
     // update keeps every rule, parameter and bypass actor the installer
     // does not manage (buildRulesetPayload above). The reads always happen,
     // even under --dry-run, so the report can tell "+ created" from
@@ -648,7 +679,7 @@ if (useGh) {
           const method = existing ? 'PUT' : 'POST';
           const outcome = existing ? '  = ruleset updated' : '  + ruleset created';
           const payload = JSON.stringify(
-            buildRulesetPayload(existing, branch, detectTestCheckName(root), rulesetNameOverride ?? DEFAULT_RULESET_NAME, requireReview),
+            buildRulesetPayload(existing, branch, requiredChecks(root), rulesetNameOverride ?? DEFAULT_RULESET_NAME, requireReview),
             null,
             2,
           );

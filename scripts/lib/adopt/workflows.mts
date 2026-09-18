@@ -83,6 +83,7 @@ export type WorkflowReason =
   | 'workflows:template-missing'
   | 'workflows:template-unreadable'
   | 'workflows:template-anchor-missing'
+  | 'workflows:jobs-not-last'
   | 'workflows:command-not-renderable';
 
 /**
@@ -191,6 +192,26 @@ function yamlCommand(command: string, field: string): string {
 }
 
 /**
+ * The first top-level key after the `jobs:` line, or `null` when `jobs:` is
+ * the last one. The generated jobs are appended at the end of the file, which
+ * is inside the `jobs:` mapping only while nothing follows it: a template that
+ * grew an `env:` or a second `on:` after `jobs:` would swallow them, and the
+ * two checks the merge gate requires would silently not exist (#302). There is
+ * no YAML parser among the built-ins to notice, so this is what notices.
+ */
+function keyAfterJobs(text: string): string | null {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => JOBS_ANCHOR.test(line));
+  if (start === -1) return null;
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === '' || /^[ \t#]/.test(line)) continue;
+    const key = line.match(/^([A-Za-z0-9_-]+):/);
+    if (key) return key[1];
+  }
+  return null;
+}
+
+/**
  * The job ids of a workflow, in file order: every two-space key under the
  * `jobs:` line, up to the next top-level key. Blank lines inside the mapping
  * are part of it, which is why this walks lines rather than matching one
@@ -251,6 +272,16 @@ function renderChecks(record: AdoptionRecord, template: string): { content: stri
   }
   if (!JOBS_ANCHOR.test(template)) {
     throw new WorkflowError('workflows:template-anchor-missing', `${CHECKS_WORKFLOW} has no \`jobs:\` mapping to add a job to`, CHECKS_WORKFLOW);
+  }
+  const trailing = keyAfterJobs(template);
+  if (trailing !== null) {
+    throw new WorkflowError(
+      'workflows:jobs-not-last',
+      `${CHECKS_WORKFLOW} carries the top-level key \`${trailing}:\` after its \`jobs:\` mapping; the generated jobs are appended at the ` +
+        'end of the file, so they would land under a key this module did not write and neither of the two checks would run. ' +
+        'Move `jobs:` back to the end of the template, or teach this module to insert rather than append.',
+      CHECKS_WORKFLOW,
+    );
   }
 
   const gaps: WorkflowGap[] = [];
