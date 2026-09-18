@@ -321,7 +321,26 @@ When an implementer returns with a PR: first copy the issue's `type:` and `scope
 onto it — `gh pr edit <pr> --add-label "type:<t>" --add-label "scope:<s>"`, the same
 `type:` you wrote on the issue at step 3. The implementer sets only `state:in-review`, so
 until you do this the PR carries no `type:`/`scope:` at all, and `scope`/`land` read the
-**PR's** labels, never the issue's. Then read the head you are about to have reviewed and
+**PR's** labels, never the issue's. **Move the issue in the same breath:**
+
+```bash
+gh issue edit <n> --add-label state:in-review --remove-label state:in-progress
+```
+
+That is yours now, not the implementer's (#237). `hooks/protect-main.mts` denies
+`gh issue edit` from inside an agent's worktree, because the issue body carries the
+`## Files` globs and any `authorised:` line that widens them, so a session editing the
+issue it is implementing could grant itself scope — the same reason the `type:`/`scope:`
+copy above is yours. **It is a step you can forget and nothing will stop you**: where the
+implementer could not finish its round without running it, nothing fails when you skip it.
+What it costs when you do: `inReview` is filtered on the issue's own `state:in-review`
+label (`scripts/reconcile.mts:715`), so an issue you did not move is absent from the bucket
+you work from, and `stale` never picks it up either — that wants no PR and no remote branch
+(`:731-733`). The pull request goes quiet rather than loud, which is what L14 measured
+(`docs/dogfood/2026-09-10.md`). Where it *does* show is `inProgress`: an entry whose `pr`
+is not `null` and whose `foreignLock` is `false` is an issue still in progress under an
+open pull request of this route's own — that is the signature of a relabel nobody made, and
+step 0 is where you read it. Then read the head you are about to have reviewed and
 keep it — `OID="$(gh pr view <pr> --json headRefOid --jq .headRefOid)"` — and launch the
 `reviewer` agent with the PR number and the issue body. Read the oid here, not after the
 verdict: a push that lands while the reviewer is reading must leave the marker naming the

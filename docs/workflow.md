@@ -174,7 +174,18 @@ never as an ordinary glob of the issue (#231).
 glob stands alone on the line.** It grants a file outside the issue's globs, and `scope`
 reads it from the body of an issue the PR closes — never from the pull request, because
 the implementer writes that body and would be granting itself (#155). An implementer that
-needs a file outside its globs asks the orchestrator and stops. The line may be a bullet
+needs a file outside its globs asks the orchestrator and stops. **That is enforced, not
+asked for:** `hooks/protect-main.mts` denies `gh issue edit` outright when the session
+typing it carries an `agent_id` and stands in a linked worktree — an agent is born in one
+and never leaves it, the orchestrator runs in the main checkout, so the hook can tell the
+session a grant would exempt from the session allowed to write one (#237,
+`docs/decisions/0024-a-grant-is-never-written-from-a-worktree.md`). The whole subcommand
+is denied, not the body-writing flags, so moving the issue to `state:in-review` is the
+orchestrator's step 4 as well; `gh issue view`, `gh issue comment` and `gh issue list` are
+untouched, and so is the orchestrator's own edit. Like every rule in that hook this is
+layer three and an indirect form walks past it — `gh api -X PATCH` on the issue does not
+contain the words `issue edit` — so it saves a round trip and does not replace the reading
+of the diff. The line may be a bullet
 or bare, and the word is matched in any case. What follows it is read once, like this:
 **every backticked span on the line is a granted glob** when there is at least one —
 so a justification on the same line must contain no backticks of its own, or it grants
@@ -273,8 +284,11 @@ An `authorised:` line in **this** body grants nothing: the grant belongs in the 
 (see "Issue" above). The implementer asks the orchestrator for one instead of writing it.
 
 The **orchestrator** copies the issue's `type:` and `scope:` labels onto the PR, at step 4
-of `skills/orchestrate` — the implementer opens the PR with `state:in-review` alone. An
-agent that labels its own work could buy its own exemptions, so `type:` is written by the
+of `skills/orchestrate`, **and moves the issue itself to `state:in-review` at the same
+step** — the implementer opens the PR with `state:in-review` alone and touches the issue
+not at all (#237: `gh issue edit` is denied from inside its worktree, because the issue
+body is where a grant would be written). An agent that labels its own work could buy its
+own exemptions, so `type:` is written by the
 orchestrator at claim time (`scripts/claim.mts`, mapped from the branch type through
 `TYPE_LABELS` in `scripts/lib/issues.mts`: `feat` → `type:feature`, `fix` → `type:bug`,
 `chore`/`test`/`ci` → `type:infra`) and copied across from there.
@@ -510,7 +524,10 @@ who genuinely has to merge a pull request by hand does it outside the agent sess
 own terminal, or the GitHub UI. The layer that must not be bypassed is still the ruleset;
 this one is a round-trip saver.
 
-Apart from the merge rule, `protect-main.mts` is a fallback for a machine with no
-server-side ruleset yet: it denies a force-push and a push or delete of `main`/`master`. It
-never gates a merge on green checks by itself — the ruleset, or `land.mts`'s own gate, already
-covers that.
+Apart from the merge rule and the issue-edit rule above, `protect-main.mts` is a fallback
+for a machine with no server-side ruleset yet: it denies a force-push and a push or delete
+of `main`/`master`. It never gates a merge on green checks by itself — the ruleset, or
+`land.mts`'s own gate, already covers that. Four denials in all, numbered in the hook's own
+header: force-push, a push or delete of `main`/`master`, `gh pr merge`, and `gh issue edit`
+from inside an agent's worktree. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the second one's push
+form and nothing else — never the deletion, never the merge, never the issue edit.

@@ -46,11 +46,17 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    or a fence — test summary, globs touched). Label `state:in-review` and nothing else —
    the orchestrator copies the issue's `type:` and `scope:` labels onto the PR at its
    step 4 (`skills/orchestrate/SKILL.md`). An agent that labels its own work could buy
-   its own exemptions. That is about the PR's own labels; the issue moves with it, in the
-   same breath: `gh issue edit <n> --add-label state:in-review --remove-label
-   state:in-progress`. That is what keeps the issue out of `reconcile`'s stale list — a PR
-   in review over an issue still on `state:in-progress` is listed in neither bucket
-   (measured: `docs/dogfood/2026-09-10.md`, L14). And once the body exists it is
+   its own exemptions. That is about the PR's own labels; the issue's are not yours at
+   all. **Never run `gh issue edit`** — not to move the issue, not for anything else.
+   `hooks/protect-main.mts` denies the whole subcommand from inside your worktree (#237),
+   because the issue body carries the `## Files` globs and any `authorised:` line that
+   widens them, so a session editing the issue it is implementing could grant itself
+   scope. The orchestrator moves the issue to `state:in-review` at that same step 4, for
+   the same reason it copies the labels. Do not work around it and do not wait for it:
+   that move is what keeps the issue out of `reconcile`'s stale list — a PR in review over
+   an issue still on `state:in-progress` is listed in neither bucket (measured:
+   `docs/dogfood/2026-09-10.md`, L14) — so if you can see it has not happened, say so in
+   your report and stop there. And once the body exists it is
    **appended to**, never rewritten: `## Files` and any `authorised:` line in it belong to
    the orchestrator, and `gh pr edit --body-file` with a freshly composed body drops them.
    Read the current body first and add to it (measured: `docs/dogfood/2026-09-10.md`, L21).
