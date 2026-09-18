@@ -94,7 +94,10 @@ JSON
   {"number":71,"title":"In progress resumable but checked out in a worktree","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":72,"title":"In progress worktree locked by a dead pid","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":73,"title":"In progress worktree locked by a live pid","body":"","labels":[{"name":"state:in-progress"}]},
-  {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]}
+  {"number":74,"title":"In progress worktree locked with pid 0 in the reason","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":7,"title":"In progress locked by the Codex route","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":9,"title":"In progress locked by the Codex route, no PR yet","body":"","labels":[{"name":"state:in-progress"}]},
+  {"number":8,"title":"In review locked by the Codex route","body":"","labels":[{"name":"state:in-review"}]}
 ]
 JSON
         ;;
@@ -116,13 +119,15 @@ JSON
   {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
   {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
   {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
-  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null}
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null},
+  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null},
+  {"number":108,"headRefName":"codex/task-8","labels":[{"name":"review:approved"}],"reviewDecision":null}
 ]
 JSON
     ;;
   "pr checks")
     case "\${3:-}" in
-      130)
+      130|108)
         echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pass"}]'
         ;;
       131)
@@ -178,6 +183,10 @@ for (const branch of [
   'feat/42-cancelled-check',
   'feat/50-prune-target',
   'feat/60-shadowed',
+  // The Codex route's lock shape (#157), which `^[a-z]+/<n>-` never matches:
+  'codex/task-7',
+  'codex/task-8',
+  'codex/task-9',
 ]) {
   git(['checkout', '-q', '-b', branch, 'main'], repo);
   git(['push', '-q', 'origin', branch], repo);
@@ -402,10 +411,23 @@ check('ready carries the title', ready10?.title === 'Ready no blockers');
 
 const inProgress20 = (out?.inProgress ?? []).find((i: any) => i.number === 20);
 const inProgress21 = (out?.inProgress ?? []).find((i: any) => i.number === 21);
-check('in-progress with a remote branch and a PR', inProgress20?.branch === 'feat/20-x' && inProgress20?.hasRemoteBranch === true && inProgress20?.pr === 100, JSON.stringify(inProgress20));
+check('in-progress with a remote branch and a PR', inProgress20?.branch === 'feat/20-x' && inProgress20?.hasRemoteBranch === true && inProgress20?.foreignLock === false && inProgress20?.pr === 100, JSON.stringify(inProgress20));
 check('in-progress with neither PR nor remote branch', inProgress21?.branch === null && inProgress21?.hasRemoteBranch === false && inProgress21?.pr === null, JSON.stringify(inProgress21));
 
 check('stale lists only the issue with no PR and no remote branch', (out?.stale ?? []).length === 1 && out.stale[0].number === 21, JSON.stringify(out?.stale));
+
+// --- AC1 (#157): a `codex/task-<n>` lock resolves to that branch and its PR,
+// flagged `foreignLock` so this route neither resumes it (round N+1 skips the
+// claim) nor reviews and lands its pull request (orchestrate steps 4-5).
+const inProgress7 = (out?.inProgress ?? []).find((i: any) => i.number === 7);
+check('an issue locked by the Codex route resolves its codex/task-<n> branch and PR',
+  inProgress7?.branch === 'codex/task-7' && inProgress7?.hasRemoteBranch === true && inProgress7?.foreignLock === true && inProgress7?.pr === 107,
+  JSON.stringify(inProgress7));
+const inProgress9 = (out?.inProgress ?? []).find((i: any) => i.number === 9);
+const resumable9 = (out?.resumable ?? []).some((i: any) => i.number === 9);
+check('the same lock with no open PR stays inProgress as a foreign lock, never resumable',
+  inProgress9?.branch === 'codex/task-9' && inProgress9?.foreignLock === true && inProgress9?.pr === null && !resumable9,
+  `${JSON.stringify(inProgress9)} resumable=${JSON.stringify(out?.resumable)}`);
 
 // --- AC3: a remote-tracking ref shadowed by a same-named local branch one
 // level down must still resolve to its real (slash-bearing) branch name, not
@@ -529,7 +551,9 @@ check(
 
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
-check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true, JSON.stringify(inReview30));
+check('in-review green + approved', inReview30?.pr === 130 && inReview30?.checks === 'green' && inReview30?.reviewApproved === true && inReview30?.foreignLock === false, JSON.stringify(inReview30));
+const inReview8 = (out?.inReview ?? []).find((i: any) => i.number === 8);
+check('in-review locked by the Codex route: flagged, not this route\'s to review or land (#157)', inReview8?.pr === 108 && inReview8?.checks === 'green' && inReview8?.foreignLock === true, JSON.stringify(inReview8));
 check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.checks === 'red' && inReview31?.reviewApproved === false, JSON.stringify(inReview31));
 
 // --- AC1: checks comes from `gh pr checks <pr> --json name,bucket`, not the
