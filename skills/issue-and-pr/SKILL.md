@@ -25,7 +25,17 @@ omitted, and must be one of `feat|fix|refactor|chore|docs|test|ci|deps` either w
 title outside that set (e.g. `perf(ci): …`) has no type of its own, so pass `--type` with
 a value from the set (whichever fits — `ci` for `perf(ci): …`). The push of a new ref
 (`origin/<default>:refs/heads/<type>/<n>-<slug>`) is the lock — `git push --porcelain`,
-not a local pre-check, decides whether it held.
+not a local pre-check, decides a race between two agents of this route.
+
+Two branch shapes lock an issue, one per route: `<type>/<n>-<slug>` here and
+`codex/task-<n>` on the Codex route, in namespaces that never collide (both are listed in
+`scripts/lib/issues.mts`). So `claim.mts` reads the remote's heads once before it pushes
+(`git ls-remote --heads origin`, the remote itself, not local tracking refs) and any
+branch it finds that locks the issue — the other route's, or this one's under a different
+slug — is `{ held }` with nothing pushed. That read is an early refusal, never the lock:
+it cannot see a branch pushed after it ran, which is why the create-only push still
+decides the race. It fails closed — a `ls-remote` that cannot answer exits 1 with
+`{ error }` naming it rather than assuming the issue is free.
 
 Before that push, `claim.mts` runs `ci/issue-lint.mts` on the issue itself and refuses when
 the result is not `ok: true` — a normal failure, or the lint's own `{ error }` when it
@@ -40,11 +50,13 @@ Exit 0 → `{ issue, branch, base, lint }`: pushed, assigned `@me`, relabelled
 `state:in-progress` and labelled `type:` from the branch type (`feat` → `type:feature`,
 `fix` → `type:bug`; `chore`, `test` and `ci` all → `type:infra`; `refactor`, `docs` and
 `deps` keep their name — the mapping is `TYPE_LABELS` in `scripts/lib/issues.mts`).
-Exit 2 → `{ held }`: the branch already exists, another agent has it
-— skip, no retry. Exit 1 → `{ refused }` (closed, missing `state:ready`, an open
+Exit 2 → `{ held: "<branch>" }`: a branch that locks the issue already exists, so another
+agent has it — possibly on the other route, under a branch this script would never have
+pushed; skip, no retry, and never work that branch yourself. Exit 1 → `{ refused }`
+(closed, missing `state:ready`, an open
 `Blocked by:` issue, no `## Files` bullet, or a failing `issue-lint` — nothing pushed,
 nothing relabelled) or `{ error }` (a usage problem — no type determinable and none given,
-or an invalid `--type` — or a `gh`/`git` failure). The implementer is born in a worktree on
+or an invalid `--type` — or a `gh`/`git` failure, the pre-push `ls-remote` read included). The implementer is born in a worktree on
 that branch and **never creates or renames one**.
 
 ## Open the PR (implementer)

@@ -88,7 +88,15 @@ feature parity between the two runtimes.
 - The Claude route remains available through its plugin commands and `CLAUDE.md`.
   Its operating contracts are `docs/workflow.md`, `docs/orchestration.md` and
   `skills/issue-and-pr/SKILL.md`. Do not launch it against an objective owned by Codex.
-- One coordinator owns an objective at a time. Preserve existing sessions/worktrees;
+- One coordinator owns an objective at a time, and the two routes enforce it from the same
+  evidence — a pushed branch — each refusing the other's shape: `scripts/claim.mts` reads
+  `codex/task-<n>` alongside its own `<type>/<n>-<slug>` (both named in
+  `scripts/lib/issues.mts`), and `.agents/skills/autonomous-loop/scripts/github.mts claim`
+  reads `<type>/<n>-<slug>` alongside its own. Each lists the remote's heads before pushing
+  and reports the branch it found as `held`, exit 2, writing nothing; a listing that cannot
+  be read refuses too. Each route states its own read where that route is documented:
+  `docs/workflow.md` for the Claude one, the loop's `references/contract.md` for this one.
+  Preserve existing sessions/worktrees;
   an absent remote branch or a label is not proof that another session is abandoned.
 - Maintenance PRs in this repository retain the existing issue/CI contract during
   migration: valid closing keywords, issue Files globs, accurate type labels and the

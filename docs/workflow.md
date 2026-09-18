@@ -10,6 +10,28 @@ written in English; the language you talk to the agents in is your business.
   remote branch is the lock on the issue** — `git push origin origin/main:refs/heads/<branch>`
   fails if the ref exists, so two orchestrators cannot claim the same issue.
   Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `deps`.
+- Two branch shapes lock an issue, one per route: `<type>/<number>-<slug>` here, and
+  `codex/task-<number>` on the Codex route (`.agents/skills/autonomous-loop/references/contract.md`,
+  "the canonical remote branch"). Neither namespace collides
+  with the other, so each reads the other's shape instead: both are listed in
+  `scripts/lib/issues.mts`, `scripts/reconcile.mts` reports an issue whose only remote
+  branch is `codex/task-<n>` under that branch (and its PR) rather than as free, and
+  `scripts/claim.mts` reads the remote's heads before it pushes — an issue already locked
+  by either route, under any slug, is `{ held: "<the branch found>" }`, exit 2, with
+  nothing pushed and no label touched. That read fails closed: a `git ls-remote` that
+  cannot answer exits 1 with `{ error }` naming it rather than assuming the issue is
+  free. It is an early refusal, not the lock; two agents of *this* route racing for the
+  same issue are still decided by the create-only push.
+- An issue locked by the other route is reported, never taken. `reconcile.mts` marks it
+  `foreignLock: true` under `inProgress` and keeps it out of `resumable` even when it has
+  no pull request yet (the Codex loop's state between its claim push and its PR):
+  `resumable` is dispatched as round N+1 *without* a claim
+  (`skills/orchestrate/SKILL.md`), so a foreign lock left in that list would reach an
+  implementer with `claim.mts`'s refusal never consulted. `inReview` carries the same flag
+  for the same reason — the Codex loop labels its own tasks `state:in-review`, so such an
+  entry now names that route's pull request, which this route reports but never reviews
+  and never lands. Nobody on this route claims, resumes, reviews, lands or pushes to a
+  `codex/task-<n>` branch.
 - The orchestrator creates the branch; the implementer never creates or renames one.
 - Commits: `<type>(<scope>): <imperative description>`. A test that is red on purpose is
   committed as `test(red): …`. `negative-control` reads the PR's diff, not any commit, to
