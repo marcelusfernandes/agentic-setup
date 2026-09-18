@@ -205,8 +205,13 @@ still counts bullets only, so an issue whose `## Files` carries grants alone sti
 declares no scope of its own. The same pull request moved this item's citations into
 that file (the header gained the sentence naming grants, the body gained the grant
 parsing): the three under **Decision** read `:67`, `:193` and `:405`, and the one under
-**Cost accepted** reads `:200-201`. The wording above keeps the numbers it was written
-with, per the template. Every number in this line is read at the head that added the
-grant loop's dedupe (#328, round 2), not at the head that first wrote the line — a round
-that moves a file re-points every citation the same pull request has written into it,
-this one included.
+**Cost accepted** reads `:200-201`. The seventh citation this item carries moved too, in
+a second file: **Decision**'s `skills/issue-and-pr/SKILL.md:98`, the card sentence stating
+the bullet exception, is at `:99` because the same pull request added a line above it.
+The wording above keeps the numbers it was written with, per the template, and every
+number in this paragraph is read at the head that wrote it rather than computed.
+**The rule, stated as wide as it reaches: a round that moves a file re-points every
+citation the same pull request has written into every file it touches — not only into the
+file in front of it.** Both misses recorded here were that narrower reading: one round
+corrected a citation in one file and left six in another, the next swept those six and
+left the seventh, in a third.
