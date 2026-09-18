@@ -279,9 +279,11 @@ one run its round-2 push starts covers both; apply them after that push and they
 the very run you are waiting on, which is a pass full of `cancelled` runs and minutes
 spent twice (measured: `docs/dogfood/2026-09-10.md`, L5). Step 4's `type:`/`scope:` copy
 is the one edit that cannot come before a push — the PR does not exist until the
-implementer has pushed — so it costs one re-trigger by design: make it a single `gh pr
-edit` carrying both labels, before you read `$OID` and launch the reviewer, so the run it
-re-triggers is the one the verdict waits on. The labels:
+implementer has pushed — so it costs at least one re-trigger by design (GitHub fires one
+`labeled` event per label, so two labels in one `gh pr edit` still start two runs, and the
+concurrency group leaves one standing): make it a single `gh pr edit` carrying both labels,
+before you read `$OID` and launch the reviewer, so the run left standing is the one the
+verdict waits on. The labels:
 
 - `approved` → `gh pr edit <pr> --add-label review:approved --add-label state:in-review
   --remove-label state:qa-failed` (the remove is harmless when the label was never there —
@@ -400,11 +402,15 @@ Then act on the verdict:
   loop) until the issue no longer appears in `inReview`, `inProgress` or `resumable` —
   closed, its PR merged — then continue the loop from step 0. Once it has merged, bring
   the root checkout onto the squash commit in two steps, exactly this:
-  `git fetch origin && git pull --ff-only origin main`. The bare
-  `git pull -q --ff-only origin main` fails with `Cannot fast-forward to multiple branches`
-  on a checkout that tracks more than one branch — the pull has more than one head to
-  fast-forward to and refuses to pick one — and fetching first, then naming the branch on
-  the pull, leaves it exactly one (measured: `docs/dogfood/2026-09-10.md`, L22).
+  `git fetch origin && git pull --ff-only origin main`. Naming the remote *and* the branch
+  on the pull is the part that matters. A `--ff-only` pull that resolves to more than one
+  merge head refuses with `Cannot fast-forward to multiple branches`: either because
+  more than one branch was named on the one pull (`git pull --ff-only origin main other`),
+  or because none was named and the current branch's `branch.<name>.merge` holds more than
+  one ref. Naming a single branch leaves one head and the fast-forward goes through, so
+  the fetch is not what cures that — it is there to bring every `origin/*` ref up to date,
+  which a pull naming one branch does not do. The error is the one the 2026-09-10 pass hit
+  (`docs/dogfood/2026-09-10.md`, L22).
 - Rejected by CI or reviewer, first time → relaunch the implementer with the PR's failure
   summary and the reviewer's JSON (round 2; skill `safe-worktree` §C); once it returns,
   back to step 4.
