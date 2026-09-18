@@ -670,105 +670,43 @@ check(
 // here also fires the decision nudge, so `/warning:/` alone would not
 // discriminate the two.
 const DOGFOOD_PHRASE = /dogfood report/;
-const prDogfood = file(
-  'pr-dogfood.md',
-  'Closes #1\n\n## Proof\nRan the loop against a disposable repository; written up in `docs/dogfood/2026-09-17.md`.\n\n## Files\n',
-);
+const prDogfood = file('pr-dogfood.md', 'Closes #1\n\n## Proof\nRan the loop against a disposable repository; written up in `docs/dogfood/2026-09-17.md`.\n\n## Files\n');
 const filesWithReport = file('files-dogfood-added.txt', 'ci/scope-check.mts\ndocs/dogfood/2026-09-17.md\n');
-const dogfoodIssue = file(
-  'issue-dogfood.md',
-  '## Files\n- `hooks/**`, `ci/**`, `scripts/**`, `skills/**`, `.github/**`, `docs/**`\n',
-);
+const dogfoodIssue = file('issue-dogfood.md', '## Files\n- `hooks/**`, `ci/**`, `scripts/**`, `skills/**`, `.github/**`, `docs/**`\n');
 
 const rDogfood = scope(filesHookOnly, dogfoodIssue, prPlain);
 const rDogfoodJson = scopeJson(rDogfood.out);
-check(
-  'scope warns and still exits 0 on a mechanism file when the PR names no dogfood report',
-  rDogfood.status === 0 &&
-    DOGFOOD_PHRASE.test(rDogfood.out) &&
-    JSON.stringify(rDogfoodJson.dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) &&
-    typeof rDogfoodJson.dogfoodWarning === 'string',
-  rDogfood.out,
-);
+check('scope warns and still exits 0 on a mechanism file when the PR names no dogfood report', rDogfood.status === 0 && DOGFOOD_PHRASE.test(rDogfood.out) && JSON.stringify(rDogfoodJson.dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) && typeof rDogfoodJson.dogfoodWarning === 'string', rDogfood.out);
 
 const rDogfoodNamed = scope(filesHookOnly, dogfoodIssue, prDogfood);
-check(
-  'scope does not raise the dogfood nudge when the PR body names a docs/dogfood/<date>.md report',
-  rDogfoodNamed.status === 0 &&
-    !DOGFOOD_PHRASE.test(rDogfoodNamed.out) &&
-    !('dogfoodTrigger' in scopeJson(rDogfoodNamed.out)) &&
-    !('dogfoodWarning' in scopeJson(rDogfoodNamed.out)),
-  rDogfoodNamed.out,
-);
+check('scope does not raise the dogfood nudge when the PR body names a docs/dogfood/<date>.md report', rDogfoodNamed.status === 0 && !DOGFOOD_PHRASE.test(rDogfoodNamed.out) && !('dogfoodTrigger' in scopeJson(rDogfoodNamed.out)) && !('dogfoodWarning' in scopeJson(rDogfoodNamed.out)), rDogfoodNamed.out);
 
 const rDogfoodAdded = scope(filesWithReport, dogfoodIssue, prPlain);
-check(
-  'scope does not raise the dogfood nudge when the diff itself carries a docs/dogfood/<date>.md report',
-  rDogfoodAdded.status === 0 &&
-    !DOGFOOD_PHRASE.test(rDogfoodAdded.out) &&
-    !('dogfoodTrigger' in scopeJson(rDogfoodAdded.out)) &&
-    !('dogfoodWarning' in scopeJson(rDogfoodAdded.out)),
-  rDogfoodAdded.out,
-);
+check('scope does not raise the dogfood nudge when the diff itself carries a docs/dogfood/<date>.md report', rDogfoodAdded.status === 0 && !DOGFOOD_PHRASE.test(rDogfoodAdded.out) && !('dogfoodTrigger' in scopeJson(rDogfoodAdded.out)) && !('dogfoodWarning' in scopeJson(rDogfoodAdded.out)), rDogfoodAdded.out);
 
 const rDogfoodDocs = scope(filesDocsOnly, dogfoodIssue, prPlain);
-check(
-  'scope raises no dogfood nudge for a diff touching only docs/',
-  rDogfoodDocs.status === 0 && !('dogfoodTrigger' in scopeJson(rDogfoodDocs.out)),
-  rDogfoodDocs.out,
-);
+check('scope raises no dogfood nudge for a diff touching only docs/', rDogfoodDocs.status === 0 && !('dogfoodTrigger' in scopeJson(rDogfoodDocs.out)), rDogfoodDocs.out);
 
 // The two nudges are independent: a diff that records a decision still owes
 // a dogfood report, and the exit code stays 0 either way.
 const rBothNudges = scope(filesHookPlusDecision, dogfoodIssue, prPlain);
-check(
-  'the dogfood nudge fires even when the diff records a decision, and the check still exits 0',
-  rBothNudges.status === 0 &&
-    JSON.stringify(scopeJson(rBothNudges.out).dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) &&
-    !('warning' in scopeJson(rBothNudges.out)),
-  rBothNudges.out,
-);
+check('the dogfood nudge fires even when the diff records a decision, and the check still exits 0', rBothNudges.status === 0 && JSON.stringify(scopeJson(rBothNudges.out).dogfoodTrigger) === JSON.stringify(['hooks/protect-main.mts']) && !('warning' in scopeJson(rBothNudges.out)), rBothNudges.out);
 
 // Direct unit cases for the pure `dogfoodTrigger`, through the namespace for
 // the same reason `decisionNudge` is imported that way above.
 const dogfoodTrigger = scopeLib.dogfoodTrigger as ((files: string[], prBody?: string | null) => string[]) | undefined;
 check('ci/lib/scope.mts exports dogfoodTrigger', typeof dogfoodTrigger === 'function');
 const dogfoodSensitive = ['hooks/protect-main.mts', 'ci/scope-check.mts', 'scripts/land.mts', 'skills/issue-and-pr/SKILL.md'];
-check(
-  'dogfoodTrigger returns every sensitive path, in diff order',
-  dogfoodTrigger !== undefined &&
-    JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) === JSON.stringify(dogfoodSensitive),
-  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) : 'not exported',
-);
-check(
-  'dogfoodTrigger returns nothing when the PR body names a docs/dogfood/<date>.md report',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], 'see `docs/dogfood/2026-09-17.md`').length === 0,
-);
-check(
-  'dogfoodTrigger returns nothing when the diff carries a docs/dogfood/<date>.md report',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/2026-09-17.md'], '').length === 0,
-);
-check(
-  'dogfoodTrigger ignores a docs/dogfood/ path that is not a dated report',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '').length === 1,
-  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '')) : 'not exported',
-);
+check('dogfoodTrigger returns every sensitive path, in diff order', dogfoodTrigger !== undefined && JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) === JSON.stringify(dogfoodSensitive), dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['docs/workflow.md', ...dogfoodSensitive], '')) : 'not exported');
+check('dogfoodTrigger returns nothing when the PR body names a docs/dogfood/<date>.md report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], 'see `docs/dogfood/2026-09-17.md`').length === 0);
+check('dogfoodTrigger returns nothing when the diff carries a docs/dogfood/<date>.md report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/2026-09-17.md'], '').length === 0);
+check('dogfoodTrigger ignores a docs/dogfood/ path that is not a dated report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '').length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '')) : 'not exported');
 // Deliberately narrower than MECHANISM_GLOBS: a workflow file is a decision,
 // not a dogfood trigger (#182's and #181's acceptance criteria both list
 // `hooks/`, `ci/`, `scripts/` and `skills/**/SKILL.md` only).
-check(
-  'dogfoodTrigger does not treat .github/workflows/** as sensitive',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '').length === 0,
-  dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '')) : 'not exported',
-);
-check(
-  'dogfoodTrigger does not treat tests/** or templates/** as sensitive',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['tests/scope.test.mts', 'templates/issue.md'], '').length === 0,
-);
-check(
-  'dogfoodTrigger treats only SKILL.md under skills/, not every file there',
-  dogfoodTrigger !== undefined && dogfoodTrigger(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md'], '').length === 0,
-);
+check('dogfoodTrigger does not treat .github/workflows/** as sensitive', dogfoodTrigger !== undefined && dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '').length === 0, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['.github/workflows/agentic-checks.yml'], '')) : 'not exported');
+check('dogfoodTrigger does not treat tests/** or templates/** as sensitive', dogfoodTrigger !== undefined && dogfoodTrigger(['tests/scope.test.mts', 'templates/issue.md'], '').length === 0);
+check('dogfoodTrigger treats only SKILL.md under skills/, not every file there', dogfoodTrigger !== undefined && dogfoodTrigger(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md'], '').length === 0);
 
 // #231: a grant is read once, as a grant, whatever bullet shape it takes.
 // On the base a backticked bullet grant landed in both lists; a bare comma
@@ -802,56 +740,30 @@ check('an issue whose ## Files carries only a grant declares no globs of its own
 // fails *open*. Refusing is the remedy rather than taking the first span:
 // narrowing would trade the silent over-grant for a silent under-grant.
 // The four shapes of AC4 are below, each with its own outcome.
+// Shape 4's continuation line is indented, is not a bullet, and carries a
+// backtick of its own: no parser reads it, which is why the card's "no
+// backticks of its own" is advice rather than a rule the parser enforces.
 const findMulti = scopeLib.findMultiGlobGrantLines;
 const pAGpr = (b: string) => JSON.stringify(scopeLib.parseAuthorisedGlobs(b));
 const oneSpan = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n';
 const twoSpans = '## Files\n- `lib/**`\n- authorised: `src/a.ts` (needed alongside `src/lib/b.ts`)\n';
 const spanPlusProse = '## Files\n- `lib/**`\n- authorised: `src/a.ts` — see the issue comment\n';
-// The justification on its own continuation line: indented, not a bullet, and
-// carrying a backtick of its own. No parser reads that line, which is why the
-// card's "no backticks of its own" is advice rather than a parser rule.
-const spanPlusContinuation = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n  (orchestrator: AC3 imports it from `src/lib/b.ts`)\n';
-
+const spanPlusCont = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n  (orchestrator: AC3 imports it from `src/lib/b.ts`)\n';
+const atMostOneSpan = [oneSpan, spanPlusProse, spanPlusCont];
+const allShapes = [oneSpan, twoSpans, spanPlusProse, spanPlusCont];
+const refusedTwoSpans = [{ line: 'authorised: `src/a.ts` (needed alongside `src/lib/b.ts`)', spans: ['src/a.ts', 'src/lib/b.ts'] }];
 check('shape 1 — one span grants that one glob', pAG(oneSpan) === '["src/a.ts"]', pAG(oneSpan));
-check(
-  'shape 2 — two spans grant nothing at all, in both grant parsers',
-  pAG(twoSpans) === '[]' && pAGpr(twoSpans) === '[]',
-  `${pAG(twoSpans)} / ${pAGpr(twoSpans)}`,
-);
+check('shape 2 — two spans grant nothing at all, in both grant parsers', pAG(twoSpans) === '[]' && pAGpr(twoSpans) === '[]', `${pAG(twoSpans)} / ${pAGpr(twoSpans)}`);
 check('shape 3 — a span plus an unbackticked justification on the same line grants the span', pAG(spanPlusProse) === '["src/a.ts"]', pAG(spanPlusProse));
-check(
-  'shape 4 — a justification on a continuation line grants the span and nothing from that line',
-  pAG(spanPlusContinuation) === '["src/a.ts"]' && pIG(spanPlusContinuation) === '["lib/**"]',
-  `${pAG(spanPlusContinuation)} / ${pIG(spanPlusContinuation)}`,
-);
-check(
-  'findMultiGlobGrantLines names the refused line and every span on it',
-  findMulti !== undefined &&
-    JSON.stringify(findMulti(twoSpans)) === JSON.stringify([{ line: 'authorised: `src/a.ts` (needed alongside `src/lib/b.ts`)', spans: ['src/a.ts', 'src/lib/b.ts'] }]),
-  findMulti ? JSON.stringify(findMulti(twoSpans)) : 'findMultiGlobGrantLines is not exported',
-);
-check(
-  'findMultiGlobGrantLines refuses none of the three shapes that carry at most one span',
-  findMulti !== undefined && [oneSpan, spanPlusProse, spanPlusContinuation].every((b) => findMulti(b).length === 0),
-  findMulti ? JSON.stringify([oneSpan, spanPlusProse, spanPlusContinuation].map((b) => findMulti(b))) : 'findMultiGlobGrantLines is not exported',
-);
+check('shape 4 — a justification on a continuation line grants the span, and nothing on that line', pAG(spanPlusCont) === '["src/a.ts"]' && pIG(spanPlusCont) === '["lib/**"]', `${pAG(spanPlusCont)} / ${pIG(spanPlusCont)}`);
+check('findMultiGlobGrantLines names the refused line and both its spans, and refuses none of the other three shapes', findMulti !== undefined && JSON.stringify(findMulti(twoSpans)) === JSON.stringify(refusedTwoSpans) && atMostOneSpan.every((b) => findMulti(b).length === 0), findMulti ? JSON.stringify(allShapes.map((b) => findMulti(b))) : 'findMultiGlobGrantLines is not exported');
 // The two grant parsers have diverged before (#231). They read a grant
 // through one function, so this pins them to the same answer on every shape:
 // a change that refuses in one parser and not the other fails here.
-check(
-  'the issue and PR grant parsers agree on every one of the four shapes',
-  [oneSpan, twoSpans, spanPlusProse, spanPlusContinuation].every((b) => pAG(b) === pAGpr(b)),
-  JSON.stringify([oneSpan, twoSpans, spanPlusProse, spanPlusContinuation].map((b) => [pAG(b), pAGpr(b)])),
-);
+check('the issue and PR grant parsers agree on every one of the four shapes', allShapes.every((b) => pAG(b) === pAGpr(b)), JSON.stringify(allShapes.map((b) => [pAG(b), pAGpr(b)])));
 // End to end through the real script: the refused line widens nothing, so
 // both files are violations and neither span is reported as authorised.
 const rTwoSpans = scope(files, file('issue-grant-two-spans.md', twoSpans), prPlain);
-check(
-  'scope grants nothing from a two-span grant line: both files are violations and none is named as authorised',
-  rTwoSpans.status === 1 &&
-    JSON.stringify(scopeJson(rTwoSpans.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) &&
-    !/Authorised by #1:/.test(rTwoSpans.out),
-  rTwoSpans.out,
-);
+check('scope grants nothing from a two-span grant line: both files are violations and none is named as authorised', rTwoSpans.status === 1 && JSON.stringify(scopeJson(rTwoSpans.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) && !/Authorised by #1:/.test(rTwoSpans.out), rTwoSpans.out);
 
 finish();
