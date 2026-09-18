@@ -229,11 +229,7 @@ check(
     wildcardNoMatchOut.failures.some((f: any) => typeof f === 'string' && f === 'wildcard glob matches no tracked file: tests/*.zig'),
   wildcardNoMatch.out,
 );
-check(
-  'the old "no existing parent directory" wording is gone',
-  !/no existing parent directory/.test(wildcardNoMatch.out),
-  wildcardNoMatch.out,
-);
+check('the old "no existing parent directory" wording is gone', !/no existing parent directory/.test(wildcardNoMatch.out), wildcardNoMatch.out);
 
 // AC1 (of #41): a wildcard glob whose fixed prefix (the part before the
 // first `*`) names a directory that does not exist anywhere in the tracked
@@ -299,11 +295,7 @@ check(
 // before reaching `new RegExp` — no glob string can make it throw.
 const questionMarkGlob = lint(1080, issueBody({ files: '## Files\n- `?abc`\n' }));
 const questionMarkGlobOut = parse(questionMarkGlob.out);
-check(
-  'a `?` glob matching no tracked file fails with ok: false',
-  questionMarkGlob.status === 1 && questionMarkGlobOut?.ok === false,
-  questionMarkGlob.out,
-);
+check('a `?` glob matching no tracked file fails with ok: false', questionMarkGlob.status === 1 && questionMarkGlobOut?.ok === false, questionMarkGlob.out);
 check(
   'the `?` glob failure uses the "wildcard glob matches no tracked file" wording and names the glob',
   Array.isArray(questionMarkGlobOut?.failures) &&
@@ -613,7 +605,16 @@ const liveGrantGlobs: any[] = liveGrantOut?.globs ?? [];
 check('a grant naming a tracked file passes and is reported in globs[]', liveGrant.status === 0 && liveGrantGlobs.some((g) => g.glob === 'scripts/reconcile.mts' && g.status === 'matched'), liveGrant.out);
 check('globs[] marks the grant as a grant and the bullet glob as not one', liveGrantGlobs.some((g) => g.glob === 'scripts/reconcile.mts' && g.grant === true) && liveGrantGlobs.some((g) => g.glob === 'tests/**' && g.grant === false), liveGrant.out);
 const liveGrantMd = lint(242, issueBody({ files: GRANT_FILES }), { markdown: true });
-check('--markdown names the granted path as a grant too', /grant/i.test(liveGrantMd.out) && liveGrantMd.out.includes('scripts/reconcile.mts'), liveGrantMd.out);
+// Read the Grants block itself, not the whole page: a rendering that marked
+// the bullet glob as the grant would satisfy "says `grant` somewhere".
+const liveGrantMdGrants = liveGrantMd.out.split('**Grants**')[1] ?? '';
+check('--markdown lists the granted path under Grants, and the bullet glob not', liveGrantMdGrants.includes('scripts/reconcile.mts') && !liveGrantMdGrants.includes('tests/**'), liveGrantMd.out);
+
+// A path that is both a bullet and a grant widens nothing, so it is
+// classified once, as the bullet — not reported twice under both markings.
+const bothLists = lint(246, issueBody({ files: '## Files\n- `scripts/reconcile.mts`\n- authorised: `scripts/reconcile.mts`\n' }));
+const bothListsGlobs: any[] = parse(bothLists.out)?.globs ?? [];
+check('a path both declared and granted is reported once, as the bullet glob', bothLists.status === 0 && bothListsGlobs.length === 1 && bothListsGlobs[0]?.glob === 'scripts/reconcile.mts' && bothListsGlobs[0]?.grant === false, bothLists.out);
 
 // AC3: a granted file that another in-flight issue's bullet glob also covers
 // is an overlap, and so is the reverse — this issue's glob against the other
@@ -639,11 +640,7 @@ check('a Blocked-by number that gh can find does not fail', validBlocker.status 
 
 const invalidBlocker = lint(116, issueBody({ deps: '## Dependencies\nBlocked by: #999\n' }));
 const invalidBlockerOut = parse(invalidBlocker.out);
-check(
-  'a Blocked-by number that gh cannot find fails with ok: false',
-  invalidBlocker.status === 1 && invalidBlockerOut?.ok === false,
-  invalidBlocker.out,
-);
+check('a Blocked-by number that gh cannot find fails with ok: false', invalidBlocker.status === 1 && invalidBlockerOut?.ok === false, invalidBlocker.out);
 check(
   'the missing-blocker failure names #999 in failures[]',
   Array.isArray(invalidBlockerOut?.failures) && invalidBlockerOut.failures.some((f: any) => typeof f === 'string' && f.includes('#999')),

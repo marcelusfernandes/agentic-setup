@@ -45,13 +45,19 @@ Two roles:
    before step 3 (`deadWorktrees`)
 1. `ci/issue-lint.mts <n>` on every state:ready candidate with no open dependency;
    dispatch only `ok: true`. issue-lint checks the contract only — sections present,
-   globs that parse and match something (or are `new`), globs disjoint from the other
+   globs that parse and match something (or are `new`), the `authorised:` grants of
+   `## Files` held to those same two rules (each `globs` entry says which it was,
+   `grant: true` or `grant: false`), globs and grants disjoint from the other
    issues already in flight in the milestone, and every `Blocked by: #N` number exists —
    it never reads a diff, so it has no entry-point warning to fold in; a `failures` entry
-   drops the candidate (a wildcard glob whose fixed prefix has no tracked file is `new`,
-   like a literal new path, not a failure), a `sequenced` overlap does not
+   drops the candidate (a wildcard glob, or an `authorised:` grant, that matches no
+   tracked file; a missing section; a `Blocked by:` number `gh` cannot find or a cycle
+   among them; an overlap with another issue in flight — while a wildcard whose fixed
+   prefix has no tracked file is `new`, like a literal new path, not a failure), a
+   `sequenced` overlap does not
 2. pick up to 4 whose globs do not intersect (`issue-lint`'s own failures/sequenced
-   already checked this against the milestone's other in-flight issues)
+   already checked this against the milestone's other in-flight issues, grants included
+   on both sides — a granted file is a file that pull request may touch)
 3. for each: `scripts/claim.mts <n> --slug <slug>` runs `ci/issue-lint.mts` on the issue
    itself first and refuses (`{ refused: "issue-lint failed", lint }`) on anything but
    `ok: true` (`--no-lint` to skip), then pushes the remote branch <type>/<n>-<slug> as

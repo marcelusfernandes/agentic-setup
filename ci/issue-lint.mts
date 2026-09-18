@@ -47,7 +47,10 @@
 // name. Each `globs` entry carries `grant: true` when it came from an
 // `authorised:` line and `grant: false` when it came from a bullet, so a
 // reader can tell a granted path from a declared one; the Markdown rendering
-// lists the grants under their own heading and marks a granted new path. --markdown prints a Markdown rendering instead (for the workflow's
+// lists the grants under their own heading and marks a granted new path. A
+// path that is both declared as a bullet and granted is reported once, as
+// the bullet glob it already is — the grant widens nothing there.
+// --markdown prints a Markdown rendering instead (for the workflow's
 // issue comment), starting with the `<!-- agentic-issue-lint -->` marker
 // the workflow greps for; it no longer has a Warnings section. Exit 0 when
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
@@ -286,7 +289,14 @@ function classifyGlob(glob: string, grant: boolean): void {
 }
 
 for (const glob of issueGlobs) classifyGlob(glob, false);
-for (const glob of issueGrants) classifyGlob(glob, true);
+// A grant naming a path the issue already declares as a bullet is classified
+// once, as that bullet: it widens nothing, and reporting it twice would put
+// the same path in `globs` under both markings — and, for a wildcard that
+// matches nothing, raise the identical failure twice, once worded as a glob
+// and once as a grant.
+for (const glob of issueGrants) {
+  if (!issueGlobs.includes(glob)) classifyGlob(glob, true);
+}
 
 /** Literal (non-wildcard) globs from `list` that name no tracked file — the
  * "new" paths an issue declares. Comparing these (in addition to matched
