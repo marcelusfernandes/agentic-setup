@@ -30,9 +30,8 @@ const prPlain = file('pr-plain.md', 'Closes #1\n\n## Files\nGlobs touched (must 
 const prGrant = file('pr-grant.md', 'Closes #1\n\n## Files\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n- authorised: `src/lib/b.ts` — see issue comment\n');
 const prNoClose = file('pr-noclose.md', '## What changed\nstuff\n');
 // #155: the grant travels on the issue. Written on bare (non-bullet) lines
-// on purpose — `parseIssueGlobs` reads bullets only, so a bare line is a
-// glob the *authorised* parser alone can find, which is what makes the
-// "grant in the issue" cases below discriminate.
+// here; the bullet form, which the grant parser must own alone, is #231's
+// block at the end of this file.
 const issueLibGrant = file(
   'issue-lib-grant.md',
   '## Files\n- `lib/**`, `docs/*.md`\nauthorised: `src/a.ts`\n  (orchestrator: needed for AC3)\nauthorised: `src/lib/b.ts` — see issue comment\n',
@@ -770,5 +769,30 @@ check(
   'dogfoodTrigger treats only SKILL.md under skills/, not every file there',
   dogfoodTrigger !== undefined && dogfoodTrigger(['skills/orchestrate/scripts/run.mts', 'skills/orchestrate/notes.md'], '').length === 0,
 );
+
+// #231: a grant is read once, as a grant, whatever bullet shape it takes.
+// On the base a backticked bullet grant landed in both lists; a bare comma
+// list was worse — only its first token was granted, and its second became an
+// ordinary issue glob, widening the check through a path no one audited.
+const pIG = (b: string) => JSON.stringify(scopeLib.parseIssueGlobs(b));
+const pAG = (b: string) => JSON.stringify(scopeLib.parseIssueAuthorisedGlobs(b));
+const grantBullet = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n  (orchestrator: needed for AC3)\n';
+const grantUpper = '## Files\n- `lib/**`\n* Authorised: `src/a.ts`\n';
+const grantCommas = '## Files\n- `lib/**`\n- authorised: src/a.ts, src/lib/b.ts\n';
+// The word opens a grant only when it starts the bullet's content, unquoted,
+// and carries the colon. These three stay ordinary globs and grant nothing.
+const stillGlobs = '## Files\n- `src/authorised.ts`\n- `docs/x.md` authorised by the owner\n- `authorised: src/a.ts`\n';
+check('parseIssueGlobs skips a backticked bullet grant', pIG(grantBullet) === '["lib/**"]', pIG(grantBullet));
+check('parseIssueAuthorisedGlobs still reads that same grant', pAG(grantBullet) === '["src/a.ts"]', pAG(grantBullet));
+check('the grant bullet is skipped whatever its marker or case', pIG(grantUpper) === '["lib/**"]', pIG(grantUpper));
+check('a bare comma-separated grant leaves no ordinary glob behind', pIG(grantCommas) === '["lib/**"]', pIG(grantCommas));
+check('a bare comma-separated grant still grants its first token only', pAG(grantCommas) === '["src/a.ts"]', pAG(grantCommas));
+check('a path named authorised, the word mid-bullet and a backticked-first line stay ordinary globs and grant nothing', pIG(stillGlobs) === '["src/authorised.ts","docs/x.md","authorised: src/a.ts"]' && pAG(stillGlobs) === '[]', `${pIG(stillGlobs)} / ${pAG(stillGlobs)}`);
+const rGrantBullet = scope(files, file('issue-grant-bullet.md', `${grantBullet}- \`src/lib/**\`\n`), prPlain);
+check('scope passes a bullet-form grant and names it once, under Authorised by #N only', rGrantBullet.status === 0 && /^- #1: `lib\/\*\*`, `src\/lib\/\*\*`$/m.test(rGrantBullet.out) && /^Authorised by #1: `src\/a\.ts`$/m.test(rGrantBullet.out), rGrantBullet.out);
+const rGrantCommas = scope(files, file('issue-grant-commas.md', grantCommas), prPlain);
+check('the second token of a bare comma grant no longer widens the check', rGrantCommas.status === 1 && JSON.stringify(scopeJson(rGrantCommas.out).violations) === JSON.stringify(['src/lib/b.ts']), rGrantCommas.out);
+const rGrantOnly = scope(files, file('issue-grant-only.md', '## Files\n- authorised: `src/a.ts`\n'), prPlain);
+check('an issue whose ## Files carries only a grant declares no globs of its own', rGrantOnly.status === 1 && /declare no globs/.test(rGrantOnly.out), rGrantOnly.out);
 
 finish();
