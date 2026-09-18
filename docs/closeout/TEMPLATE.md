@@ -20,3 +20,8 @@
 ## Dogfood
 
 - <report or run of the phase> — <what it found>
+
+<!-- These three sections are the whole grammar; there is no fourth. The
+     phase's decision-log lines (grants, extra rounds, human:pending) are
+     copied into the `docs: closeout M<n>` issue's body, not into this file —
+     README.md, "The phase's decision log lives in the closeout issue". -->
