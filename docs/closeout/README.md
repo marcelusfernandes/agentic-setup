@@ -14,7 +14,8 @@ you need today's state.
 
 1. The milestone's last open issue merges.
 2. The orchestrator opens a `docs: closeout M<n>` issue from `TEMPLATE.md`,
-   in that milestone, labelled `type:docs` / `scope:docs`.
+   in that milestone, labelled `type:docs` / `scope:docs`, carrying the phase's
+   decision-log lines verbatim in its body (see the next section).
 3. The docs-writer fills it in a `type:docs` PR — one row per issue, read from
    `gh issue list --milestone "<milestone>" --state all` and
    `gh pr list --state merged`, with the squash commit of each PR as the merge
