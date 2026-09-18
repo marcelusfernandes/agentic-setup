@@ -18,8 +18,8 @@ What is in force, as `ci/lib/scope.mts` implements it:
 - **One recogniser, not two.** `grantRemainder` (`ci/lib/scope.mts:47`) is the single
   answer to "is this line a grant": it strips a `-`/`*` marker, matches `authorised:`
   case-insensitively, and returns the rest of the line, or `null`. Every parser that
-  needs the answer asks it — `parseIssueGlobs` (`:68`), `authorisedGlobsIn` (`:91`) and
-  `findMisplacedAuthorisedLines` (`:141`).
+  needs the answer asks it, each at the line cited: `parseIssueGlobs` (`:68`),
+  `authorisedGlobsIn` (`:95`) and `findMisplacedAuthorisedLines` (`:144`).
 - **The glob parser skips it.** `parseIssueGlobs` continues past any bullet for which
   `grantRemainder` is non-null (`:68`), so a granted path reaches `authorisedGlobs` only.
 - **What that changes downstream.** `ci/scope-check.mts` lists the path once, under
@@ -89,10 +89,16 @@ PR #311 was rejected in review for changing the parser without updating
 `skills/issue-and-pr/SKILL.md`, whose `## Files` rule had become false. The tie-break in
 `README.md` points the same way — the next agent must read this before touching a file
 this pull request never touched, because every future issue's `## Files` is such a file.
-And the contrary argument, that the code was only being made to match an invariant
-already written, fails on the facts: nothing written said a grant bullet is not a glob,
-and invariant 5 ("`## Files` reads bullets only") if anything implied that it was. The
-code changed first and the documents were rewritten to match it.
+
+Two contrary arguments were made, and both fail. The first, that the code was only being
+made to match an invariant already written: nothing written said a grant bullet is not a
+glob, and invariant 5 ("`## Files` reads bullets only") if anything implied that it was —
+the code changed first and the documents were rewritten to match it. The second and
+stronger form, that this is "a measured fact about how the code already behaves, with no
+change of contract" and therefore a note by `README.md`'s own list: a contract did change,
+and the first paragraph of **Cost accepted** below is the proof of it — an issue whose
+`## Files` carries only grants is refused where it previously passed. A change that adds a
+refusal is not a measurement of existing behaviour.
 
 ## Cost accepted
 
@@ -120,14 +126,30 @@ Both parsers have always done this identically, so it is not a divergence and th
 does not change it; `docs/workflow.md:157` now names the hazard and prescribes the
 justification on the next line, indented. That is a document where a refusal belongs.
 
-The rate is the argument for enforcing it. The orchestrator counts six instances in one
-day, in grant lines it wrote itself, on the day of maximum awareness — while fixing this
-very defect class. One of those is directly verifiable here: the grant that authorised
-this file's sibling on #231 granted `## Files` alongside the intended path, and was
-corrected only after the implementer reported it. A scan of the 47 `authorised:` lines
-currently on issues in this repository finds none, because a corrected body keeps no
-trace of what it used to say — so the rate can only be counted as it happens, which is
-itself a reason not to leave the guard to a document.
+The rate is the argument for enforcing it, and the rate is measurable. GitHub retains an
+issue body's prior versions, so the instances survive correction: a scan of the
+`userContentEdits` of every issue touched since 2026-09-17, keeping `authorised:` lines
+that carry more than one backticked span, reproduces **six on 2026-09-18** — one on #168,
+four on #229, one on #231 — plus a seventh on #203 from the day before. All seven were
+written by the orchestrator; the six fall on the day this very defect class was being
+fixed, which is the day of maximum awareness of it.
+
+**One of the six widened a real path; the other five produced dead globs.** #168's line
+granted `AGENTS.md` and also `tests/map-pin.test.mts` — a tracked file, silently added to
+what that pull request could touch. The remaining five quoted `gh`, `--rules` twice,
+`--ruleset-name` and `## Files`, none of which matches any tracked file, and #203's
+seventh quoted `parent:type`, likewise nothing. So the hazard is demonstrated rather than
+theoretical, at one in six, and its usual form is noise in the summary rather than harm.
+
+What makes a document the wrong guard is not that the evidence is unavailable — it is
+that nobody runs an edit-history audit as a matter of course. The six were found because
+this item was being written; nothing in the loop would have surfaced them otherwise, and
+a grant line is read by the check within seconds of being written and by a person
+approximately never.
+
+Who pays: the orchestrator, who writes every grant line and is the only one who can write
+one wrong; and the reviewer of any pull request whose summary carries a granted path
+nobody intended, who has no way to tell an intended grant from a quoted fragment.
 
 **The remedy is refusal, not repair.** An earlier draft of the fix proposed taking only
 the first backticked span so that one-glob-per-line became enforced. That is worse than
