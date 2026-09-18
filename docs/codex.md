@@ -34,8 +34,16 @@ installer below remains an alternative, not a prerequisite for plugin use.
 
 The unit of progress is an objective/task, not a fixed number of agent roles or commits.
 Specification grows only as needed for the next task. Documentation belongs in the same
-change. Native CI and review remain mandatory for autonomous merge; custom scope lint
-and negative control are optional project policy, not universal prerequisites.
+change. Native CI and review remain mandatory for autonomous merge **on this route**:
+`land` requires an approved, non-draft PR into the objective's integration branch, a
+base-branch ruleset carrying both required status checks and a required approving review
+with stale approvals dismissed, every required check in bucket `pass`, and the merge pinned
+to the reviewed head with `--match-head-commit`; any one of those missing is a refusal, not
+a downgrade. That gate is this route's and not the repository's — the Claude route's
+`scripts/land.mts` binds an isolated agent's verdict to the reviewed commit instead, and
+asks for a server-side approving review only in its opt-in `approved` mode
+([workflow.md](workflow.md)). Custom scope lint and negative control are optional project
+policy, not universal prerequisites.
 
 Keep titles descriptive; show workflow status with `state:*` labels and use checkboxes only
 for acceptance criteria. The coordinator runs `labels <objective>` on resume and after
@@ -65,13 +73,19 @@ There is no fallback to the default branch when the named destination is unavail
 
 ## Migration boundary
 
-The README and local installation entrypoint now target Codex. The prior Claude package
-is retained as an opt-in compatibility surface: `agents/`, `skills/`, `hooks/`, the
+The README presents the two routes as peers; the local installation entrypoint described
+here is the Codex one. The Claude package is retained as an opt-in compatibility surface:
+`agents/`, `skills/`, `hooks/`, the
 original `scripts/{init,claim,reconcile,land}.mts`, and their templates/tests. Do not mix
 the two orchestration procedures within one objective. The Codex installer does not
-copy or invoke the old runtime. The two routes may be installed in the same repository,
-but must not coordinate the same objective concurrently. Preservation is an explicit
-compatibility commitment, not a requirement to add every new feature to both runtimes.
+copy or invoke the old runtime. The two routes may be installed in the same repository, and
+neither takes a task the other holds: each publishes a branch as that task's lock —
+`codex/task-<n>` here, `<type>/<n>-<slug>` on the Claude route — and each reads both shapes
+on the remote before claiming, reporting `{ held }` instead of pushing. `land` here also
+refuses a task the Claude shape holds, and `scripts/reconcile.mts` there marks such an issue
+`foreignLock` so the Claude loop neither resumes, reviews nor lands it. Preservation is an
+explicit compatibility commitment, not a requirement to add every new feature to both
+runtimes.
 
 Existing GitHub required-check settings cannot be changed safely by only deleting their
 workflow files. This repository therefore retains its current workflows. Before using

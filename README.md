@@ -12,8 +12,14 @@ reconciles labels after durable transitions; evidence and explicit human permiss
 remain authoritative.
 
 The two routes do not share a runtime. Neither installer runs the other, they coexist in
-one repository, and one coordinator owns a given objective at a time — never run both
-against the same work. Keeping both available does not imply feature parity; a new
+one repository, and one coordinator owns an objective at a time — a rule the two routes now
+enforce on each other instead of asking for it. Each publishes a branch as a task's lock,
+`<type>/<n>-<slug>` on the Claude route and `codex/task-<n>` on the Codex route, and each
+reads **both** shapes on the remote before it claims: `scripts/claim.mts` and the Codex
+helper's `claim` report `{ held }` and push nothing when the other's branch is already there.
+The refusal outlives the claim — `scripts/reconcile.mts` marks such an issue `foreignLock` so
+the Claude loop neither resumes, reviews nor lands it, and the Codex helper's `land` refuses a
+task the Claude shape holds. Keeping both available does not imply feature parity; a new
 behaviour on one route does not change the other unless its own contract, implementation
 and tests do so.
 
@@ -256,11 +262,38 @@ its PR, it pauses that task and dependents. Convert the request into a durable c
 apply the real answer; a person then flips the originating label to `human:decided`, which
 keeps the intervention traceable without blocking. Explicit user restrictions still apply.
 
-Automatic merge requires that standing permission, a separate GitHub review,
-required passing server checks and stale-approval dismissal. The merge is pinned to the
-reviewed commit. If that policy is unavailable, automatic merge stops; no fallback bypass.
-The setup does not provide an identity security boundary when agent and human share
-credentials. Use separate execution/reviewer identities for stronger isolation.
+Automatic merge needs that standing permission — the Codex helper reads it from the
+objective, and on the Claude route it is the person who starts the orchestrator — and then
+the gate of the route doing the merging. The two gates are not the same, and neither is
+"the repository's":
+
+**Claude route.** `scripts/land.mts` is the only merge path, and every line it prints — a
+refusal, the merge, a queue — names the review mode it ran under. The default mode is
+`agent`, and it requires all three of: the `review:approved` label, which the orchestrator
+applies from the isolated reviewer's JSON verdict; an `<!-- agentic-reviewed-sha: <oid> -->`
+marker comment equal to the head being merged; and every required check in bucket `pass`.
+The merge is then pinned to that same head (`--match-head-commit`). A push after the review,
+or no marker at all — a label records no commit, so it binds nothing — refuses instead of
+merging. A separate GitHub review is the opt-in `approved` mode, never a fallback: it is
+selected by `--require-review`, or by a base branch whose rules already require an approving
+review, and it adds the server's own `APPROVED` decision *on top of* everything `agent`
+requires. That mode costs a second identity, so a repository whose only login is the one
+merging freezes at its first merge — which is why it is not the default. `type:docs` is an
+exemption from the review, never from the checks. Inside a session a hand-typed `gh pr merge`
+is denied outright, with or without `--admin`, by `hooks/protect-main.mts` and by the
+permission deny list, while `node scripts/land.mts <pr>` in that same session still merges.
+[docs/workflow.md](docs/workflow.md) holds the modes, the gates and every refusal reason.
+
+**Codex route.** The autonomous-loop skill's `github.mts` helper gates on the server
+instead: an approved, non-draft pull request into the objective's integration branch, a
+base-branch ruleset carrying both required status checks and a required approving review
+with stale approvals dismissed, every required check in bucket `pass`, and the merge pinned
+to the reviewed head. Without that ruleset it refuses rather than merging — see
+[docs/codex.md](docs/codex.md).
+
+Either way, a read that cannot answer is a refusal, not a bypass. The setup does not provide
+an identity security boundary when agent and human share credentials. Use separate
+execution/reviewer identities for stronger isolation.
 
 To pilot on an existing test branch, record its exact name under the objective's
 `Integration branch` section. Claims and PRs then target that branch, not main. The same
