@@ -68,8 +68,10 @@ skips by path class — but `scope` and `land` still read the PR's labels, never
 issue's. Never `gh pr merge`.
 
 **The implementer stops here.** It does not wait on CI and does not poll the PR; the
-orchestrator launches the reviewer and watches the checks. If CI or the reviewer sends
-it back, the implementer fixes in the same worktree.
+orchestrator launches the reviewer and watches the checks, and the wait for the merge
+itself is a script's, not a person's — `scripts/land.mts <pr> --wait` returns only once the
+pull request is `MERGED`, or prints `{ queued, gate, mode, timeout }` when its bound
+elapses. If CI or the reviewer sends it back, the implementer fixes in the same worktree.
 
 ## `## Files` and `authorised:` — the parser's rules
 

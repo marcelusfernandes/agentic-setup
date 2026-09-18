@@ -39,6 +39,16 @@
 //     appears in its argv log.
 //   * case AE: the base falls back to `[]` when the rules endpoint cannot be
 //     read and silently lands in mode `agent`.
+//   * every `--wait` case (AG-AL): neither flag exists on the base, whose
+//     argv check refuses any flag that is not `--require-review`, so each of
+//     those runs prints `{ error: usage }` and exits 1 there and every
+//     assertion on `{ merged }`, `{ queued, timeout }`, `{ error }` and the
+//     poll counts fails as an assertion, not as a crash.
+//   * case AM is the exception, and it is stated rather than claimed: its
+//     four rejections already hold on the base, where every flag but
+//     `--require-review` is unknown and `--timeout` is one of them. What
+//     fails there is the last assertion of the group — that the usage line
+//     names the two flags — because the base's usage line names neither.
 //
 // Cases M and O remain the negative control for #78, and P-T for #144: the
 // base named no commit on either merge call before those landed.
@@ -93,8 +103,18 @@ case "\${1:-} \${2:-}" in
       # MERGED by default: with every required check in bucket pass and the
       # head pinned, GitHub merges at once. The two exceptions are the ones
       # that exercise a still-open PR after the merge call.
+      # 40-43 are the --wait fixtures: the answer depends on how many state
+      # reads this run has already made, counted off the argv log (whose line
+      # for *this* call is appended before the dispatch above, so the
+      # post-merge read is already number 1). -x so the wider
+      # 'state,labels,...' read is not counted as a state read.
+      reads() { grep -cx "pr view $1 --json state" "$state/gh-argv.log"; }
       case "$pr" in
         12|30) echo '{"state":"OPEN"}' ;;
+        40) if [ "\$(reads 40)" -ge 4 ]; then echo '{"state":"MERGED"}'; else echo '{"state":"OPEN"}'; fi ;;
+        41) echo '{"state":"OPEN"}' ;;
+        42) if [ "\$(reads 42)" -ge 2 ]; then echo '{"state":"CLOSED"}'; else echo '{"state":"OPEN"}'; fi ;;
+        43) if [ "\$(reads 43)" -ge 2 ]; then echo "fake-gh: could not read the state" >&2; exit 1; else echo '{"state":"OPEN"}'; fi ;;
         *) echo '{"state":"MERGED"}' ;;
       esac
     elif [ "$fields" = "comments" ]; then
@@ -115,7 +135,7 @@ case "\${1:-} \${2:-}" in
       decision='null'
       case "$pr" in
         11|20) label='[]' ;;
-        12|33) label='[{"name":"type:docs"}]' ;;
+        12|33|4[0-3]) label='[{"name":"type:docs"}]' ;;
       esac
       case "$pr" in
         20|27|28) decision='"APPROVED"' ;;
@@ -123,7 +143,7 @@ case "\${1:-} \${2:-}" in
       state='"state":"OPEN"'
       if [ "$pr" = "10" ]; then state='"state":"CLOSED"'; fi
       case "$pr" in
-        1[0-9]|2[0-9]|3[0-5]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
+        1[0-9]|2[0-9]|3[0-5]|4[0-3]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
         *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
       esac
     fi
@@ -481,5 +501,71 @@ check('unreadable rules names gh-rules, mode null, and never merges', JSON.strin
 // --- AF: usage --------------------------------------------------------------
 const af = land(15, { FAKE_GH_RULES: 'required' }, ['--merge-now']);
 check('an unknown flag is a usage error, not a mode', af.status === 1 && typeof parse(af.stdout)?.error === 'string' && !/pr merge/.test(af.log), `${af.stdout}\n${af.log}`);
+
+// --- AG-AL: --wait returns only once the pull request is merged (#260) ------
+// The wait is bounded by --timeout and polls every POLL_INTERVAL_SECONDS or a
+// quarter of the budget, whichever is shorter — so `--timeout 1` below polls
+// four times a second and every case here costs about a second. The default
+// (900s, polled every 10s) is not exercised: asserting it would take a quarter
+// of an hour per case.
+const stateReads = (log: string, pr: number): number =>
+  log.trim().split('\n').filter((l) => l === `pr view ${pr} --json state`).length;
+
+// AG: a queued pull request that GitHub merges while land is watching. The
+// third poll falls inside a 1-second budget as long as each fake-`gh` spawn
+// answers within ~250ms (the budget left when that poll starts is 500ms minus
+// the two spawns before it) — a wide margin for a shell script that greps one
+// small log, and the reason the budget is not made shorter.
+const ag = land(40, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '1']);
+check('--wait on a queue that becomes MERGED exits 0', ag.status === 0, `${ag.stdout}\n${ag.stderr}`);
+const agOut = parse(ag.stdout);
+check('--wait reports { merged, gate, mode } — the shape a merge that happened at once prints', agOut?.merged === 40 && agOut?.gate === 'ruleset' && agOut?.mode === 'docs' && agOut?.queued === undefined && agOut?.timeout === undefined, ag.stdout);
+check('--wait polled the state until it read MERGED (the post-merge read, then three polls)', stateReads(ag.log, 40) === 4, ag.log);
+check('--wait never disarmed the queue it was waiting on', !/--disable-auto/.test(ag.log), ag.log);
+
+// AH: the bound. A queue that is still a queue is not an error.
+const ah = land(41, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '1']);
+check('--wait that never reads MERGED still exits 0', ah.status === 0, `${ah.stdout}\n${ah.stderr}`);
+const ahOut = parse(ah.stdout);
+check('the timeout reports { queued, gate, mode, timeout }', ahOut?.queued === 41 && ahOut?.gate === 'ruleset' && ahOut?.mode === 'docs' && ahOut?.timeout === 1, ah.stdout);
+check('the wait is bounded: it polled more than once and stopped on its own', stateReads(ah.log, 41) >= 2 && stateReads(ah.log, 41) <= 6, ah.log);
+check('the timeout leaves the auto-merge armed — the queue is still the server\'s to fire', !/--disable-auto/.test(ah.log), ah.log);
+
+// AI: CLOSED without merging — the merge will not happen, so nothing is gained
+// by polling to the timeout.
+const ai = land(42, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '1']);
+check('a PR closed without merging stops the wait (exit 1)', ai.status === 1, `${ai.stdout}\n${ai.stderr}`);
+const aiOut = parse(ai.stdout);
+check('closed-without-merging reports { error } naming the state, with pr and mode', typeof aiOut?.error === 'string' && /CLOSED/.test(String(aiOut?.error)) && aiOut?.pr === 42 && aiOut?.mode === 'docs', ai.stdout);
+check('closed-without-merging stopped at the poll that read it, not at the timeout', stateReads(ai.log, 42) === 2, ai.log);
+
+// AJ: a state the poll cannot read — fail closed (invariant 3), do not keep polling.
+const aj = land(43, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '1']);
+check('an unreadable state stops the wait (exit 1)', aj.status === 1, `${aj.stdout}\n${aj.stderr}`);
+const ajOut = parse(aj.stdout);
+check('an unreadable state reports { error } with pr and mode', typeof ajOut?.error === 'string' && ajOut?.pr === 43 && ajOut?.mode === 'docs', aj.stdout);
+check('an unreadable state stopped at that poll, not at the timeout', stateReads(aj.log, 43) === 2, aj.log);
+
+// AK: mode agent has nothing to wait for — it merged, or it refused.
+const ak = land(15, { FAKE_GH_RULES: 'required' }, ['--wait']);
+check('--wait in mode agent merges as it does without the flag (exit 0)', ak.status === 0, `${ak.stdout}\n${ak.stderr}`);
+check('--wait in mode agent prints byte-identical output to the same run without it', ak.stdout === f.stdout, `${ak.stdout} vs ${f.stdout}`);
+check('--wait in mode agent polls nothing: the one post-merge state read and no more', stateReads(ak.log, 15) === 1, ak.log);
+
+const al = land(30, { FAKE_GH_RULES: 'required' }, ['--wait']);
+check('--wait never waits on a queue mode agent has just disarmed (exit 1)', al.status === 1, `${al.stdout}\n${al.stderr}`);
+const alOut = parse(al.stdout);
+check('--wait in mode agent still refuses merge:not-clean and still disarms', JSON.stringify(alOut?.missing) === JSON.stringify(['merge:not-clean']) && /pr merge 30 --disable-auto/.test(al.log) && stateReads(al.log, 30) === 1, `${al.stdout}\n${al.log}`);
+
+// AM: --timeout bounds --wait and means nothing without it; the parser stays strict.
+const am = land(15, { FAKE_GH_RULES: 'required' }, ['--timeout', '60']);
+check('--timeout without --wait is a usage error', am.status === 1 && typeof parse(am.stdout)?.error === 'string' && !/pr merge/.test(am.log), `${am.stdout}\n${am.log}`);
+const an = land(15, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout=60']);
+check('--timeout=<seconds> is a usage error: the parser reads the form it documents', an.status === 1 && typeof parse(an.stdout)?.error === 'string' && !/pr merge/.test(an.log), `${an.stdout}\n${an.log}`);
+const ao = land(15, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', '0']);
+check('--timeout 0 is a usage error: an unbounded wait is not one of the options', ao.status === 1 && typeof parse(ao.stdout)?.error === 'string' && !/pr merge/.test(ao.log), `${ao.stdout}\n${ao.log}`);
+const ap = land(15, { FAKE_GH_RULES: 'required' }, ['--wait', '--timeout', 'soon']);
+check('a non-numeric --timeout is a usage error', ap.status === 1 && typeof parse(ap.stdout)?.error === 'string' && !/pr merge/.test(ap.log), `${ap.stdout}\n${ap.log}`);
+check('the usage line names --wait and --timeout', /--wait/.test(String(parse(am.stdout)?.error)) && /--timeout/.test(String(parse(am.stdout)?.error)), am.stdout);
 
 finish();

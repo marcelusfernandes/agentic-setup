@@ -70,8 +70,11 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    processes; setting it yourself to get past a block is working around your own proof).
    Do not wait on CI, do not poll the PR, do not merge — the orchestrator is the one
    that watches the checks, launches the reviewer, comments its verdict, applies the
-   labels and polls until the merge lands (`skills/orchestrate/SKILL.md` steps 4-5). If CI
-   or the reviewer sends it back, fix in the same worktree and update the PR.
+   labels and waits for the merge (`skills/orchestrate/SKILL.md` steps 4-5). That wait is
+   a bounded step of a script, not a person polling: `scripts/land.mts <pr> --wait`
+   returns only once the pull request is `MERGED`, or prints
+   `{ queued, gate, mode, timeout }` when its bound elapses. If CI or the reviewer sends
+   it back, fix in the same worktree and update the PR.
 
 ## Never
 `git stash`, `git reset --hard`, `git checkout <file>`, `git clean`, force-push, editing

@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // land — the only way the orchestrator merges a PR: asks the server to
 // merge when it can, and nothing else (#63). `gh pr merge --auto` merges
-// the instant GitHub's own rules are satisfied, so there is no client-side
-// read (rulesets, rollup dedupe, --wait polling) that can go stale between
-// being taken and the merge happening (#25's incident by construction).
+// the instant GitHub's own rules are satisfied, so no client-side read
+// (rulesets, rollup dedupe, a poll of the checks) is ever what *decides* a
+// merge here, and none can go stale between being taken and the merge
+// happening (#25's incident by construction). `--wait` (below) does not
+// reopen that door: it reads the *outcome* after the server already owns the
+// merge, and decides nothing at all — a state it reads can only end the
+// wait, never start a merge.
 // `Closes #N` closes the linked issue when the PR merges — closed is done,
 // nothing left here to relabel. The worktree becomes an orphan once GitHub
 // deletes the branch on merge (delete_branch_on_merge, init-enabled); the
@@ -14,7 +18,7 @@
 // is checked out in a worktree — printing { error } here even though the
 // merge already succeeded on the server.
 //
-//   node scripts/land.mts <pr> [--require-review]
+//   node scripts/land.mts <pr> [--require-review] [--wait [--timeout <seconds>]]
 //
 // Refuses (exit 1, { refused, pr, missing, mode }) unless OPEN and approved
 // under the mode it declares. Every output — each refusal, the merge and the
@@ -125,7 +129,35 @@
 // server itself enforces (or the absence of any review to outrun) is what
 // the queue answers to. A merge call that still fails (the initial one, the
 // clean-status retry, or the disarm) prints { error } with gh's message,
-// exit 1. No polling, no relabel, no worktree removal either way.
+// exit 1. No relabel and no worktree removal either way.
+//
+// `--wait` makes that queue a bounded step of this script instead of a
+// person watching `gh pr checks` (measured: `docs/dogfood/2026-09-10.md`,
+// L3, where every merge that printed { queued } was finished by ad hoc
+// polling). It polls `gh pr view <pr> --json state` — the same read the
+// outcome above is taken from — every POLL_INTERVAL_SECONDS, or every
+// quarter of the budget when that is shorter, until one of:
+//
+//   MERGED          { merged: pr, gate, mode }, exit 0 — the same shape, and
+//                   the same exit, as a merge that happened at once.
+//   the timeout     { queued: pr, gate, mode, timeout: <seconds> }, exit 0.
+//                   The bound is --timeout <seconds>, default
+//                   DEFAULT_TIMEOUT_SECONDS; the queue is left armed and the
+//                   server still fires it when its own rules are met. A
+//                   queue that is still a queue is not an error, it is an
+//                   unfinished wait — and the output says how long it waited.
+//   CLOSED, or a    { error, pr, gate, mode }, exit 1. Neither is worth
+//   state the poll  polling to the timeout: a pull request closed without
+//   cannot read     merging will not merge, and a read that cannot answer is
+//                   a refusal here as everywhere else (invariant 3).
+//
+// The wait is never unbounded: --timeout must be a positive whole number of
+// seconds, and passing it without --wait is a usage error rather than an
+// argument silently ignored. In mode 'agent' there is nothing to wait for —
+// that mode merges now or disarms and refuses — so --wait is accepted there
+// (the mode is selected by the base branch's rules, which the caller cannot
+// know before running) and changes no output and makes no extra read. The
+// flag is about modes 'approved' and 'docs', the two that print { queued }.
 import { spawnSync } from 'node:child_process';
 
 type Label = { name: string };
@@ -145,7 +177,11 @@ type Mode = 'agent' | 'approved' | 'docs';
 // The marker the orchestrator writes with the head it reviewed. Only a full
 // 40-hex oid counts: anything else records no head this script can compare.
 const REVIEWED_SHA = /<!--\s*agentic-reviewed-sha:\s*([0-9a-f]{40})\s*-->/gi;
-const USAGE = 'usage: node scripts/land.mts <pr> [--require-review]';
+const USAGE = 'usage: node scripts/land.mts <pr> [--require-review] [--wait [--timeout <seconds>]]';
+/** How long `--wait` waits for the queue to fire when --timeout says nothing. */
+const DEFAULT_TIMEOUT_SECONDS = 900;
+/** How often it reads the state back — or a quarter of the budget, when that is shorter. */
+const POLL_INTERVAL_SECONDS = 10;
 
 function fail(shape: Record<string, unknown>): never {
   console.log(JSON.stringify(shape));
@@ -206,13 +242,78 @@ function everyRequiredCheckPasses(pr: number): boolean {
   return parsed.every((c) => (c as Check | null)?.bucket === 'pass');
 }
 
-const args = process.argv.slice(2);
-const flags = args.filter((a) => a.startsWith('-'));
-if (flags.some((f) => f !== '--require-review')) fail({ error: USAGE });
-const requireReview = flags.includes('--require-review');
-const prArg = args.find((a) => !a.startsWith('-'));
-const pr = Number(prArg);
-if (!prArg || !Number.isInteger(pr) || pr <= 0) fail({ error: USAGE });
+/** Milliseconds, synchronously, with no dependency and no event loop: this script is a straight line. */
+function sleep(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Polls `gh pr view <pr> --json state` until it reads MERGED ('merged') or
+ * the budget runs out ('timeout'). A state that cannot be read, and a pull
+ * request that is no longer OPEN without being MERGED, end the run with
+ * { error } and exit 1 instead: neither becomes a merge by being polled
+ * again. The wait always ends — the deadline is taken once, before the first
+ * poll, and the sleep never overshoots what is left of it.
+ */
+function waitForMerge(pr: number, timeoutSeconds: number, tail: Record<string, unknown>): 'merged' | 'timeout' {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  const intervalMs = Math.min(POLL_INTERVAL_SECONDS, timeoutSeconds / 4) * 1000;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return 'timeout';
+    sleep(Math.min(intervalMs, remaining));
+    const polled = ghJson<{ state?: string } | null>(['pr', 'view', String(pr), '--json', 'state'], null);
+    const state = typeof polled?.state === 'string' ? polled.state : null;
+    if (state === null) {
+      fail({ error: `PR #${pr}: could not read its state from gh while waiting for the merge.`, pr, ...tail });
+    }
+    if (state === 'MERGED') return 'merged';
+    if (state !== 'OPEN') {
+      fail({ error: `PR #${pr}: it is ${state}, not MERGED — the merge will not happen, so the wait stops here.`, pr, ...tail });
+    }
+  }
+}
+
+type Options = { pr: number; requireReview: boolean; wait: boolean; timeout: number };
+
+/**
+ * `<pr> [--require-review] [--wait [--timeout <seconds>]]`, or null for
+ * anything it does not read exactly: an unknown flag, a --timeout given
+ * twice, given no positive whole number of seconds, or given without the
+ * --wait it bounds, and no pull request number at all. The first non-flag
+ * argument is the pull request, as it has always been.
+ */
+function parseArgs(argv: readonly string[]): Options | null {
+  let pr: number | null = null;
+  let requireReview = false;
+  let wait = false;
+  let timeout: number | null = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--require-review') {
+      requireReview = true;
+    } else if (arg === '--wait') {
+      wait = true;
+    } else if (arg === '--timeout') {
+      const seconds = Number(argv[i + 1]);
+      i += 1;
+      if (timeout !== null || argv[i] === undefined || !Number.isInteger(seconds) || seconds <= 0) return null;
+      timeout = seconds;
+    } else if (arg.startsWith('-')) {
+      return null;
+    } else if (pr === null) {
+      const n = Number(arg);
+      if (!Number.isInteger(n) || n <= 0) return null;
+      pr = n;
+    }
+  }
+  if (pr === null || (timeout !== null && !wait)) return null;
+  return { pr, requireReview, wait, timeout: timeout ?? DEFAULT_TIMEOUT_SECONDS };
+}
+
+const options = parseArgs(process.argv.slice(2));
+if (!options) fail({ error: USAGE });
+const { pr, requireReview, wait, timeout } = options;
 
 const view = ghJson<PRView | null>(
   ['pr', 'view', String(pr), '--json', 'state,labels,reviewDecision,baseRefName,headRefOid,mergeable'],
@@ -328,5 +429,14 @@ if (after?.state !== 'MERGED' && mode === 'agent') {
     mode,
   });
 }
-const outcome = after?.state === 'MERGED' ? 'merged' : 'queued';
-console.log(JSON.stringify({ [outcome]: pr, gate, mode }));
+if (after?.state === 'MERGED') {
+  console.log(JSON.stringify({ merged: pr, gate, mode }));
+} else if (wait) {
+  // Modes 'approved' and 'docs' only: mode 'agent' never reaches here with a
+  // queue armed, it refused above. The queue is the server's now, so the
+  // wait watches it and neither disarms it nor merges anything itself.
+  const waited = waitForMerge(pr, timeout, { gate, mode });
+  console.log(JSON.stringify(waited === 'merged' ? { merged: pr, gate, mode } : { queued: pr, gate, mode, timeout }));
+} else {
+  console.log(JSON.stringify({ queued: pr, gate, mode }));
+}
