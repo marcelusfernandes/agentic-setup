@@ -12,10 +12,11 @@ the lockfile, `.claude/**`, `.github/**`, `main` and the labels.
 Run the loop below to completion, not one pass. Reconcile (step 0); dispatch up to four
 `state:ready` issues with disjoint `Files` as implementers, in the foreground (steps 1-3);
 on each implementer's return, launch the reviewer (step 4); on each verdict, comment it
-and apply the labels (step 5); when checks are green and the approval is on, `land.mts`,
-then poll `reconcile` until the issue's PR is actually merged — not a tight loop, a merge
-takes minutes; then move to the next ready issue, back at step 0. Step 6 closes a
-milestone with no open issue left and opens the next one, without stopping.
+and apply the labels (step 5); when checks are green and the approval is on, `land.mts
+--wait`, which returns only once the merge has landed or the bound it waits under has run
+out, so no poll of yours stands between the two; then move to the next ready issue, back
+at step 0. Step 6 closes a milestone with no open issue left and opens the next one,
+without stopping.
 
 ## The closed list of stop reasons
 
@@ -405,8 +406,23 @@ Then act on the verdict:
   LAND="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/land.mts}"
   [ -f "$LAND" ] || LAND="$(find ~/.claude/plugins -path '*agentic-setup*/scripts/land.mts' 2>/dev/null | head -1)"
   [ -f "$LAND" ] || { echo "agentic-setup: land.mts not found under ~/.claude/plugins; pass the plugin path by hand"; exit 1; }
-  node "$LAND" <pr>
+  node "$LAND" <pr> --wait
   ```
+
+  `--wait` is what makes the merge this script's wait instead of yours: without it `land`
+  returns the moment GitHub has taken the merge over, and every merge the 2026-09-10/11
+  pass left in that state was finished by ad hoc polling (`docs/dogfood/2026-09-10.md`,
+  L3). With it the run ends in exactly three ways once the merge is armed — `{ merged: pr,
+  gate, mode }` and exit 0 when the state reads `MERGED`; `{ queued: pr, gate, mode,
+  timeout: <seconds> }` and exit 0 on the bound, the queue still armed and the server still
+  free to fire it later; and `{ error, pr, gate, mode }` with exit 1 on a closed or
+  unreadable pull request — one closed without merging never will merge, and a state the
+  poll cannot read is a refusal here as everywhere else. The bound is `--timeout
+  <seconds>`, 900 by default: shorten it rather than watch it, if a wait that long would
+  outlast the shell you are running in. In mode `agent` the flag is accepted and changes
+  nothing at all — that mode never leaves a queue to wait on, it disarms one and refuses
+  (below) — and pass it anyway, because the base branch's rules select the mode and you do
+  not know which one you are in until the run prints it.
 
   `land.mts` is the only way the orchestrator merges a PR — never run `gh pr merge` by
   hand for this step. That prohibition is enforced, not merely asked for:
@@ -420,7 +436,7 @@ Then act on the verdict:
   you commented above: it reads the newest marker on the PR and compares it with the PR's
   current `headRefOid`. The opt-in `approved` mode adds `reviewDecision === 'APPROVED'`
   from the server **on top of everything `agent` requires**, marker included; it is
-  selected by `node "$LAND" <pr> --require-review`, or by a base branch whose effective
+  selected by adding `--require-review` to the run above, or by a base branch whose effective
   rules already require an approving review — never by whether `AGENTIC_REVIEWER_TOKEN` is
   set in your environment, which selects no mode at all and only gives the reviewer the
   second identity to cast with (`docs/decisions.md` items 18 and 20). Either way it passes
@@ -454,12 +470,16 @@ Then act on the verdict:
 
   On success it runs `gh pr merge <pr> --squash --auto --match-head-commit <headRefOid>`
   (it never asks `gh` itself to
-  delete the branch, and never `--admin`) and prints `{ merged: pr, gate, mode }` if the PR is already `MERGED` by the time it
-  reads `gh pr view` back, or `{ queued: pr, gate, mode }` if GitHub will merge it once its own
-  rules are satisfied. A queue is only left standing in modes `approved` and `docs`: in mode
-  `agent` a merge that did not happen is disarmed at once (`gh pr merge <pr> --disable-auto`)
-  and refused with `missing: ['merge:not-clean']`, because GitHub checks the pinned
-  `--match-head-commit` when auto-merge is enabled and not when it later fires — a queue
+  delete the branch, and never `--admin`), then reads `gh pr view` back rather than
+  inferring the outcome from which call ran. A state of `MERGED` prints `{ merged: pr,
+  gate, mode }` in every mode. Anything else means GitHub queued the merge instead of
+  performing it, and what that prints is decided by the mode, never by the flag: in mode
+  `agent` the queue is disarmed at once (`gh pr merge <pr> --disable-auto`) and refused
+  with `missing: ['merge:not-clean']`, so that mode prints a merge or a refusal and never
+  `{ queued }`; only `approved` and `docs` leave a queue standing and print `{ queued: pr,
+  gate, mode }` — that is the queue `--wait` above bounds, and the only one it can wait in.
+  The disarm is there because GitHub checks the pinned `--match-head-commit` when
+  auto-merge is enabled and not when it later fires — a queue
   left armed merges whatever the branch carries by then (#191), including the commit that
   resolves a conflict `land` should never have queued on (#241). Clear what blocks the PR
   and run `land` again. Either way, nothing left to label or remove by hand: `Closes #N`
@@ -480,12 +500,15 @@ Then act on the verdict:
   `--auto` instead of polling and merging by hand removes the stale-read race by
   construction rather than closing it after the fact (item 13).
 
-  After `land.mts` reports `{ queued }` (or `{ merged }` already), do not move to the next
-  issue yet — `Closes #N` is what actually closes it, and step 1's candidates must never
-  include one whose PR merge is still only queued. Poll `scripts/reconcile.mts --milestone
-  "<current>"` again after a short fixed pause (a merge takes low minutes, not a tight
-  loop) until the issue no longer appears in `inReview`, `inProgress` or `resumable` —
-  closed, its PR merged — then continue the loop from step 0. Once it has merged, bring
+  `--wait` has already done the waiting by the time `land` returns, so nothing here polls
+  for the merge. `{ merged }` means `Closes #N` has fired and the issue is closed — take
+  the pull below, then go back to step 0, whose re-read is what drops the issue out of
+  `inReview`, `inProgress` and `resumable`. `{ queued, timeout }` means the wait ran out
+  with the queue still armed: that issue is not done, and step 1's candidates must never
+  include one whose merge is still only queued, so leave it for a later pass to read
+  again. `{ error }` is a `gh` problem to read, not a verdict. And never wait on an issue
+  you did not land — an entry carrying `foreignLock: true` drops out when the other
+  coordinator merges it, which is work this route does not own. Once it has merged, bring
   the root checkout onto the squash commit in two steps, exactly this:
   `git fetch origin && git pull --ff-only origin main`. Naming the remote *and* the branch
   on the pull is the part that matters. A `--ff-only` pull that resolves to more than one

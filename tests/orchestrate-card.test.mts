@@ -190,9 +190,9 @@ check(
 // tells a person to poll for it. Every case below is bounded on a structural marker —
 // step 5's own `## ` slice, and inside it the fenced blocks themselves — never on a
 // blank line, which is what let #279's pin read a paragraph it did not own. The prose
-// cases run on a whitespace-collapsed copy of that slice: this card wraps at about
-// seventy-two columns, and a sentence split across two lines is invisible to a regex
-// that assumes one.
+// cases run on a whitespace-collapsed copy of that slice: this card wraps its prose
+// under a hundred columns (step 5's lines average 86), so every sentence a case below
+// reads is split across two or three lines and invisible to a regex that assumes one.
 
 /** Collapses every whitespace run to one space, so a wrapped sentence compares as one line. */
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();

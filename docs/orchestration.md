@@ -73,9 +73,9 @@ Two roles:
    `authorised:` glob, that extra round and `human:pending` each get a line from
    `scripts/log-decision.mts <parent> --kind <k> --ref <#N> "<line>"` — see "The decision
    log" below
-   green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`,
-   which declares its review mode before it judges any condition and names that mode on
-   every line it prints. Default `agent`: the `review:approved` label, the
+   green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>
+   --wait`, which declares its review mode before it judges any condition and names that
+   mode on every line it prints. Default `agent`: the `review:approved` label, the
    `<!-- agentic-reviewed-sha: <oid> -->` marker equal to the head, and every required
    check in bucket `pass`, then `gh pr merge <pr> --squash --auto --match-head-commit
    <headRefOid>` pinned to that same head. `approved` is the opt-in that adds the server's
@@ -88,13 +88,13 @@ Two roles:
    picked up by `orphanWorktrees` on a later pass. In mode `agent` nothing is left queued:
    a merge GitHub queues instead of performing is disarmed with `gh pr merge <pr>
    --disable-auto` and refused as `merge:not-clean`, so that mode prints `{ merged }` or a
-   refusal and nothing else; only `approved` and `docs` print `{ queued }`, and
-   `--wait [--timeout <seconds>]` bounds that queue. After `land.mts` reports `{ merged }`
-   (or `{ queued }` in those two modes), poll `reconcile.mts` (a fixed pause
-   between reads, not a tight loop) until the issue drops out of `inReview`/`inProgress`/
-   `resumable` entirely, then loop back to 1 — and never poll an issue you did not land:
-   an entry with `foreignLock: true` drops out when the other coordinator merges it, so
-   waiting on it is waiting on work this route does not own
+   refusal and nothing else; only `approved` and `docs` print `{ queued }`, and `--wait`
+   is what bounds that queue — the run then ends in `{ merged }`, in `{ queued, timeout }`
+   on the bound with the queue still armed, or in `{ error }` on a closed or unreadable
+   pull request. Nobody polls for the merge afterwards: `land` returned because it
+   happened, or because the bound ran out. Then loop back to 1 — and never wait on an
+   issue you did not land: an entry with `foreignLock: true` is the other coordinator's to
+   merge, so waiting on it is waiting on work this route does not own
    `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `head:changed` —
    the head is not the commit the marker records, or no marker records one —
    `gh-pr-comments`, `merge:not-mergeable`, `checks:required`, `merge:not-clean`,
@@ -430,11 +430,13 @@ split is read as pending.
   disjoint globs is the practical number.
 - The implementer does not wait on CI. Polling CI burns tokens; the reviewer returns its
   verdict to the orchestrator, which comments it and applies the labels (step 5), and the
-  orchestrator does the rest of the waiting — it watches the checks (step 4), then, after
-  `land.mts` reports, polls `reconcile.mts` at a fixed interval until the PR is actually
-  `MERGED` (step 5) before moving to the next issue. In mode `agent` there is no queue to
-  outlast, so that poll only confirms a merge that already happened. Neither wait is a
-  tight loop.
+  orchestrator does the rest of the waiting — it watches the checks (step 4), then hands
+  the merge to `scripts/land.mts <pr> --wait` (step 5), and it is the flag, not the
+  orchestrator, that waits: `land` polls `gh pr view --json state` itself and returns
+  `{ merged }`, `{ queued, timeout }` when its bound runs out with the queue still armed,
+  or `{ error }` on a closed or unreadable pull request. In mode `agent` there is no queue
+  to outlast — that mode merges at once or disarms and refuses — so the flag changes
+  nothing there. Neither wait is a tight loop, and neither one is a person's.
 - **No client-side read of the check re-run window can decide a merge.** A label change
   (or a push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
   earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where
