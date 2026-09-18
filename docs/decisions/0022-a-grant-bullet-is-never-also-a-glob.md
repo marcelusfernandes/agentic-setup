@@ -184,4 +184,26 @@ replaced.
 
 ## Updates
 
-None yet.
+*2026-09-18 (#232, #328):* `ci/issue-lint.mts` reads the grants too now, and holds them
+to the two rules it holds the bullet globs to. It calls `parseIssueAuthorisedGlobs`
+(`ci/issue-lint.mts:196`), resolves a grant and a bullet glob through one
+`classifyGlob(glob, grant)` by the same literal-path/new-prefix rule, and runs the
+disjointness comparison over `[...globs, ...grants]` on both sides (`:388`, `:395`).
+**The decision above is unchanged and still in force**: a grant bullet is read once, as
+a grant, and never as one of the issue's globs — `parseIssueGlobs` still skips it, and
+the lint now tells a granted path from a declared one rather than conflating them, which
+is what this item said it could not do. What no longer describes the code is the last
+sentence of the third bullet of **Decision**, that the lint's disjointness set "stops
+treating a grant as scope": it compares grants again, *as grants* and through the second
+parser, and each `globs` entry carries `grant: true`/`grant: false` so the two stay
+distinguishable in the output. That adds two refusals at dispatch — a grant whose
+wildcard matches no tracked file, and a granted file another in-flight issue of the
+milestone also covers unless a `Blocked by:` sequences the two — and by this item's own
+test, a change that adds a refusal is not a measurement of existing behaviour, which is
+what earns this line. **Cost accepted** is untouched: `## Files has no bullet glob`
+still counts bullets only, so an issue whose `## Files` carries grants alone still
+declares no scope of its own. The same pull request moved this item's citations into
+that file (the header gained the sentence naming grants, the body gained the grant
+parsing): the three under **Decision** read `:64`, `:190` and `:395`, and the one under
+**Cost accepted** reads `:197-198`. The wording above keeps the numbers it was written
+with, per the template.
