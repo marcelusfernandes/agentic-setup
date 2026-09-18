@@ -409,7 +409,9 @@ if (blockedByCycle !== null) {
 // --- AC3: disjointness against issues in flight in the same milestone -----
 // Both sides of every comparison below are "what this issue may touch" —
 // its bullet globs plus its grants — because that is the set `scope` checks
-// a diff against (`ci/lib/scope.mts:174`). A file granted to one issue and
+// a diff against (`checkScope` in `ci/lib/scope.mts` — named, not cited by
+// line, because a line number here goes stale on the next edit of that file
+// and a clean merge renumbers it with nothing to announce the drift). A file granted to one issue and
 // declared by another is the same collision as two declarations of it (#232).
 const selfScope = [...issueGlobs, ...issueGrants];
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, selfScope));
