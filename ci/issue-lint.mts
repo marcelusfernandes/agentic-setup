@@ -5,8 +5,8 @@
 // `new`), the `authorised:` grants of `## Files` held to those same two
 // rules — a grant resolves like a glob and is compared for overlap like one,
 // because it is what widens the scope check (#232) — globs disjoint from the
-// issues already in flight in the same
-// milestone, a `Blocked by:` graph with no cycle in it, and every
+// issues already in flight in the same milestone, a `Blocked by:` graph with
+// no cycle in it, and every
 // `Blocked by: #N` number in the issue actually
 // exists. It never
 // reads a diff — the mechanical form of the #3 guard (a rename that drops a
