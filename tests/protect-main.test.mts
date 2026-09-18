@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Cases for hooks/protect-main.mts: the plain third-layer check — no push to
-// main, no force-push, no `gh pr merge` by hand (with or without `--admin`).
-// Spawns the real hook against a throwaway git repo. Also asserts the
-// declarative deny list that ships next to the hook, since the two state the
-// same rule and drift silently otherwise.
+// main, no force-push, no `gh pr merge` by hand (with or without `--admin`),
+// and no `gh issue edit` from inside an agent's worktree (#237: the session an
+// `authorised:` grant would exempt is never the session that writes it).
+// Spawns the real hook against a throwaway git repo — and, for #237, against a
+// real linked worktree of it, since the worktree is the discriminator. Also
+// asserts the declarative deny list that ships next to the hook, since the two
+// state the same rule and drift silently otherwise.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, check, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
@@ -118,6 +121,66 @@ check(
   'protect-main denies a hand-typed merge even with the push valve in the environment',
   bash('gh pr merge 1 --squash', repo, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 2,
 );
+
+// #237 AC1/AC3: an `authorised:` grant is never written by the session it would
+// exempt. The discriminator is the one protect-worktree.mts already uses — an
+// agent_id in the payload plus a cwd that resolves to a LINKED worktree — so the
+// cases below run against a real `git worktree add`, not a second clone.
+const grantWt = join(repo, '.worktrees', 'agent-237');
+git(['worktree', 'add', '-q', '-b', 'fix/237-grant', grantWt], repo);
+const agentBash = (command: string, cwd: string, env?: Record<string, string>) =>
+  hook('protect-main.mts', { tool_name: 'Bash', tool_input: { command }, cwd, agent_id: 'agent-237' }, { cwd, env });
+
+const deniedInWorktree = [
+  'gh issue edit 42 --body-file x',
+  'gh issue edit 42 --body-file /tmp/issue.md --add-label state:ready',
+  'gh -R owner/repo issue edit 42 --body-file x', // #204: a global flag before the subcommand is still an edit
+  'gh -Rowner/repo issue edit 42 --body-file x',
+  'gh --repo=owner/repo issue edit 42 --body-file x',
+  'git status && gh issue edit 42 --body-file x', // a segment after && is still checked
+];
+for (const command of deniedInWorktree) {
+  const r = agentBash(command, grantWt);
+  check(`protect-main denies from an agent's worktree: ${command}`, r.status === 2 && /permissionDecision":"deny/.test(r.stdout), r.stderr);
+}
+
+// #237 AC3: the main checkout is untouched, and so is every neighbouring
+// `gh issue` subcommand from anywhere.
+check(
+  'protect-main allows `gh issue edit` from the main checkout (the orchestrator writes the grant)',
+  agentBash('gh issue edit 42 --body-file x', repo).status === 0,
+);
+check(
+  'protect-main allows `gh issue edit` from a worktree with no agent_id',
+  bash('gh issue edit 42 --body-file x', grantWt).status === 0,
+);
+const allowedInWorktree = [
+  'gh issue view 42',
+  'gh issue view 42 --json body -q .body',
+  'gh issue comment 42 --body "blocked on a grant"',
+  'gh issue list --label state:ready',
+  'gh pr edit 42 --body-file x', // a grant in a PR body never counted anyway (#155)
+];
+for (const command of allowedInWorktree) {
+  const r = agentBash(command, grantWt);
+  check(`protect-main allows from an agent's worktree: ${command}`, r.status === 0 && r.stdout === '', r.stderr);
+}
+
+// #237 AC4: no environment variable lifts it — the push valve covers item 2 only.
+check(
+  'protect-main denies the issue edit even with the push valve set inline',
+  agentBash('AGENTIC_ALLOW_PUSH_MAIN=1 gh issue edit 42 --body-file x', grantWt).status === 2,
+);
+check(
+  'protect-main denies the issue edit even with the push valve in the environment',
+  agentBash('gh issue edit 42 --body-file x', grantWt, { AGENTIC_ALLOW_PUSH_MAIN: '1' }).status === 2,
+);
+
+// #237 AC1: the refusal names the remedy the contract already has.
+const grantRefusal = agentBash('gh issue edit 42 --body-file x', grantWt);
+check('protect-main names the orchestrator as the one who writes a grant', /orchestrator/i.test(grantRefusal.stderr) && /grant/i.test(grantRefusal.stderr), grantRefusal.stderr);
+check('protect-main tells the session to stop rather than work around it', /and stop\b/i.test(grantRefusal.stderr), grantRefusal.stderr);
+check('protect-main says no environment variable lifts the issue-edit rule', /no environment variable lifts this/i.test(grantRefusal.stderr), grantRefusal.stderr);
 
 // AC2: the declarative deny list states the same rule, in both copies.
 const settingsRaw = readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8');
