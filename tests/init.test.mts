@@ -259,6 +259,16 @@ const expectedSeeded = dictionary()
 check('init seeds exactly the claude-routed entries of labels.json, colours and descriptions included',
   expectedSeeded.length > 0 && JSON.stringify(seeded) === JSON.stringify(expectedSeeded),
   `seeded:\n${seeded.join('\n')}\nexpected:\n${expectedSeeded.join('\n')}`);
+// The `type:docs` description is the one label text a reader acts on, and it
+// was stale: since #135 the label never skips the negative control — that skip
+// is by path class — and its one live effect is the review exemption
+// (`scripts/land.mts:230`). Pinned literally, not through the dictionary the
+// check above already compares against, so the wording itself is held.
+check('init seeds type:docs with a description that claims only the review exemption',
+  /label create type:docs --color 0075ca --description Docs only: merges with no reviewer; negative-control skips by path class, not by this label/
+    .test(ghLog(state1)),
+  ghLog(state1));
+
 check('init passes --force on every label create, so a drifted colour is corrected',
   labelCalls(state1).length > 0 && labelCalls(state1).every((args) => args.includes('--force')), JSON.stringify(labelCalls(state1)));
 

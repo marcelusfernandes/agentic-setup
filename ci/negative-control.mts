@@ -8,7 +8,9 @@
 //   skipped      every file the PR changes sits in a skipped path class
 //                (SKIP_PATH_GLOBS below, extended by AGENTIC_SKIP_GLOBS) —
 //                docs, workflows, templates and root Markdown owe no
-//                negative control
+//                negative control. One path is carved out of every class,
+//                AGENTIC_SKIP_GLOBS included: NEVER_SKIP_GLOBS, the gate's
+//                own code in an adopting repository
 //   pass         the baseline was green and the overlaid run failed — the tests bite
 //   structural   the overlaid run failed only structurally (a missing module,
 //                a missing export, a syntax error) and no `test(red):` commit
@@ -39,6 +41,14 @@
 // nudging toward a throwing stub is still printed and summarised; without
 // such a commit the outcome is `structural` and the check fails.
 //
+// The signature is read per *diagnostic block* — a maximal run of
+// consecutive non-blank lines — and counts only when that same block also
+// names an overlaid test file or a file the diff touches, which is what a
+// stack frame or a Node error header does. Matching the overlaid run's whole
+// output instead let one unrelated structural-looking line (a dependency
+// logging `Cannot find module` and carrying on, printed in a block of its
+// own) flip an honest assertion red to `structural` (#214).
+//
 // The skip is by path class, not by the PR's own labels: the implementer
 // applies its own PR's labels, so a `type:` label could buy its own
 // exemption. `type:docs`/`deps`/`infra`/`refactor`/`spec` are still read —
@@ -46,7 +56,11 @@
 // skip on their own, and to name the label in a skip the path class already
 // decided. AGENTIC_SKIP_GLOBS (comma-separated, env only, no config file)
 // adds path classes; `*.md` matches root-level Markdown only, as `*` never
-// crosses a `/` (ci/lib/globs.mts).
+// crosses a `/` (ci/lib/globs.mts). NEVER_SKIP_GLOBS is the one carve-out no
+// class may override: `scripts/init.mts` copies this repository's `ci/` into
+// an adopting repository's `.github/scripts/agentic/`, so the `.github/**`
+// class would otherwise let a PR rewrite the gate's own code under the gate's
+// own exemption.
 //
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
 // the event or --labels a,b, and --branch <ref> (or the event's head ref)
@@ -85,6 +99,13 @@ const LEGACY_SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra', 'type:refact
 // `/`); a nested Markdown file is skipped through `docs/**` or by adding the
 // class to AGENTIC_SKIP_GLOBS.
 const SKIP_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '*.md'];
+// The carve-out from every skipped class, AGENTIC_SKIP_GLOBS included.
+// `scripts/init.mts` copies this repository's `ci/` — this file among them —
+// into an adopting repository's `.github/scripts/agentic/`, which `.github/**`
+// would otherwise swallow whole: a pull request rewriting the gate would be
+// skipped by the gate. A mechanism that can exempt a change to itself is not
+// a gate, so this one is not an operator's to switch off (#214).
+const NEVER_SKIP_GLOBS = ['.github/scripts/agentic/**'];
 const TEST_FILE_GLOBS = [
   '**/*.test.*', '**/*.spec.*', '**/*_test.go', '**/test_*.py', '**/*_test.py',
   '**/tests/**', '**/test/**', '**/__tests__/**', 'e2e/**', 'spec/**',
@@ -104,8 +125,39 @@ const csv = (value: string | undefined): string[] =>
 // as red for the wrong reason: it says the file could not run at all, not
 // that an assertion caught the PR's change. See safe-worktree §B7.
 const STRUCTURAL_SIGNATURE = /Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|does not provide an export named/;
+
 const STRUCTURAL_WARNING =
   'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
+
+/**
+ * Whether the overlaid run failed structurally *because of the overlay*.
+ *
+ * The output is split into diagnostic blocks — maximal runs of consecutive
+ * non-blank lines, which is how a runtime prints one diagnostic: the error
+ * header, the offending source line, then its stack frames. A block counts
+ * only when it carries a structural signature **and** names one of `paths`,
+ * the overlaid test files plus every file the diff touches. Node names the
+ * file in the header of both shapes — `Cannot find module '…' imported from
+ * <file>` on the signature line itself, and `file:///…/<file>:1` three lines
+ * above a `SyntaxError`.
+ *
+ * Reading the whole output instead made any structural-looking line anywhere
+ * decide the outcome: a dependency that logs `Cannot find module` and carries
+ * on prints its line in a block of its own and says nothing about whether the
+ * overlaid file could run, yet it flipped an honest assertion red to
+ * `structural` (#214).
+ */
+function structuralInOverlay(output: string, paths: string[]): boolean {
+  const named = paths.map((p) => p.trim()).filter(Boolean);
+  if (named.length === 0) return false;
+  return output
+    .split(/\n[ \t]*\n/)
+    .some((block) => {
+      const lines = block.split('\n');
+      return lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
+        && lines.some((line) => named.some((path) => line.includes(path)));
+    });
+}
 
 function finish(outcome: Outcome, detail: string, warning?: string): never {
   const ok = outcome === 'skipped' || outcome === 'pass';
@@ -143,7 +195,14 @@ const changed = git(['diff', '--no-renames', '--name-only', `${base}...${head}`]
 // The primary skip: every changed file sits in a skipped path class. An
 // empty diff is not a skip — it falls through to `no-tests`.
 const skipGlobs = [...SKIP_PATH_GLOBS, ...csv(process.env.AGENTIC_SKIP_GLOBS)];
-if (changed.length > 0 && changed.every((f) => matchesAny(f, skipGlobs))) {
+/** In a skipped class, unless it is the gate's own code, which never is. */
+const inSkippedClass = (file: string): boolean =>
+  matchesAny(file, skipGlobs) && !matchesAny(file, NEVER_SKIP_GLOBS);
+const gateCode = changed.filter((f) => matchesAny(f, NEVER_SKIP_GLOBS));
+if (gateCode.length > 0) {
+  console.log(`note: ${gateCode.length} changed file(s) under ${NEVER_SKIP_GLOBS.map((g) => `\`${g}\``).join(', ')} — this repository's gate code, copied there by \`scripts/init.mts\` — are never in a skipped path class, so the negative control runs whatever the rest of the diff is: ${gateCode.map((f) => `\`${f}\``).join(', ')}.`);
+}
+if (changed.length > 0 && changed.every(inSkippedClass)) {
   const alsoLabelled = legacyLabel ? ` The PR also carries \`${legacyLabel}\`, which no longer skips on its own.` : '';
   finish(
     'skipped',
@@ -223,10 +282,17 @@ if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TE
 
 type RunResult = { status: number | null; crashed: boolean; output: string };
 
-/** Runs the detected test command in `cwd`; never throws. */
+/**
+ * Runs the detected test command in `cwd`; never throws. The two streams are
+ * joined by a blank line, not concatenated: `structuralInOverlay` reads
+ * diagnostic blocks, and without the separation the last line a test logs on
+ * stdout shares a block with the first line a runtime writes on stderr — a
+ * `Cannot find module` the test merely printed would then borrow the file
+ * name out of the stack header that follows it.
+ */
 function runTests(cwd: string): RunResult {
   const r = spawnSync(String(testCommand), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
-  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim() };
 }
 
 const tail = (output: string): string => output.split('\n').slice(-TAIL).join('\n');
@@ -310,7 +376,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
-    const structural = STRUCTURAL_SIGNATURE.test(overlaid.output);
+    const structural = structuralInOverlay(overlaid.output, [...testFiles, ...changed]);
     if (structural && !redCommitTouchesTests()) {
       return {
         outcome: 'structural',

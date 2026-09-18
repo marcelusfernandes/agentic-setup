@@ -50,6 +50,45 @@ check('negative-control does not skip type:feature', /no-tests/.test(nc(noTestsH
 r = nc(noTestsHead, '', base, { AGENTIC_SKIP_GLOBS: 'lib.mts' });
 check('AGENTIC_SKIP_GLOBS extends the skipped path classes', r.status === 0 && /skipped/.test(r.out), r.out);
 
+// --- the gate may not exempt a change to its own code ----------------------
+// `scripts/init.mts` copies this repository's `ci/` into an adopting
+// repository's `.github/scripts/agentic/`, which the `.github/**` class would
+// otherwise swallow whole: a pull request rewriting the negative control
+// itself would be skipped by the negative control. That one path is carved
+// out of every skipped class, AGENTIC_SKIP_GLOBS included.
+git(['checkout', '-q', '-b', 'fix/5-gate-code', base], repo);
+const gateCodeHead = commit(repo, {
+  '.github/scripts/agentic/negative-control.mts': 'process.exit(0);\n',
+}, "fix: rewrite the adopting repository's copy of the gate");
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(gateCodeHead);
+check(
+  'a diff confined to .github/scripts/agentic/** is not skipped by path class',
+  r.status === 1 && /no-tests/.test(r.out),
+  r.out,
+);
+r = nc(gateCodeHead, '', base, { AGENTIC_SKIP_GLOBS: '.github/scripts/agentic/**' });
+check(
+  "AGENTIC_SKIP_GLOBS cannot re-admit the gate's own code to a skipped class",
+  r.status === 1 && /no-tests/.test(r.out),
+  r.out,
+);
+
+// A docs-only diff that also carries one file of the gate's own code is not a
+// docs-only diff: the skip is `every`, and that one file is never in a class.
+git(['checkout', '-q', '-b', 'docs/6-docs-plus-gate', base], repo);
+const docsPlusGateHead = commit(repo, {
+  'docs/guide.md': '# guide\n',
+  '.github/scripts/agentic/negative-control.mts': 'process.exit(0);\n',
+}, 'docs: a doc and one file of the gate');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(docsPlusGateHead);
+check(
+  'one gate-code file keeps an otherwise docs-only diff out of the skip',
+  r.status === 1 && /no-tests/.test(r.out),
+  r.out,
+);
+
 git(['checkout', '-q', '-b', 'feat/2-vacuous', base], repo);
 const vacuous = commit(repo, { 'lib.mts': 'export const v = 3;\n', 'tests/check.mts': "console.log('looks tested');\nprocess.exit(0);\n" }, 'feat: vacuous');
 git(['checkout', '-q', 'feat/1-x'], repo);
@@ -135,6 +174,50 @@ r = nc(redElsewhereHead);
 check(
   'a test(red): commit touching no overlaid test file does not vouch for the structural red',
   r.status === 1 && /structural/.test(r.out),
+  r.out,
+);
+
+// A structural signature somewhere else in the output is not this pull
+// request's structural red. A dependency that logs `Cannot find module` and
+// carries on prints that line in a diagnostic block of its own, and says
+// nothing about whether the overlaid test file could run; the signature
+// counts only when its own block also names an overlaid test file or a file
+// the diff touches. Here the red is an honest assertion red — `v === 6`
+// fails on the base — and must stay `pass`.
+git(['checkout', '-q', '-b', 'feat/14-noisy-red', base], repo);
+const noisyRedHead = commit(repo, {
+  'lib.mts': 'export const v = 6;\n',
+  'tests/check.mts':
+    "import { v } from '../lib.mts';\n" +
+    'console.log("vendor/dep: Cannot find module \'optional-extra\' — ignored");\n' +
+    'process.exit(v === 6 ? 0 : 1);\n',
+}, 'feat: a runtime red whose output also carries an unrelated structural line');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(noisyRedHead);
+check(
+  "a structural line outside the overlaid files' own diagnostic block leaves the red a pass",
+  r.status === 0 && /\bpass\b/.test(r.out) && !/structural/.test(r.out) && !/warning:/.test(r.out),
+  r.out,
+);
+
+// The same shape across the stream boundary: the noise goes to stdout and the
+// runtime writes its own diagnostic to stderr, so concatenating the two
+// without a blank line put the logged `Cannot find module` in the same block
+// as the stack header naming the overlaid file. The red here is a thrown
+// `Error`, which carries no structural signature of its own.
+git(['checkout', '-q', '-b', 'feat/15-noisy-throw', base], repo);
+const noisyThrowHead = commit(repo, {
+  'lib.mts': 'export const v = 7;\n',
+  'tests/check.mts':
+    "import { v } from '../lib.mts';\n" +
+    'console.log("vendor/dep: Cannot find module \'optional-extra\' — ignored");\n' +
+    "if (v !== 7) throw new Error('v is not 7');\n",
+}, 'feat: a thrown red whose stdout carries an unrelated structural line');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(noisyThrowHead);
+check(
+  'a structural line on stdout does not borrow the file name from the stderr diagnostic',
+  r.status === 0 && /\bpass\b/.test(r.out) && !/structural/.test(r.out) && !/warning:/.test(r.out),
   r.out,
 );
 

@@ -10,7 +10,7 @@
   { "name": "type:refactor", "color": "c5def5", "description": "", "routes": ["claude"] },
   { "name": "type:infra", "color": "bfd4f2", "description": "", "routes": ["claude"] },
   { "name": "type:spec", "color": "d4c5f9", "description": "", "routes": ["claude"] },
-  { "name": "type:docs", "color": "0075ca", "description": "Docs only: no reviewer, no negative control", "routes": ["claude"] },
+  { "name": "type:docs", "color": "0075ca", "description": "Docs only: merges with no reviewer; negative-control skips by path class, not by this label", "routes": ["claude"] },
   { "name": "type:deps", "color": "ededed", "description": "Dependency change: orchestrator only", "routes": ["claude"] },
   { "name": "review:approved", "color": "0e8a16", "description": "The reviewer approved", "routes": ["claude"] },
   { "name": "human:pending", "color": "f9d0c4", "description": "A human decision is required; affected work is paused", "routes": ["claude", "codex"] },
