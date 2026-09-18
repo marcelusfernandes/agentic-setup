@@ -30,8 +30,8 @@ Lowercase letters, digits and dashes only.
 
 | key | required | meaning |
 |---|---|---|
-| `tests` | yes | the files `negative-control` copies onto the base checkout, in addition to the declaration itself. Any path: a file no test glob matches is overlaid all the same, which is the point of declaring it. The runner does not overlay anything, but it refuses a declaration naming a file the repository does not have (`proof:missing-test-file`) — #136 is the consumer of `tests[]`, and a declaration that points at nothing is broken wherever it is read. |
-| `command` | no | replaces the detected test command, for **both** the baseline run on the pristine base and the overlaid run, and it is the command `scripts/proof.mts` runs. Omitting it is not an error: the runner then falls back to the record and to detection, and says so in `source`. |
+| `tests` | yes | the files `negative-control` copies onto the base checkout, in addition to the declaration itself. They **replace** the diff's test files; they do not widen them. No test glob is consulted at all once a declaration is read, which is both how a file no glob matches is overlaid — the point of declaring it — and how a file every glob matches is left out. Each entry is relative to the repository root and must be in the head commit: an absolute path, a path that escapes the root once normalised (`..`), or a path the head does not have is `cannot-run` naming that path, before any file is written or removed, and never a deletion replayed on the base. The runner does not overlay anything, but it refuses a declaration naming a file the repository does not have (`proof:missing-test-file`) — #136 is the consumer of `tests[]`, and a declaration that points at nothing is broken wherever it is read. |
+| `command` | no | replaces the detected test command, for **both** the baseline run on the pristine base and the overlaid run, and it is the command `scripts/proof.mts` runs. Both of those runs happen in the base worktree: **`negative-control` never executes the declared command at head.** A `proof/*.json` diff therefore proves that the command is red on the base with the declared files overlaid, and nothing at all about what it does at head — that is the repository's own test workflow's job, and the `SubagentStop` gate's. Omitting it is not an error: the runner then falls back to the record and to detection, and says so in `source`. |
 | `describes` | no | one sentence naming what the declaration proves, for a person. Nothing executes it, and `ci/negative-control.mts` does not read it at all — a `describes` that is present and empty passes the negative control. It is validated by the proof runner (`scripts/lib/proof.mts`, which refuses it as `proof:wrong-type`) and, for the declarations this repository ships, by the pin test `tests/proof-declarations.test.mts`. |
 
 Any other key is a typo: `tests/proof-declarations.test.mts` fails on it, and on a
@@ -59,12 +59,30 @@ else: it never opens the file, because the branch that carries it need not exist
 the issue is linted. The line is optional and its absence is never a failure.
 
 A declaration that is present but unusable is `cannot-run`, not a fallback to the
-globs: a broken declaration must not silently narrow the control to nothing.
+globs: a broken declaration must not silently narrow the control to nothing. A fallback
+would report "we could not verify this" as "this passed", which is the one thing the
+negative control exists to prevent. The causes, each naming the path it rejected:
 
-The path-class skip (`docs/**`, `.github/**`, `templates/**`, root Markdown — minus
-`.github/scripts/agentic/**`, the gate's own code in an adopting repository, which no
-class covers) is decided before the declaration is read, so a diff that owes no negative
-control still owes none.
+| cause | what the check saw |
+|---|---|
+| unreadable | the declaration is in the head tree and `git show` could not read it — a corrupt or missing object, or a `git` that could not run |
+| unparsable | the text is not JSON, or not a JSON object |
+| no `tests` | `"tests"` is absent, empty, or not an array of non-empty strings |
+| bad `command` | `"command"` is present and is not a non-empty string |
+| path outside the checkout | a `tests` entry is absolute, or escapes the repository root once normalised (`..`) |
+| path absent at head | a `tests` entry names a file the head commit does not have |
+
+Presence is decided from the head **tree** (`git ls-tree`), never from the exit status of
+`git show`: only "absent from the head commit" means "this branch declares nothing".
+`git show` fails the same way for an absent path, a corrupt object and a `git` that
+cannot run, so its status alone cannot tell the four apart — and reading the other three
+as the first is exactly the silent fallback above. The path checks run before the base
+worktree is made, so a rejected declaration removes and writes nothing.
+
+The path-class skip (`docs/**`, `.github/**`, `templates/**`, `.claude/**`, and Markdown
+anywhere in the tree — minus `.github/scripts/agentic/**`, the gate's own code in an
+adopting repository, which no class covers) is decided before the declaration is read, so
+a diff that owes no negative control still owes none.
 
 ## The proof runner
 
@@ -133,9 +151,15 @@ alternative is a runner that quietly proves something other than what the branch
 ### Where each reader reads from
 
 `ci/negative-control.mts --branch <ref>` reads the declaration from the **head commit**
-(`git show <head>:proof/<slug>.json`): CI judges a commit, and a file only present in a
-runner's working tree proves nothing. `scripts/proof.mts` reads the **working tree**: it
-is run by a person or an agent in a checkout, on the state that is actually there.
+(`git ls-tree` for presence, then `git show <head>:proof/<slug>.json` for the content):
+CI judges a commit, and a file only present in a runner's working tree proves nothing.
+`scripts/proof.mts` reads the **working tree**: it is run by a person or an agent in a
+checkout, on the state that is actually there.
+
+It reads the declaration from head and then *runs* only on the base: the baseline and the
+overlaid run both happen in a worktree of the pull request's base, so the declared
+`command` is never executed at head by this check. The runner is what executes it in a
+head checkout.
 
 ### No command ever comes from an issue or a pull request
 

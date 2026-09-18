@@ -30,11 +30,13 @@ You keep the documentation equal to the code — never ahead of it.
    and `land.mts` refuses with `review:not-approved`, demanding the review this whole
    flow exists to skip.
 5. `negative-control` skips a PR whose whole diff is `docs/**`, `.github/**`,
-   `templates/**` or root-level Markdown — by path class, not by the `type:docs` label.
-   That label exempts the *review*, nothing else; a `type:docs` PR that reaches outside
-   those classes still owes a failing test. A diff confined to `.claude/**` is **not** in
-   that set and will fail as `no-tests`; name the path class in the repository variable
-   `AGENTIC_SKIP_GLOBS` or keep such a change together with a doc it belongs to. One path
+   `templates/**`, `.claude/**` or Markdown anywhere in the tree (`**/*.md`, so a card
+   under `skills/` or `agents/` counts, not only a root-level `README.md`) — by path
+   class, not by the `type:docs` label. That label exempts the *review*, nothing else; a
+   `type:docs` PR that reaches outside those classes still owes a failing test. Reaching
+   outside them means a file no class covers: name its path class in the repository
+   variable `AGENTIC_SKIP_GLOBS` or keep such a change together with a doc it belongs
+   to. One path
    inside `.github/**` is carved out of every class and cannot be put back by
    `AGENTIC_SKIP_GLOBS`: `.github/scripts/agentic/**`, where `scripts/init.mts` copies
    this repository's `ci/` in an adopting repository — the gate does not exempt a change

@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 // Cases for ci/negative-control.mts: the tests a PR adds must fail on the
 // base without the PR's change, unless the PR's whole diff sits in a skipped
-// path class (docs, workflows, templates, root Markdown, or whatever
-// AGENTIC_SKIP_GLOBS adds). A `type:` label no longer skips by itself.
+// path class (docs, workflows, templates, Markdown anywhere in the tree,
+// session configuration, or whatever AGENTIC_SKIP_GLOBS adds). A `type:`
+// label no longer skips by itself.
+//
+// The declaration cases at the end are the fail-closed half: a
+// `proof/<slug>.json` the check cannot read, or that names a path the head
+// does not have or a path outside the checkout, is `cannot-run` — never a
+// silent fall back to the diff's globs, which would report "we could not
+// verify this" as "this passed".
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { check, ci, commit, finish, git, tempRepo } from './lib/harness.mts';
 
 const repo = tempRepo();
@@ -28,9 +37,11 @@ let r = nc(head);
 check('negative-control passes when the new test fails on the base', r.status === 0 && /\bpass\b/.test(r.out) && !/warning:/.test(r.out), r.out);
 
 // --- the skip is by path class, not by the PR's own `type:` label ----------
-// A diff that is entirely docs, workflows, templates or root Markdown owes
-// no negative control; a `type:` label alone no longer buys the exemption,
-// because the implementer applies its own PR's labels.
+// A diff entirely inside the skipped classes — docs, workflows, templates,
+// session configuration and Markdown anywhere in the tree — owes no negative
+// control; a `type:` label alone no longer buys the exemption, because the
+// implementer applies its own PR's labels. This case covers four of them;
+// the nested Markdown and `.claude/**` classes have cases of their own below.
 git(['checkout', '-q', '-b', 'docs/4-docs-only', base], repo);
 const docsHead = commit(repo, {
   'docs/guide.md': '# guide\n',
@@ -49,6 +60,37 @@ check('negative-control does not skip type:feature', /no-tests/.test(nc(noTestsH
 
 r = nc(noTestsHead, '', base, { AGENTIC_SKIP_GLOBS: 'lib.mts' });
 check('AGENTIC_SKIP_GLOBS extends the skipped path classes', r.status === 0 && /skipped/.test(r.out), r.out);
+
+// Markdown is a skipped class wherever it lives, and so is session
+// configuration. `*` never crosses a `/` (ci/lib/globs.mts), so `*.md` alone
+// covered root-level Markdown only: a pull request touching nothing but
+// `skills/x/SKILL.md` or `agents/y.md` failed as `no-tests` although there
+// was nothing to test. `.claude/**` is session configuration, which no test
+// covers either.
+git(['checkout', '-q', '-b', 'docs/16-nested-markdown', base], repo);
+const nestedMarkdownHead = commit(repo, {
+  'skills/x/SKILL.md': '# skill\n',
+  'agents/y.md': '# agent\n',
+}, 'docs: a skill card and an agent card, both outside docs/**');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(nestedMarkdownHead);
+check(
+  'Markdown outside docs/** is a skipped path class, not no-tests',
+  r.status === 0 && /skipped/.test(r.out),
+  r.out,
+);
+
+git(['checkout', '-q', '-b', 'chore/17-session-config', base], repo);
+const sessionConfigHead = commit(repo, {
+  '.claude/settings.json': '{"permissions":{}}\n',
+}, 'chore: session configuration only');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(sessionConfigHead);
+check(
+  'a diff confined to .claude/** is a skipped path class, not no-tests',
+  r.status === 0 && /skipped/.test(r.out),
+  r.out,
+);
 
 // --- the gate may not exempt a change to its own code ----------------------
 // `scripts/init.mts` copies this repository's `ci/` into an adopting
@@ -297,6 +339,108 @@ r = declNc(['--base', cmdBase, '--head', brokenHead, '--branch', 'feat/12-broken
 check(
   'a declaration that does not parse is cannot-run, not a silent skip',
   r.status === 1 && /cannot-run/.test(r.out) && /proof\/broken\.json/.test(r.out),
+  r.out,
+);
+
+// --- the declaration fails closed ------------------------------------------
+// Every case below builds a branch off `cmdBase` whose `checks/pin.mts` is an
+// honest red on the base, so the only thing that decides the outcome is what
+// the declaration says. If the declaration were ignored the run would report
+// `pass` or `no-tests` — a verdict about a tree nobody described.
+const declaringBranch = (branch: string, slug: string, v: number, decl: unknown): string => {
+  git(['checkout', '-q', '-b', branch, cmdBase], cmdRepo);
+  return commit(cmdRepo, {
+    'lib.mts': `export const v = ${v};\n`,
+    'checks/pin.mts': `import { v } from '../lib.mts';\nprocess.exit(v === ${v} ? 0 : 1);\n`,
+    [`proof/${slug}.json`]: JSON.stringify(decl),
+  }, `feat: declare ${slug}`);
+};
+const declRun = (branch: string, head: string) =>
+  declNc(['--base', cmdBase, '--head', head, '--branch', branch], cmdRepo);
+
+// A `tests` entry the head commit does not have is a typo, not a deletion to
+// replay on the base: the overlay would `rmSync` an unrelated base file and
+// the control would then run on a tree nobody described.
+const missingPathHead = declaringBranch('feat/17-missing-path', 'missing-path', 9, {
+  tests: ['checks/pin.mts', 'checks/typo.mts'],
+  command: 'node checks/pin.mts',
+});
+r = declRun('feat/17-missing-path', missingPathHead);
+check(
+  'a declared test path the head does not have is cannot-run naming it, not a deletion replayed on the base',
+  r.status === 1 && /cannot-run/.test(r.out) && /checks\/typo\.mts/.test(r.out),
+  r.out,
+);
+
+// The declaration is written by the implementer, and `join(tmp, file)` follows
+// wherever it points: a `..` entry reads and removes outside the temporary
+// worktree. Both shapes are refused before any file is written or removed.
+const escapingHead = declaringBranch('feat/18-escaping-path', 'escaping-path', 10, {
+  tests: ['checks/pin.mts', '../negcontrol-escape-probe-7f3a.txt'],
+  command: 'node checks/pin.mts',
+});
+r = declRun('feat/18-escaping-path', escapingHead);
+check(
+  'a declared path that escapes the repository root once normalised is cannot-run naming it',
+  r.status === 1 && /cannot-run/.test(r.out) && /negcontrol-escape-probe-7f3a/.test(r.out),
+  r.out,
+);
+
+const absoluteHead = declaringBranch('feat/19-absolute-path', 'absolute-path', 11, {
+  tests: ['checks/pin.mts', '/negcontrol-absolute-probe-7f3a.txt'],
+  command: 'node checks/pin.mts',
+});
+r = declRun('feat/19-absolute-path', absoluteHead);
+check(
+  'a declared absolute path is cannot-run naming it',
+  r.status === 1 && /cannot-run/.test(r.out) && /negcontrol-absolute-probe-7f3a/.test(r.out),
+  r.out,
+);
+
+// The two shapes the reader already refused and nothing pinned: a declaration
+// with no `tests` array, and one whose `command` is not a non-empty string.
+const noTestsKeyHead = declaringBranch('feat/20-no-tests-key', 'no-tests-key', 12, {
+  command: 'node checks/pin.mts',
+});
+r = declRun('feat/20-no-tests-key', noTestsKeyHead);
+// The cause sentence, not the bare word: `tests` and `command` both occur in
+// these declarations' own slugs, so pinning either one alone would pass on
+// any `cannot-run` at all and discriminate nothing.
+check(
+  'a declaration with no `tests` array is cannot-run, and says that is why',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/no-tests-key\.json/.test(r.out)
+    && /has no `"tests"` array of file paths/.test(r.out),
+  r.out,
+);
+
+const badCommandHead = declaringBranch('feat/21-bad-command', 'bad-command', 13, {
+  tests: ['checks/pin.mts'],
+  command: 42,
+});
+r = declRun('feat/21-bad-command', badCommandHead);
+check(
+  'a declaration whose `command` is not a non-empty string is cannot-run, and says that is why',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/bad-command\.json/.test(r.out)
+    && /has a `"command"` that is not a non-empty string/.test(r.out),
+  r.out,
+);
+
+// Last in this repository: the blob is removed from the object store, so
+// `git show` fails for a reason that is not "the file is absent at head".
+// Presence has to come from the tree (`git ls-tree`), because a non-zero
+// `git show` read alike for a corrupt object, an unreadable head and a branch
+// that simply declares nothing — and the last of the three fell back to the
+// diff's globs.
+const unreadableHead = declaringBranch('feat/22-unreadable', 'unreadable', 14, {
+  tests: ['checks/pin.mts'],
+  command: 'node checks/pin.mts',
+});
+const blob = git(['rev-parse', `${unreadableHead}:proof/unreadable.json`], cmdRepo);
+rmSync(join(cmdRepo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)), { force: true });
+r = declRun('feat/22-unreadable', unreadableHead);
+check(
+  'a declaration present at head that cannot be read is cannot-run, not a fallback to the diff globs',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/unreadable\.json/.test(r.out),
   r.out,
 );
 

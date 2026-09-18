@@ -29,7 +29,11 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
 4. Write the failing test. Commit `test(red): <what it covers>` — the convention that
    keeps the red test visible in history. `negative-control` reads the PR's diff, not
    the commit: the changed test files are copied onto a checkout of the base and the
-   suite must fail there, so the PR's diff must add or change a test file. One
+   suite must fail there, so the PR's diff must add or change a test file — unless the
+   branch declares `proof/<slug>.json`, which **replaces** the diff's test files, and the
+   detected command when it names one (`proof/README.md`). A declaration the check cannot
+   read, or that names a path the head does not have or a path outside the checkout, is
+   `cannot-run`: it never falls back to the diff's globs. One
    exception, and it is the only thing it reads commits for: when that red is
    *structural* (a missing module or export, a syntax error), the check needs a
    `test(red):` commit in `base..head` touching one of the overlaid test files to

@@ -7,8 +7,9 @@
 // requiring that second run to fail. Outcomes:
 //   skipped      every file the PR changes sits in a skipped path class
 //                (SKIP_PATH_GLOBS below, extended by AGENTIC_SKIP_GLOBS) —
-//                docs, workflows, templates and root Markdown owe no
-//                negative control. One path is carved out of every class,
+//                docs, workflows, templates, Markdown anywhere in the tree
+//                and session configuration owe no negative
+//                control. One path is carved out of every class,
 //                AGENTIC_SKIP_GLOBS included: NEVER_SKIP_GLOBS, the gate's
 //                own code in an adopting repository
 //   pass         the baseline was green and the overlaid run failed — the tests bite
@@ -24,10 +25,18 @@
 //                a declaration's `tests` names it — the same two routes that
 //                let the fix prove itself in the PR that makes it
 //   no-tests     the diff adds or changes no test files
-//   cannot-run   the test command could not be found or detected. When
-//                nothing was detected, the detail names the escape a
+//   cannot-run   the test command could not be found or detected, or the
+//                branch's `proof/<slug>.json` could not be read as written.
+//                When nothing was detected, the detail names the escape a
 //                repository has whatever its stack: a `Makefile` with a
-//                `test:` target, which ci/lib/detect.mts reads first
+//                `test:` target, which ci/lib/detect.mts reads first. The
+//                declaration's causes, each naming the path it rejected:
+//                it does not parse, it is not a JSON object, it has no
+//                `"tests"` array, its `"command"` is not a non-empty string,
+//                a declared path is absolute or escapes the repository root
+//                once normalised, a declared path is absent from the head
+//                commit, or the declaration exists at head and its blob
+//                cannot be read
 //   inconclusive the baseline itself failed, before the overlay — a base that
 //                cannot run its own tests makes the negative control unable
 //                to discriminate anything
@@ -55,8 +64,10 @@
 // for one release — but only to print a `note:` line saying they no longer
 // skip on their own, and to name the label in a skip the path class already
 // decided. AGENTIC_SKIP_GLOBS (comma-separated, env only, no config file)
-// adds path classes; `*.md` matches root-level Markdown only, as `*` never
-// crosses a `/` (ci/lib/globs.mts). NEVER_SKIP_GLOBS is the one carve-out no
+// adds path classes; `*` never crosses a `/` (ci/lib/globs.mts), so Markdown
+// anywhere in the tree needs `**/*.md`, not `*.md` alone — a card under
+// `skills/` or `agents/` is Markdown just as much as a root `README.md`.
+// NEVER_SKIP_GLOBS is the one carve-out no
 // class may override: `scripts/init.mts` copies this repository's `ci/` into
 // an adopting repository's `.github/scripts/agentic/`, so the `.github/**`
 // class would otherwise let a PR rewrite the gate's own code under the gate's
@@ -78,14 +89,30 @@
 // command for both runs. It is read from the head *commit*, never from an
 // issue or PR body (invariant 9): the slug comes from the branch, and the
 // only thing an issue carries is a `Declaration:` line that `issue-lint`
-// checks the shape of. A declaration that does not parse, or names no test,
-// is `cannot-run` — a broken declaration must not silently narrow the
-// control. Without a declaration nothing changes, including the path-class
-// skip, which is decided before the declaration is read.
+// checks the shape of.
+//
+// The declaration fails closed. Presence is decided from the head *tree*
+// (`git ls-tree`), never from the exit status of `git show`: only "absent
+// from the head commit" means "this branch declares nothing", and every
+// other failure — a corrupt object, an unreadable head, a `git` that cannot
+// run — is `cannot-run`. A declaration that does not parse, names no test,
+// carries a `command` that is not a non-empty string, or names a path that
+// is absolute, escapes the repository root once normalised, or is absent at
+// head, is `cannot-run` too, named path and all, before any worktree is
+// made. A broken declaration must not silently narrow the control: a fall
+// back to the detected globs would report "we could not verify this" as
+// "this passed", which is the one thing this check exists to prevent.
+// Without a declaration nothing changes, including the path-class skip,
+// which is decided before the declaration is read.
+//
+// Both runs — the baseline and the overlaid one — happen in the base
+// worktree, so a declared `command` is only ever executed against the base;
+// that the same command passes at head is the repository's own test check's
+// job, not this one's (`proof/README.md`).
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { parseArgs } from './lib/args.mts';
 import { detectCommands } from './lib/detect.mts';
 import { matchesAny } from './lib/globs.mts';
@@ -95,10 +122,13 @@ import { appendSummary } from './lib/summary.mts';
 // skip the path class already decided. They never skip on their own: the
 // implementer applies its own PR's labels.
 const LEGACY_SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra', 'type:refactor', 'type:spec'];
-// The primary skip. `*.md` is root-level Markdown only (`*` never crosses a
-// `/`); a nested Markdown file is skipped through `docs/**` or by adding the
-// class to AGENTIC_SKIP_GLOBS.
-const SKIP_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '*.md'];
+// The primary skip. Markdown is a class wherever it lives: `*` never crosses
+// a `/`, so `*.md` alone covered the root only and a pull request touching
+// nothing but `skills/x/SKILL.md` or `agents/y.md` failed as `no-tests`
+// although there was nothing to test. `.claude/**` is session configuration,
+// which no test covers either. Both root forms are kept alongside `**/*.md`:
+// the list is read by people as well as by `matchesAny`.
+const SKIP_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
 // The carve-out from every skipped class, AGENTIC_SKIP_GLOBS included.
 // `scripts/init.mts` copies this repository's `ci/` — this file among them —
 // into an adopting repository's `.github/scripts/agentic/`, which `.github/**`
@@ -223,19 +253,56 @@ function branchSlug(ref: string): string | null {
   return m ? m[1] : null;
 }
 
+type Presence = 'present' | 'absent' | 'unresolvable';
+
+/**
+ * Whether `path` is in the head *commit*, answered from the tree rather than
+ * from the exit status of `git show`.
+ *
+ * `git show <head>:<path>` fails identically for a path the commit does not
+ * have, for a blob whose object is missing or corrupt, and for a `git` that
+ * cannot run at all, so its status alone cannot tell "this branch declares
+ * nothing" from "we could not read what it declares" — and reading the
+ * second as the first is the silent fallback this check exists to prevent.
+ * `git ls-tree` answers from the tree: exit 0 with the path on stdout when
+ * the commit has it, exit 0 and empty stdout when it does not, and non-zero
+ * only when the question itself could not be asked — a path outside the
+ * repository, or a head that will not resolve.
+ */
+function pathAtHead(path: string): { presence: Presence; error: string } {
+  const r = spawnSync('git', ['ls-tree', '--name-only', head, '--', path], { cwd: root, encoding: 'utf8' });
+  if (r.status !== 0) {
+    return { presence: 'unresolvable', error: (r.stderr ?? '').trim() || r.error?.message || `git ls-tree exited ${r.status}` };
+  }
+  return { presence: (r.stdout ?? '').trim() === '' ? 'absent' : 'present', error: '' };
+}
+
+/** The sentence every rejected declaration ends with. */
+const brokenDeclaration = (path: string, why: string): never =>
+  finish('cannot-run', `\`${path}\` ${why}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`);
+
 /**
  * `proof/<slug>.json` as it stands at head, or `null` when the branch
  * declares nothing. Never reads the working tree: the file is taken from the
- * head commit, so the check does not depend on what is checked out. An
- * unusable declaration exits `cannot-run` rather than falling back to the
- * globs — a declaration that is present is the contract.
+ * head commit, so the check does not depend on what is checked out. Only
+ * "absent from the head tree" is "declares nothing"; a declaration that is
+ * present and unusable — unreadable, unparsable, or not the shape — exits
+ * `cannot-run` rather than falling back to the globs, because a declaration
+ * that is present is the contract.
  */
 function readDeclaration(slug: string): Declaration | null {
   const path = `proof/${slug}.json`;
-  const show = spawnSync('git', ['show', `${head}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  if (show.status !== 0) return null;
+  const bad = (why: string): never => brokenDeclaration(path, why);
 
-  const bad = (why: string): never => finish('cannot-run', `\`${path}\` ${why}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`);
+  const at = pathAtHead(path);
+  if (at.presence === 'absent') return null; // this branch declares nothing
+  if (at.presence === 'unresolvable') bad(`could not be looked up in the head commit (${at.error})`);
+
+  const show = spawnSync('git', ['show', `${head}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  if (show.status !== 0) {
+    bad(`is in the head commit and could not be read (${(show.stderr ?? '').trim() || show.error?.message || `git show exited ${show.status}`})`);
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(show.stdout);
@@ -260,12 +327,48 @@ function readDeclaration(slug: string): Declaration | null {
   };
 }
 
+/**
+ * A copy of `decl` whose `tests` are normalised POSIX paths, or `cannot-run`
+ * naming the first path that is not one.
+ *
+ * The declaration is written by the implementer and the overlay follows it
+ * literally: `join(tmp, file)` with an absolute or `..` path reads and
+ * removes outside the temporary worktree, and a path the head does not have
+ * used to be replayed as "deleted in the PR — delete it on the base too",
+ * which turns a typo into an unrelated base file removed and a control run on
+ * a tree nobody described. Both are refused here, before the worktree exists
+ * and therefore before anything can be written or removed.
+ */
+function validateDeclaredPaths(decl: Declaration): Declaration {
+  const bad = (why: string): never => brokenDeclaration(decl.path, why);
+  const tests = decl.tests.map((file) => {
+    const slashed = file.replace(/\\/g, '/');
+    if (slashed.startsWith('/') || /^[A-Za-z]:/.test(slashed)) {
+      bad(`names the absolute path \`${file}\`; a declared test path is relative to the repository root`);
+    }
+    const normalised = posix.normalize(slashed);
+    if (normalised === '..' || normalised.startsWith('../')) {
+      bad(`names \`${file}\`, which escapes the repository root once normalised (\`${normalised}\`)`);
+    }
+    const at = pathAtHead(normalised);
+    if (at.presence === 'unresolvable') {
+      bad(`names \`${file}\`, which could not be looked up in the head commit (${at.error})`);
+    }
+    if (at.presence === 'absent') {
+      bad(`names \`${file}\`, which the head commit does not have; a declared path that is missing at head is a typo, not a file the pull request deletes`);
+    }
+    return normalised;
+  });
+  return { ...decl, tests };
+}
+
 const branchRef = typeof args.branch === 'string' ? args.branch.trim() : String(event?.pull_request?.head?.ref ?? '').trim();
 const slug = branchRef ? branchSlug(branchRef) : null;
 if (branchRef && !slug) {
   console.log(`note: \`${branchRef}\` is not a \`<type>/<n>-<slug>\` branch, so no proof declaration is looked up for it.`);
 }
-const declaration = slug ? readDeclaration(slug) : null;
+const declared = slug ? readDeclaration(slug) : null;
+const declaration = declared ? validateDeclaredPaths(declared) : null;
 if (declaration) {
   console.log(`note: \`${declaration.path}\` declares this branch's proof; the overlay is the ${declaration.tests.length} file(s) it names${declaration.command ? ` and its command \`${declaration.command}\`` : ''}.`);
 }
@@ -274,6 +377,11 @@ const extraGlobs = csv(process.env.AGENTIC_TEST_GLOBS);
 const testFiles = declaration
   ? [...new Set([...declaration.tests, declaration.path])]
   : changed.filter((f) => matchesAny(f, [...TEST_FILE_GLOBS, ...extraGlobs]));
+// Which of the overlaid files the declaration vouched for. A path from the
+// diff that is gone at head was deleted by the pull request; a declared path
+// was proved to be at head above, so the same failure there means the content
+// could not be read — two different facts that must not share a branch.
+const declaredPaths = new Set(declaration ? [...declaration.tests, declaration.path] : []);
 if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), declare the proof in `proof/<slug>.json`, or add the path class to AGENTIC_SKIP_GLOBS.');
 
 const commands = detectCommands(root);
@@ -323,17 +431,29 @@ function redCommitTouchesTests(): boolean {
   });
 }
 
-function overlayTestFiles(tmp: string): void {
+/**
+ * Copies every overlaid file from head onto the base worktree. Returns a
+ * `cannot-run` detail instead of overlaying when a *declared* path cannot be
+ * read — `validateDeclaredPaths` proved that path is in the head tree, so a
+ * failure here is an unreadable blob, not a deletion. Only a path that came
+ * from the diff may be replayed as a deletion.
+ */
+function overlayTestFiles(tmp: string): string | null {
   for (const file of testFiles) {
     const show = spawnSync('git', ['show', `${head}:${file}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     const target = join(tmp, file);
     if (show.status !== 0) {
-      rmSync(target, { force: true }); // deleted in the PR: delete on the base too
+      if (declaredPaths.has(file)) {
+        const why = (show.stderr ?? '').trim() || show.error?.message || `git show exited ${show.status}`;
+        return `\`${declaration?.path}\` names \`${file}\`, which is in the head commit and whose content could not be read (${why}). A declared path is never replayed as a deletion on the base.`;
+      }
+      rmSync(target, { force: true }); // in the diff and gone at head: deleted in the PR, delete on the base too
       continue;
     }
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, show.stdout);
   }
+  return null;
 }
 
 /**
@@ -362,7 +482,8 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
       };
     }
 
-    overlayTestFiles(tmp);
+    const overlayError = overlayTestFiles(tmp);
+    if (overlayError) return { outcome: 'cannot-run', detail: overlayError };
     const overlaid = runTests(tmp);
     console.log(`--- \`${testCommand}\` on base ${base.slice(0, 7)} with ${testFiles.length} test file(s) from head ---\n${tail(overlaid.output)}\n---`);
 

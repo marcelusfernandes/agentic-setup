@@ -34,7 +34,11 @@ of it. What is left is below.
    jams the gate. Export a stub that throws (`throw new Error('not implemented')`) so the red
    is a runtime red. Commit as `test(red): …` — `negative-control` reads the PR's diff,
    not any commit, and copies the changed test files onto the base to prove they fail
-   there. It reads the commits for one thing only, and this is the case where the
+   there. Unless the branch declares its proof: when `proof/<slug>.json` exists in the
+   head commit it **replaces** the diff's test files — the overlay is exactly the files
+   it names, and its `command` replaces the detected test command — and a declaration
+   the check cannot read, or that names a path the head does not have or a path outside
+   the checkout, is `cannot-run`, never a quiet fall back to the diff. It reads the commits for one thing only, and this is the case where the
    convention becomes mechanical: when the red on the base is *structural* (a missing
    module or export, a syntax error) the check requires a `test(red):` commit in
    `base..head` touching one of those overlaid test files — that commit is the vouch for

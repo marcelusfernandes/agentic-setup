@@ -11,7 +11,8 @@
 # the same toolchain setup your test workflow uses where marked, and set
 # AGENTIC_TEST_CMD if detection (package.json / pyproject / go.mod /
 # Cargo.toml / Makefile) does not name the right command. It skips a PR whose
-# whole diff is docs/**, .github/**, templates/** or root Markdown; set the
+# whole diff is docs/**, .github/**, templates/**, .claude/** or Markdown
+# anywhere in the tree (**/*.md, not just root-level *.md); set the
 # repository variable AGENTIC_SKIP_GLOBS (comma-separated globs) to add a
 # path class of your own. It is empty when the variable is unset.
 #
