@@ -795,4 +795,63 @@ check('the second token of a bare comma grant no longer widens the check', rGran
 const rGrantOnly = scope(files, file('issue-grant-only.md', '## Files\n- authorised: `src/a.ts`\n'), prPlain);
 check('an issue whose ## Files carries only a grant declares no globs of its own', rGrantOnly.status === 1 && /declare no globs/.test(rGrantOnly.out), rGrantOnly.out);
 
+// #316: a grant line carrying more than one backticked span is refused, not
+// silently granted. On the base every span on the line was a granted glob, so
+// a justification that quoted a path in backticks widened the audited scope
+// through a line no one read as a grant of that path — an over-grant, which
+// fails *open*. Refusing is the remedy rather than taking the first span:
+// narrowing would trade the silent over-grant for a silent under-grant.
+// The four shapes of AC4 are below, each with its own outcome.
+const findMulti = scopeLib.findMultiGlobGrantLines;
+const pAGpr = (b: string) => JSON.stringify(scopeLib.parseAuthorisedGlobs(b));
+const oneSpan = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n';
+const twoSpans = '## Files\n- `lib/**`\n- authorised: `src/a.ts` (needed alongside `src/lib/b.ts`)\n';
+const spanPlusProse = '## Files\n- `lib/**`\n- authorised: `src/a.ts` — see the issue comment\n';
+// The justification on its own continuation line: indented, not a bullet, and
+// carrying a backtick of its own. No parser reads that line, which is why the
+// card's "no backticks of its own" is advice rather than a parser rule.
+const spanPlusContinuation = '## Files\n- `lib/**`\n- authorised: `src/a.ts`\n  (orchestrator: AC3 imports it from `src/lib/b.ts`)\n';
+
+check('shape 1 — one span grants that one glob', pAG(oneSpan) === '["src/a.ts"]', pAG(oneSpan));
+check(
+  'shape 2 — two spans grant nothing at all, in both grant parsers',
+  pAG(twoSpans) === '[]' && pAGpr(twoSpans) === '[]',
+  `${pAG(twoSpans)} / ${pAGpr(twoSpans)}`,
+);
+check('shape 3 — a span plus an unbackticked justification on the same line grants the span', pAG(spanPlusProse) === '["src/a.ts"]', pAG(spanPlusProse));
+check(
+  'shape 4 — a justification on a continuation line grants the span and nothing from that line',
+  pAG(spanPlusContinuation) === '["src/a.ts"]' && pIG(spanPlusContinuation) === '["lib/**"]',
+  `${pAG(spanPlusContinuation)} / ${pIG(spanPlusContinuation)}`,
+);
+check(
+  'findMultiGlobGrantLines names the refused line and every span on it',
+  findMulti !== undefined &&
+    JSON.stringify(findMulti(twoSpans)) === JSON.stringify([{ line: 'authorised: `src/a.ts` (needed alongside `src/lib/b.ts`)', spans: ['src/a.ts', 'src/lib/b.ts'] }]),
+  findMulti ? JSON.stringify(findMulti(twoSpans)) : 'findMultiGlobGrantLines is not exported',
+);
+check(
+  'findMultiGlobGrantLines refuses none of the three shapes that carry at most one span',
+  findMulti !== undefined && [oneSpan, spanPlusProse, spanPlusContinuation].every((b) => findMulti(b).length === 0),
+  findMulti ? JSON.stringify([oneSpan, spanPlusProse, spanPlusContinuation].map((b) => findMulti(b))) : 'findMultiGlobGrantLines is not exported',
+);
+// The two grant parsers have diverged before (#231). They read a grant
+// through one function, so this pins them to the same answer on every shape:
+// a change that refuses in one parser and not the other fails here.
+check(
+  'the issue and PR grant parsers agree on every one of the four shapes',
+  [oneSpan, twoSpans, spanPlusProse, spanPlusContinuation].every((b) => pAG(b) === pAGpr(b)),
+  JSON.stringify([oneSpan, twoSpans, spanPlusProse, spanPlusContinuation].map((b) => [pAG(b), pAGpr(b)])),
+);
+// End to end through the real script: the refused line widens nothing, so
+// both files are violations and neither span is reported as authorised.
+const rTwoSpans = scope(files, file('issue-grant-two-spans.md', twoSpans), prPlain);
+check(
+  'scope grants nothing from a two-span grant line: both files are violations and none is named as authorised',
+  rTwoSpans.status === 1 &&
+    JSON.stringify(scopeJson(rTwoSpans.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) &&
+    !/Authorised by #1:/.test(rTwoSpans.out),
+  rTwoSpans.out,
+);
+
 finish();

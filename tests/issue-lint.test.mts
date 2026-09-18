@@ -636,6 +636,50 @@ const sequencedGrant = lint(1242, issueBody({ files: GRANT_FILES, deps: '## Depe
 const sequencedGrantOut = parse(sequencedGrant.out);
 check('a grant overlap is sequenced, not a failure, when a Blocked by: orders the two', sequencedGrant.status === 0 && sequencedGrantOut?.ok === true && (sequencedGrantOut?.sequenced ?? []).some((s: any) => s?.issue === 245 && s?.files?.includes('scripts/reconcile.mts')), sequencedGrant.out);
 
+// --- #316: a grant line carrying more than one backticked span is refused --
+// The refusal has to reach the writer where they write, which is the issue at
+// dispatch: `scripts/claim.mts` runs this lint before it pushes the lock
+// branch, and the `issue-lint` workflow reruns it on every `edited`, so a
+// grant added after dispatch is refused too. Four shapes, four outcomes.
+const ONE_SPAN = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts`\n';
+const TWO_SPANS = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts` (needed alongside `package.json`)\n';
+const SPAN_PLUS_PROSE = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts` — see the issue comment\n';
+const SPAN_PLUS_CONTINUATION = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts`\n  (orchestrator: AC1 imports it from `package.json`)\n';
+const grantsOf = (out: string): string[] => (parse(out)?.globs ?? []).filter((g: any) => g.grant === true).map((g: any) => g.glob);
+
+const shapeOne = lint(3161, issueBody({ files: ONE_SPAN }));
+check('shape 1 — one span: the issue passes and the span is the one grant', shapeOne.status === 0 && JSON.stringify(grantsOf(shapeOne.out)) === JSON.stringify(['scripts/reconcile.mts']), shapeOne.out);
+
+const shapeTwo = lint(3162, issueBody({ files: TWO_SPANS }));
+const shapeTwoOut = parse(shapeTwo.out);
+const shapeTwoRefusal = (shapeTwoOut?.failures ?? []).filter((f: any) => typeof f === 'string' && /authorised:/.test(f) && /more than one|carries 2/.test(f));
+check('shape 2 — two spans: the issue fails at dispatch instead of granting both', shapeTwo.status === 1 && shapeTwoOut?.ok === false, shapeTwo.out);
+check(
+  'shape 2 — the refusal names the line and both spans',
+  shapeTwoRefusal.length === 1 &&
+    shapeTwoRefusal[0].includes('authorised: `scripts/reconcile.mts` (needed alongside `package.json`)') &&
+    shapeTwoRefusal[0].includes('scripts/reconcile.mts') &&
+    shapeTwoRefusal[0].includes('package.json'),
+  shapeTwo.out,
+);
+check('shape 2 — neither span is reported as a grant', JSON.stringify(grantsOf(shapeTwo.out)) === JSON.stringify([]), shapeTwo.out);
+const shapeTwoMd = lint(3163, issueBody({ files: TWO_SPANS }), { markdown: true });
+check('shape 2 — the --markdown comment carries the refusal too', shapeTwoMd.status === 1 && /FAIL/.test(shapeTwoMd.out) && /needed alongside/.test(shapeTwoMd.out), shapeTwoMd.out);
+
+const shapeThree = lint(3164, issueBody({ files: SPAN_PLUS_PROSE }));
+check(
+  'shape 3 — a span plus an unbackticked justification on the same line passes, granting the span alone',
+  shapeThree.status === 0 && JSON.stringify(grantsOf(shapeThree.out)) === JSON.stringify(['scripts/reconcile.mts']),
+  shapeThree.out,
+);
+
+const shapeFour = lint(3165, issueBody({ files: SPAN_PLUS_CONTINUATION }));
+check(
+  'shape 4 — a justification on a continuation line passes, and nothing on that line is granted',
+  shapeFour.status === 0 && JSON.stringify(grantsOf(shapeFour.out)) === JSON.stringify(['scripts/reconcile.mts']),
+  shapeFour.out,
+);
+
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);
