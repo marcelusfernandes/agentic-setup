@@ -27,8 +27,8 @@ What is in force, as `ci/lib/scope.mts` implements it:
   which reads `parseIssueGlobs` alone (`:58`, `:184`, `:367`), now sees an issue's
   *declared* scope and not the files it was granted — so its AC3 disjointness set stops
   treating a grant as scope.
-- **The docs that carry it.** `docs/workflow.md:147` (the `## Files` paragraph) and
-  `skills/issue-and-pr/SKILL.md:86` (the card's parser rules) state the exception at the
+- **The docs that carry it.** `docs/workflow.md:169` (the `## Files` paragraph) and
+  `skills/issue-and-pr/SKILL.md:98` (the card's parser rules) state the exception at the
   same place they state the bullets-only rule.
 
 Unchanged by this item: a grant still counts only in the body of an issue the PR closes
@@ -123,7 +123,7 @@ and quotes anything grants what it quotes:
 ```
 
 Both parsers have always done this identically, so it is not a divergence and this item
-does not change it; `docs/workflow.md:157` now names the hazard and prescribes the
+does not change it; `docs/workflow.md:179` now names the hazard and prescribes the
 justification on the next line, indented. That is a document where a refusal belongs.
 
 The rate is the argument for enforcing it, and the rate is measurable. GitHub retains an
@@ -135,11 +135,20 @@ written by the orchestrator; the six fall on the day this very defect class was 
 fixed, which is the day of maximum awareness of it.
 
 **One of the six widened a real path; the other five produced dead globs.** #168's line
-granted `AGENTS.md` and also `tests/map-pin.test.mts` — a tracked file, silently added to
-what that pull request could touch. The remaining five quoted `gh`, `--rules` twice,
-`--ruleset-name` and `## Files`, none of which matches any tracked file, and #203's
-seventh quoted `parent:type`, likewise nothing. So the hazard is demonstrated rather than
-theoretical, at one in six, and its usual form is noise in the summary rather than harm.
+carried three spans, not two — `AGENTS.md`, the file it meant to grant;
+`tests/map-pin.test.mts`, a tracked file silently added to what that pull request could
+touch; and `scripts/`, which reads like a path and matches nothing, because
+`ci/lib/globs.mts` needs the recursive `scripts/**` to match anything under a directory.
+The other five lines quoted `gh`, `--rules` twice, `--ruleset-name` and `## Files`, none
+of which matches any tracked file, and #203's seventh quoted `parent:type`, likewise
+nothing. So the hazard is demonstrated rather than theoretical, at one line in six, and
+its usual form is noise in the summary rather than harm.
+
+The two halves are deliberately not the same shape. The harm is one in six; the remedy
+proposed below triggers on **every** multi-span line, because the check can see the shape
+of a grant line and cannot see whether an extra span happens to name a tracked file
+today. A span that matches nothing this week matches something the week the file is
+added.
 
 What makes a document the wrong guard is not that the evidence is unavailable — it is
 that nobody runs an edit-history audit as a matter of course. The six were found because
