@@ -159,7 +159,8 @@ correctly under load: `scripts/claim.mts` (lock), `ci/issue-lint.mts` (dispatch 
 once `issue-lint` reports `ok: true`), `scripts/land.mts` (merge) and
 `scripts/close-milestone.mts` (close a milestone against its closeout — the last
 hand-typed `gh api -X PATCH … -f state=closed` left on this route, replaced by #172).
-Both of the last two were written to satisfy this item. The model still
+`create-subissue.mts` and `close-milestone.mts` were both written to satisfy this item, and
+neither was in its original list. The model still
 plans and decides which issue to pick, which PR to send back, whether to wait; the script
 verifies the precondition and performs the write, and prints what it refused and why
 instead of a stack trace or a silent no-op.
