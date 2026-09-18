@@ -427,6 +427,41 @@ check(
   'inline marker regex',
 );
 
+// --- H2: the --pr block is a module of its own, and git names its buffer -----
+// `scripts/adopt.mts` held the whole of `--pr` and stood at 793 of its 800
+// lines, so the next mode had nowhere to go (#302).
+check(
+  'the --pr command is lifted out of the CLI into a module of its own',
+  sourceOf('scripts/lib/adopt/pr-run.mts').length > 0,
+  'scripts/lib/adopt/pr-run.mts',
+);
+
+// Every `git` the adoption steps spawn goes through one runner with one
+// explicit `maxBuffer`. The default is 1 MB, which the `ls-tree` of a large
+// repository outgrows: `spawnSync` then answers with status 0, an `ENOBUFS`
+// error and *truncated* output, so reading the status alone reads a partial
+// answer as a whole one — and a path that fell off the end is planned as one
+// the base does not carry. A pure function of the adoption libraries, imported
+// and called directly, as `resolvePlanIssue` already is.
+type GitModule = {
+  GIT_MAX_BUFFER: number;
+  runGit: (cwd: string, args: string[], options?: { maxBuffer?: number }) => { status: number; stdout: string; stderr: string };
+};
+let gitMod: GitModule | null = null;
+try {
+  gitMod = (await import('../scripts/lib/adopt/git.mts')) as unknown as GitModule;
+} catch {
+  gitMod = null;
+}
+check('the adoption git runner names one explicit maxBuffer', gitMod?.GIT_MAX_BUFFER === 64 * 1024 * 1024, String(gitMod?.GIT_MAX_BUFFER));
+const overflow = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
+check(
+  'a git answer that outgrows the buffer reports a named reason and never an empty detail',
+  overflow !== undefined && overflow.status !== 0 && /ENOBUFS/.test(overflow.stderr),
+  JSON.stringify(overflow),
+);
+check('and it hands back no output at all, rather than a truncated answer', overflow?.stdout === '', JSON.stringify(overflow?.stdout));
+
 // --- I: `record:stale` is one of the gap names, not a name beside them -------
 const gapNames = sourceOf('scripts/lib/adopt/inventory.mts').match(/const GAP_NAMES = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
 check('the inventory names the gaps at all (the source was read)', gapNames.includes('ruleset:absent'), gapNames || '(no GAP_NAMES)');

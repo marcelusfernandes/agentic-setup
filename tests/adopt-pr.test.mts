@@ -724,34 +724,11 @@ check(
 );
 
 // --- K: the residuals the two reviews of #167 left behind (#302) ------------
-// K1. the `--pr` block is a module of its own, so the CLI has room to grow.
-check(
-  'the --pr command is lifted out of the CLI into a module of its own',
-  existsSync(join(ROOT, 'scripts', 'lib', 'adopt', 'pr-run.mts')),
-  'scripts/lib/adopt/pr-run.mts',
-);
-
-// K2. every `git` this tool spawns names its own buffer, and an answer that
-// outgrows it is a named reason rather than the empty detail a `ls-tree` of a
-// large repository used to fail closed with.
-type GitModule = {
-  GIT_MAX_BUFFER: number;
-  runGit: (cwd: string, args: string[], options?: { maxBuffer?: number }) => { status: number; stdout: string; stderr: string };
-};
-let gitMod: GitModule | null = null;
-try {
-  gitMod = (await import('../scripts/lib/adopt/git.mts')) as unknown as GitModule;
-} catch {
-  gitMod = null;
-}
-check('the git runner names one explicit maxBuffer', gitMod?.GIT_MAX_BUFFER === 64 * 1024 * 1024, String(gitMod?.GIT_MAX_BUFFER));
-const overflow = gitMod?.runGit(ROOT, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { maxBuffer: 8 });
-check(
-  'a git answer that outgrows the buffer reports a named reason and never an empty detail',
-  overflow !== undefined && overflow.status !== 0 && /ENOBUFS/.test(overflow.stderr),
-  JSON.stringify(overflow),
-);
-
+// The two source-level cases of this group — that `--pr` is a module of its
+// own, and that every adoption `git` names its own buffer — are in
+// `tests/adopt.test.mts`, which has room for them; this file is 74 lines from
+// the cap the criterion itself names.
+//
 // K3. the two checks the adoption pull request cannot pass, stated on it the
 // way `skills/init/SKILL.md` states them for the bootstrap pull request.
 const bodyReds = mod && p ? mod.renderBody(p, { issue: PLAN_ISSUE, defaultBranch: 'main', record: recordValue }) : '';
