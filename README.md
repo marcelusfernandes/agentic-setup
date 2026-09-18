@@ -12,8 +12,8 @@ reconciles labels after durable transitions; evidence and explicit human permiss
 remain authoritative.
 
 The two routes do not share a runtime. Neither installer runs the other, they coexist in
-one repository, and one coordinator owns a given task at a time — a rule the two routes now
-enforce on each other instead of asking for it. Each publishes a branch as that task's lock,
+one repository, and one coordinator owns an objective at a time — a rule the two routes now
+enforce on each other instead of asking for it. Each publishes a branch as a task's lock,
 `<type>/<n>-<slug>` on the Claude route and `codex/task-<n>` on the Codex route, and each
 reads **both** shapes on the remote before it claims: `scripts/claim.mts` and the Codex
 helper's `claim` report `{ held }` and push nothing when the other's branch is already there.
@@ -262,8 +262,10 @@ its PR, it pauses that task and dependents. Convert the request into a durable c
 apply the real answer; a person then flips the originating label to `human:decided`, which
 keeps the intervention traceable without blocking. Explicit user restrictions still apply.
 
-Automatic merge needs that standing permission on both routes, and then the gate of the
-route doing the merging. The two gates are not the same, and neither is "the repository's":
+Automatic merge needs that standing permission — the Codex helper reads it from the
+objective, and on the Claude route it is the person who starts the orchestrator — and then
+the gate of the route doing the merging. The two gates are not the same, and neither is
+"the repository's":
 
 **Claude route.** `scripts/land.mts` is the only merge path, and every line it prints — a
 refusal, the merge, a queue — names the review mode it ran under. The default mode is

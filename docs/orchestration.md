@@ -395,11 +395,13 @@ split is read as pending.
   self-sufficient.
 - What limits parallelism is file conflict, not the subagent ceiling. Four issues with
   disjoint globs is the practical number.
-- The implementer does not wait on CI. Polling CI burns tokens; the reviewer follows the
-  checks and comments its verdict back, and the orchestrator does the rest of the
-  waiting — it watches the checks (step 4), then, after queuing the merge, polls
-  `reconcile.mts` at a fixed interval until the PR is actually `MERGED` (step 5) before
-  moving to the next issue. Neither wait is a tight loop.
+- The implementer does not wait on CI. Polling CI burns tokens; the reviewer returns its
+  verdict to the orchestrator, which comments it and applies the labels (step 5), and the
+  orchestrator does the rest of the waiting — it watches the checks (step 4), then, after
+  `land.mts` reports, polls `reconcile.mts` at a fixed interval until the PR is actually
+  `MERGED` (step 5) before moving to the next issue. In mode `agent` there is no queue to
+  outlast, so that poll only confirms a merge that already happened. Neither wait is a
+  tight loop.
 - **No client-side read of the check re-run window can decide a merge.** A label change
   (or a push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
   earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where
