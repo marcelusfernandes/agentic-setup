@@ -129,7 +129,11 @@ lint invocation. What CI, and `issue-lint`, will hold the issue to:
   reported as `sequenced`, not a failure).
 - **Proof** names the test command and what it covers; `negative-control` reads the PR's
   diff, not the `test(red):` commit, to decide the red — the changed test files are copied
-  onto the base and the suite must fail there. The commit subject matters in one case: a
+  onto the base and the suite must fail there. A branch may say otherwise in
+  `proof/<slug>.json`, which **replaces** the diff's test files (and the detected command
+  when it names one): the overlay is exactly what it names, no test glob is consulted, and
+  a declaration the check cannot read — or one naming a path the head does not have, or a
+  path outside the checkout — is `cannot-run`, not a fall back to the globs. The commit subject matters in one case: a
   red that is *structural* on the base (a missing module or export, a syntax error) is
   accepted only when a commit in `base..head` starting `test(red):` touches one of those
   test files; otherwise the check fails as `structural`. `issue-lint` accepts `## Validation` (the Codex route's
