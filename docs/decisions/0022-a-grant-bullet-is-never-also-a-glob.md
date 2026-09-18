@@ -148,14 +148,16 @@ harm.
 The two halves are deliberately not the same shape. The harm is one in six; the remedy
 proposed below triggers on **every** multi-span line, because the predicate that tracks
 the harm is time-varying while the predicate a check evaluates has to be stable. Whether
-an extra span names a tracked file is computable today — the lint asks exactly that
-question of an issue's declared globs, matching them against the tracked file list
-(`ci/issue-lint.mts:361`) — but the answer expires: a span that matches nothing this week
-matches something the week the file is added. `gh` is such a span: it compiles to `^gh$`,
-matches nothing today, and matches the day a file named `gh` is tracked at the root.
-`scripts/` is not one — it compiles to `^scripts/$`, and no path `git diff --name-only`
-prints ends in a slash, so it is dead permanently rather than dead for now. The shape of
-a grant line is the same every week; which of its spans are live is not.
+an extra span names a tracked file is computable today — `classifyGlob` asks exactly that
+question of every path in an issue's `## Files`, its bullet globs and its `authorised:`
+grants alike, matching each against the tracked file list (`ci/issue-lint.mts:266`, run
+over the two lists at `:291` and `:297-298`) — but the answer expires: a span that matches
+nothing this week matches something the week the file is added. `gh` is such a span: it
+compiles to `^gh$`, matches nothing today, and matches the day a file named `gh` is
+tracked at the root. `scripts/` is not one — it compiles to `^scripts/$`, and no path
+`git diff --name-only` prints ends in a slash, so it is dead permanently rather than dead
+for now. The shape of a grant line is the same every week; which of its spans are live is
+not.
 
 What makes a document the wrong guard is not that the evidence is unavailable — it is
 that nobody runs an edit-history audit as a matter of course. The six were found because
