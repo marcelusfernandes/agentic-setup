@@ -34,8 +34,10 @@ What is in force, as `ci/negative-control.mts` implements it:
   places that spell the path-class list out.
 
 Unchanged by this item: the skip is still by path class and not by the PR's own labels
-(#135), `*.md` is still root-level Markdown only, and `AGENTIC_SKIP_GLOBS` still adds
-classes freely. Only subtraction is refused.
+(#135), Markdown is still a path class of its own, and `AGENTIC_SKIP_GLOBS` still adds
+classes freely. Only subtraction is refused. (#230 later widened that Markdown class from
+the root-level `*.md` this item was written against to `**/*.md`, and added `.claude/**`;
+neither changes anything decided here.)
 
 ## Reason
 
