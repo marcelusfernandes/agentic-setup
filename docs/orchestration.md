@@ -73,21 +73,33 @@ Two roles:
    `authorised:` glob, that extra round and `human:pending` each get a line from
    `scripts/log-decision.mts <parent> --kind <k> --ref <#N> "<line>"` — see "The decision
    log" below
-   green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`
-   refuses unless the PR is OPEN and approved, then gates on the base branch's ruleset
-   when it has a `required_status_checks` rule, else on `gh pr checks <pr> --required`,
-   then queues `gh pr merge <pr> --squash --auto` — the server merges once its own rules
-   are satisfied. `Closes #N` closes the issue on merge (closed is done, nothing to
-   relabel); the repository's `delete_branch_on_merge` setting removes the branch, and
-   the now-orphaned worktree is picked up by `orphanWorktrees` on a later pass. After
-   `land.mts` reports `{ queued }`/`{ merged }`, poll `reconcile.mts` (a fixed pause
+   green checks + an approved review (or the `type:docs` label) → `scripts/land.mts <pr>`,
+   which declares its review mode before it judges any condition and names that mode on
+   every line it prints. Default `agent`: the `review:approved` label, the
+   `<!-- agentic-reviewed-sha: <oid> -->` marker equal to the head, and every required
+   check in bucket `pass`, then `gh pr merge <pr> --squash --auto --match-head-commit
+   <headRefOid>` pinned to that same head. `approved` is the opt-in that adds the server's
+   own `APPROVED` on top of all of it; `docs` is the `type:docs` exemption from the
+   review, never from the checks. `gate` names who *else* holds the line — `ruleset` when
+   the base branch's effective rules carry a `required_status_checks` rule,
+   `client-checks` otherwise — and the buckets are read in both. `Closes #N` closes the
+   issue on merge (closed is done, nothing to relabel); the repository's
+   `delete_branch_on_merge` setting removes the branch, and the now-orphaned worktree is
+   picked up by `orphanWorktrees` on a later pass. In mode `agent` nothing is left queued:
+   a merge GitHub queues instead of performing is disarmed with `gh pr merge <pr>
+   --disable-auto` and refused as `merge:not-clean`, so that mode prints `{ merged }` or a
+   refusal and nothing else; only `approved` and `docs` print `{ queued }`, and
+   `--wait [--timeout <seconds>]` bounds that queue. After `land.mts` reports `{ merged }`
+   (or `{ queued }` in those two modes), poll `reconcile.mts` (a fixed pause
    between reads, not a tight loop) until the issue drops out of `inReview`/`inProgress`/
    `resumable` entirely, then loop back to 1 — and never poll an issue you did not land:
    an entry with `foreignLock: true` drops out when the other coordinator merges it, so
    waiting on it is waiting on work this route does not own
-   `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `checks:required`,
-   or `gh-pr-view`) → read it and decide between waiting and sending the PR back; never a
-   retry with `--admin`
+   `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `head:changed` —
+   the head is not the commit the marker records, or no marker records one —
+   `gh-pr-comments`, `merge:not-mergeable`, `checks:required`, `merge:not-clean`,
+   `gh-rules` or `gh-pr-view`) → read it and decide between waiting and sending the PR
+   back; never a retry with `--admin`, which the session denies anyway
    rejected (CI or reviewer), first time → back to the implementer with the summary
    (round 2), then back to 4
    main moved and conflicts → implementer runs `git merge origin/main` (never rebase
@@ -388,16 +400,18 @@ split is read as pending.
   waiting — it watches the checks (step 4), then, after queuing the merge, polls
   `reconcile.mts` at a fixed interval until the PR is actually `MERGED` (step 5) before
   moving to the next issue. Neither wait is a tight loop.
-- **The check re-run window no longer needs a client-side read.** A label change (or a
-  push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
+- **No client-side read of the check re-run window can decide a merge.** A label change
+  (or a push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
   earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where
   `land.mts` gates on the ruleset, `gh pr merge --auto` sidesteps this by construction: it
   merges the instant GitHub's own rules are satisfied, so there is no client-side snapshot
   that can go stale between being read and the merge happening — closing by design the M1
   gap where the orchestrator relabelled an issue done on read state the server no longer
-  agreed with (`docs/decisions.md` items 11 and 13). Where it gates on `gh pr checks
-  --required` instead (no ruleset on the base branch), that read is still a snapshot taken
-  moments before `--auto` is queued.
+  agreed with (`docs/decisions.md` items 11 and 13). Since #156 `land.mts` reads the
+  buckets in *both* gates, but that read can only refuse: it never merges anything, and
+  the merge it allows is pinned with `--match-head-commit`, which the server checks itself.
+  In mode `agent` a queue GitHub arms instead of merging is disarmed and refused, so no
+  snapshot outlives the call that took it.
 - **The `SubagentStop` gate only sees a worktree when the agent was isolated into one.**
   Measured, three headless `claude --plugin-dir` runs against a disposable repository whose
   `npm test` exits 1, with a hook logging every payload (#137, comment 5715271545): a
