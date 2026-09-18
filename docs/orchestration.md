@@ -393,6 +393,28 @@ split is read as pending.
   worktree still in use is what decides whether round N+1 resumes the same agent
   (`SendMessage`, context kept) or starts from zero — delete early and the decision was
   made by accident.
+- **`isolation: worktree` makes a worktree of the session's own repository**, not of the
+  repository being orchestrated. The flag isolates an agent inside whatever checkout the
+  session was started in, so the designed mode is a session rooted in the target
+  repository: start there and every implementer's worktree is a worktree of it.
+  Orchestrating another repository from one session means the implementer creates its own
+  worktree with absolute paths (`git worktree add`), which does work —
+  `protect-worktree.mts` early-returns on a path that resolves inside neither the
+  session's checkout nor the agent's worktree, so nothing denies the write. That is a
+  repository outside the session's checkout entirely; a second worktree of the session's
+  *own* repository is still refused, as the bullet above says. Measured on the first pass
+  of this loop against a third-party repository (`docs/dogfood/2026-09-06.md`, F5).
+- **An agent that declares `memory: project` writes its memory inside its worktree.** Both
+  the implementer and the reviewer declare it (`agents/implementer.md:7`), and project
+  memory resolves against the directory the agent runs in — under `isolation: worktree`
+  that directory is the worktree, and the worktree is removed with the pass. So agent
+  memory does not survive a pass: every pass starts blank, and what round 1 learned
+  reaches round 2 only through the issue, the pull request and the branch (resuming the
+  same agent keeps its conversation, which is context and not memory). A durable memory
+  has to be given a path in the main checkout, and that path is configuration rather than
+  something an agent writes for itself — `protect-worktree.mts` denies a subagent's
+  `Edit`/`Write` that lands in the main checkout outside its own worktree (the hooks table
+  above). Measured on the headless pass (`docs/dogfood/2026-09-10.md`, L15).
 - **Shared local services are the hidden coupling.** If two worktrees point at the same
   local database, cache or dev server, one agent's reset lands under another's test run.
   Derive ports and instance names from the worktree path, and stop the instance before
