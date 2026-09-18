@@ -371,6 +371,11 @@ r = invoke(['claim', '1', '7']);
 check('claim refuses a task the other route already locked',
   r.code === 2 && r.data.held === 7 && r.data.branch === 'feat/7-locked-elsewhere'
   && !git(['ls-remote', '--heads', 'origin', 'codex/task-7'], repo), r.out);
+fixture.prs[70] = { number: 70, state: 'OPEN', headRefName: 'codex/task-7', headRefOid: implemented, baseRefName: 'main', reviewDecision: 'APPROVED', isDraft: false, isCrossRepository: false };
+fixture.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'test' }] } }, { type: 'pull_request', parameters: { required_approving_review_count: 1, dismiss_stale_reviews_on_push: true } }]; save();
+r = invoke(['land', '1', '7']); refresh();
+check('an approved PR is not landed while the other route holds the issue',
+  r.code === 1 && /another route/.test(r.out) && fixture.prs[70].state === 'OPEN', r.out);
 git(['push', '-q', 'origin', ':refs/heads/feat/7-locked-elsewhere'], repo);
 
 // Headless driver uses the same state helper; fake Codex makes observable transitions.
