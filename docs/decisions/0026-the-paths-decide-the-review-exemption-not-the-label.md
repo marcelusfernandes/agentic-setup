@@ -25,9 +25,10 @@ those paths is a named refusal, not a merge and not a silent fall back.**
 
 What is in force, as `scripts/land.mts` implements it:
 
-- **The read.** `changedFiles` (`scripts/land.mts:362-367`) runs
-  `gh api repos/{owner}/{repo}/pulls/<pr>/files --paginate --jq .[].filename`, once per run,
-  after the rules read and before the mode is selected (`:517`).
+- **The read.** `changedFiles` in `scripts/land.mts` runs
+  `gh api repos/{owner}/{repo}/pulls/<pr>/files --paginate --jq .[].filename`, once per run.
+  Its call site sits between `effectiveRules` and the `mode` binding, so the paths are in
+  hand before any mode is selected and before any condition is judged.
 - **The classes.** `DOCS_PATH_GLOBS` is
   `['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']`, exactly the
   negative control's `SKIP_PATH_GLOBS` (`ci/negative-control.mts:131`). A path is a
@@ -47,19 +48,22 @@ What is in force, as `scripts/land.mts` implements it:
 - **`AGENTIC_SKIP_GLOBS` is not read here.** It extends the negative control's list from the
   environment. `land.mts` ignores it, and two cases in `tests/land.test.mts` hold that:
   the source carries no such read, and setting the variable does not buy the exemption.
-- **Both conditions, or neither.** `docsOnly` (`:523`) requires a non-empty list every entry
-  of which is a documentation path; `mode` (`:527-533`) is `docs` only when `docsOnly` and
-  the `type:docs` label are both true. A docs-only diff with no label is mode `agent` and
+- **Both conditions, or neither.** `docsOnly` requires a non-empty list every entry of
+  which satisfies `isDocsPath`; the `mode` binding reads `docs` only when `docsOnly` and the
+  `type:docs` label are both true. A docs-only diff with no label is mode `agent` and
   still owes its `<!-- agentic-reviewed-sha: <oid> -->` marker.
 - **The mismatch refuses, and is named.** `type:docs` with a diff that is not docs-only
-  refuses `{ refused, pr, missing: ['docs:label-mismatch'], mode }` (`:559-571`), naming
+  refuses `{ refused, pr, missing: ['docs:label-mismatch'], mode }` — the `if (isDocs &&
+  !docsOnly)` guard, which builds `outside` from the paths failing `isDocsPath` — naming
   every path outside the classes and the mode that applies instead. It fires at mode
   selection, before the `state` and `review:approved` conditions, because there is no mode
   the pull request can land under until the label or the diff changes.
-- **An unreadable file list refuses on its own code.** `missing: ['gh-pr-files']`,
-  `mode: null` (`:543-550`), before any mode is selected and before any merge call. A file
-  list that cannot be read is not a docs-only diff. An empty list is not one either, and
-  takes the mismatch refusal with wording for the empty case (`:562-564`).
+- **An unreadable file list refuses on its own code.** The `if (files === null)` guard
+  refuses `missing: ['gh-pr-files']` before any merge call, and `docsOnly` requires
+  `files !== null`, so an unreadable list can never reach mode `docs` by any route. A file
+  list that cannot be read is not a docs-only diff. An empty list is not one either: it
+  takes the mismatch refusal, whose `why` branches on `files.length === 0` and says gh
+  reported no changed files rather than naming a path.
 - **Nothing else changes.** The exemption is still from the *review* and never from the
   checks; modes `agent` and `approved` are untouched; the gate, the `--match-head-commit`
   pin, the conflict and mergeability refusals and the `--wait` behaviour all stand.
@@ -126,6 +130,16 @@ owe a failing test" is answered soundly by `.github/**` — a workflow has no un
 fail, which is why #135 put it there. "May this diff merge unreviewed" is not. Both globs
 are already in `MECHANISM_GLOBS` (`ci/lib/scope.mts:274`), which is the same judgement
 reached by a different check; this item makes the review gate agree with it.
+
+**What "the gate" means, because the rule turns on it.** The gate is not `scripts/land.mts`
+alone: it is `land.mts` *plus the required checks it gates on*. `land.mts` refuses unless
+every required check is in bucket `pass`, so those checks are as much a part of the merge
+gate as the script that reads them. That is the step that makes
+`.github/scripts/agentic/**` an input although `land.mts` never reads a line of it — it is
+the code those checks execute in an adopting repository — and it is what puts
+`.github/workflows/**` and `templates/.github/workflows/**` in the same category: they
+*declare which checks are required at all*. A carve-out reasoned from `land.mts`'s own
+reads would cover none of the three.
 
 **The line is drawn at what the gate measures, not at what is important.**
 `skills/**/SKILL.md` is in `MECHANISM_GLOBS` as well, and is a documentation path here via
