@@ -89,11 +89,24 @@ outcome that does not park it — and holds the description itself to nothing. S
 the finding column is not held to the standard the numbers are: every number in
 a report is checkable against the thing it measures, and a description is
 checkable only by resolving the `origin` and the outcome it names and reading
-them. That is a writer's obligation and a reader's, not a check's. A writer of
-the next report should expect the column to be swept end to end before the
-report lands, with the count written into the pull request — sampling it is how
-`docs/dogfood/2026-09-17.md` reached its eighth review round with every number
-verified and seven of its hundred and two descriptions still false (#332).
+them. That is a writer's obligation and a reader's, not a check's.
+
+So, writing the next report: **sweep the `finding` column end to end before the
+report lands, and write the count into the pull request** — how many
+descriptions the table holds, how many were checked, how many held, and every
+one that did not. Check each description against the evidence its own row names
+— the outcome's issue, the review comment its `origin` cites, the tree at the
+commit the header states rather than at `main` — and not against whether it
+sounds right. Correct a description that was false in the row itself, never in
+an appended note: a note cannot stop a sentence asserting what it still says.
+Name, with a count, any description whose evidence did not outlive the run, so
+the next reader can tell an unverifiable row from an unchecked one.
+
+Sampling the column instead is how `docs/dogfood/2026-09-17.md` reached its
+eighth review round with every number verified and seven of its hundred and two
+descriptions still false (#332). A report that says it checked them all without
+a count leaves a reader unable to tell "swept and clean" from "not swept",
+which is the whole difference.
 
 The test states the grammar itself rather than importing a parser, the way
 [`tests/proof-declarations.test.mts`](../../tests/proof-declarations.test.mts)
