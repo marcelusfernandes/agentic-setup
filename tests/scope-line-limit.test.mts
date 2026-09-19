@@ -84,6 +84,24 @@ check(
   })(),
   rGrowth.out,
 );
+// #352, from the review of PR #385: until now the `### File growth` sentence
+// was named nowhere but in a *negative* — the inherited-over case below
+// asserts `!/this pull request added or lengthened them/`. A negative is only
+// as good as the string it names: #385 reworded that sentence, and the
+// negative it replaced would have gone silently dead rather than red,
+// matching nothing forever and passing forever. Its implementer caught that
+// by hand. This is the positive half, pointing at the same sentence, so the
+// next rewording turns a case red instead of retiring one in silence. The
+// expected text is written out here rather than imported from
+// `ci/scope-check.mts`, which is the point of invariant 10: a pin that reads
+// back the string it pins cannot see that string move.
+const GROWTH_SENTENCE =
+  '**FAILED** — over 800 lines at the head, and this pull request added or lengthened them, so it is answerable for them:';
+check(
+  'the File growth section says the diff is answerable for the file, in those words, and names the lengths',
+  rGrowth.out.includes(GROWTH_SENTENCE) && rGrowth.out.includes('- `src/big.ts` grew from 700 to 900 line(s)'),
+  rGrowth.out,
+);
 
 // #134 round 2: `misplacedAuthorised` must stay tied to a glob failure —
 // `result.ok` — and not to the overall `ok`, which also folds in growth
