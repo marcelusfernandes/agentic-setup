@@ -498,7 +498,7 @@ const opensRegex = (previous: string, out: string): boolean =>
  * to the next matching quote, and a commented-out import in that span stands
  * as code, which is the false-caller class this section exists to close. No
  * such construct is in the walked tree; the tree-wide case below is what says
- * so, and it fails on any comment line left standing.
+ * so, and it fails on any full-line comment left standing.
  */
 function code(text: string): string {
   let out = '';
