@@ -668,12 +668,8 @@ const decide = (plans: unknown[]): PlanDecision | null => {
     return null;
   }
 };
-const issueOf = (n: number, label: string, state: string) => ({
-  number: n,
-  title: PLAN_ISSUE_TITLE,
-  state,
-  labels: [{ name: label }],
-});
+const issueOf = (n: number, label: string, state: string) =>
+  ({ number: n, title: PLAN_ISSUE_TITLE, state, labels: [{ name: label }], body: TICKED.replace(/\\n/g, '\n') });
 
 check('resolvePlanIssue is exported', typeof mod?.resolvePlanIssue === 'function');
 check(

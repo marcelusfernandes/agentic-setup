@@ -30,7 +30,9 @@
 //
 // Negative control: on the base `--pr` never reads a body, so the "some
 // ticked" and "none ticked" cases fail on their own assertions, no comment is
-// ever posted, and `parseDecision` is not exported at all.
+// ever posted, and `scripts/lib/adopt/decision.mts` does not exist, so the
+// import below answers `null` and every parser case fails on its own
+// assertion rather than on a missing module.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -325,7 +327,7 @@ type Module = { parseDecision: (body: string) => Decision };
 
 let mod: Module | null = null;
 try {
-  mod = (await import('../scripts/lib/adopt/pr.mts')) as unknown as Module;
+  mod = (await import('../scripts/lib/adopt/decision.mts')) as unknown as Module;
 } catch {
   mod = null;
 }

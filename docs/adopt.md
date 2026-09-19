@@ -134,10 +134,12 @@ meant creating a label by hand first. Both carry the colour and description
 [`labels.json`](../labels.json) seeds, so the pair matches the rest of the vocabulary
 rather than two colours `gh` picked at random.
 
-**A label the repository already has is left exactly as it is.** The guard is the
-inventory read: a label that read saw is never passed to `gh label create` at all, so a
-colour or a description a person chose stays theirs, and a repository that already has
-both makes no label write at all.
+**A label the inventory read saw is left exactly as it is.** The guard *is* that read: a
+label it saw is never passed to `gh label create` at all, so a colour or a description a
+person chose stays theirs, and a repository whose read saw both makes no label write at
+all. The sentence says "the read saw" and not "the repository has" because those are two
+different sets, and the paragraph below is about the gap between them: a label the
+repository has and the read missed is one this run does write over.
 
 That guard, and not `--force`, is what protects an existing label — and the distinction
 matters, because the call does carry `--force`, which `gh` documents as *"update the
@@ -170,6 +172,24 @@ already exist: `scripts/reconcile.mts` reports it under `humanPending`,
 `scripts/claim.mts` refuses to claim it, and the Codex route's `github.mts` pauses on it.
 A person reads the issue, ticks what should happen and flips the label to
 `human:decided`, which stays as the audit trail.
+
+### What a tick does, and what leaving one empty does
+
+The boxes are not a formality and not a note to a reader: `--pr` parses them and acts on
+them. **A ticked box is a gap adoption may close; a box left empty is one it may not.**
+A gap whose remedy is a file the adoption pull request would carry — today that is
+`workflows:missing` and the generated workflows — is simply not in the branch when its
+box is empty, and the pull request says so. A gap whose remedy is not a file — the
+ruleset, the labels, the `pre-push` hook, the test command, a stale record — is recorded
+as declined and nothing more, because there was never a file of it in the diff to leave
+out. Either way both lists are written back to this issue as a comment, with the login
+that applied `human:decided`, before the pull request is opened.
+
+A box is read by the backticked gap name that opens its line, never by the prose after
+it, so rewriting a remedy in your own words while you answer changes nothing. And a plan
+moved to `human:decided` with **no** box ticked is refused, by its own name: a decision
+that accepts nothing is not an adoption. The mechanism, the refusal and the comment are
+[`docs/adopt-pr.md`](./adopt-pr.md).
 
 On success it prints `{ "issue": 7, "url": "…", "gaps": [ … ] }`. `gaps` is the same list
 the body's checkboxes were rendered from, `record:stale` included — the JSON a caller
@@ -663,6 +683,8 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object, or its `permissions.deny` is not a list of strings; the deny list is never merged into a file this tool could not understand, and a rule it cannot read is not a rule it may drop |
 | `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
+| `pr:timeline-unreadable` | the plan issue's timeline read failed or was not JSON, so who applied `human:decided` is unknown; the read happens before anything is built, so nothing was pushed and no comment was left |
+| `pr:decision-not-recorded` | `gh issue comment` failed, so the decision could not be recorded on the plan issue; the branch is pushed by then and stays pushed, and no pull request was opened — running `--pr` again answers `{ held }` on the branch rather than duplicating anything, so the remedy is to comment by hand or delete the branch and run again |
 | `pr:origin-unreadable` | `git fetch origin` could not answer, so the base the branch would be built on is unknown |
 | `pr:base-unreadable` | `origin/<default branch>` does not resolve to a commit, the base tree could not be listed (a `git` answer that outgrew its buffer counts, and the reason is named rather than left empty), or a path the tree holds could not be read — an unreadable file is never planned as an absent one; `field` names the path when there is one, and the temporary index directory is removed either way |
 | `pr:stack-not-supported` | the record's `stack` is not `node`, so the generated `node:test` file would never be discovered; `field` names it |
@@ -679,12 +701,25 @@ point at the line rather than the file.
 `workflows:no-record` is a *refusal* rather than an error — it is printed as
 `{ "refused": …, "reason": "workflows:no-record" }`, the shape `record:not-ours` and
 `plan-issue:already-open` use, because nothing failed: the repository simply has no
-record yet. `pr:no-plan-issue`, `pr:plan-not-decided` and `pr:plan-ambiguous` are refusals
+record yet. `pr:no-plan-issue`, `pr:plan-not-decided`, `pr:plan-ambiguous` and
+`pr:plan-nothing-ticked` are refusals
 of the same shape, with one more field: `missing`, the named list of what a person still
-owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`). Only
-`pr:plan-not-decided` carries `issue`, the one it read: `pr:no-plan-issue` found none to
+owes (`["plan:not-found"]`, `["plan:not-decided"]`, `["plan:ambiguous"]`,
+`["plan:nothing-ticked"]`). `pr:plan-not-decided` and `pr:plan-nothing-ticked` carry
+`issue`, the one they read: `pr:no-plan-issue` found none to
 name, and `pr:plan-ambiguous` carries `issues` instead, because the refusal *is* that there
 was more than one.
+
+`pr:plan-nothing-ticked` is its own name rather than a second use of
+`pr:plan-not-decided`, because the two are opposite mistakes. The label is there; what is
+missing is a tick. Telling a person to apply `human:decided` again would send them to fix
+the one thing they did right, so the refusal names the boxes instead
+([`docs/adopt-pr.md`](./adopt-pr.md)).
+
+The two writes `--pr` makes on GitHub before it opens a pull request — the branch push
+and the comment on the plan issue — are also in the "nothing written" gap above: both are
+the point of the flag, and `pr:decision-not-recorded` is the one ordering where the first
+lands and the second does not.
 
 ## What this is not
 

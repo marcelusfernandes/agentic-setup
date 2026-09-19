@@ -53,6 +53,7 @@
 //
 // Node built-ins only.
 import { CHECKS_WORKFLOW, MARKER, WORKFLOW_DIR, isGenerated, readTemplates, renderWorkflows, type RenderedWorkflow } from './workflows.mts';
+import { GAP_PATHS, decidedByPhrase, isDeclined, parseDecision, type DecisionRecord } from './decision.mts';
 import { SETTINGS_FILE, mergeDeny, readShipped, type DenyMerge, type Shipped } from './hooks.mts';
 import { PROOF_DIR, RECORD_FILE, type AdoptionRecord } from './record.mts';
 
@@ -90,17 +91,20 @@ export type PlanCandidate = {
   title?: string;
   state?: unknown;
   labels?: Array<{ name?: string } | string>;
+  /** The rendered plan, where the checkboxes a person ticked are (#368). */
+  body?: string;
 };
 
 /** Every named reason the plan-issue gate can refuse for. */
-export type PlanRefusal = 'pr:no-plan-issue' | 'pr:plan-not-decided' | 'pr:plan-ambiguous';
+export type PlanRefusal = 'pr:no-plan-issue' | 'pr:plan-not-decided' | 'pr:plan-ambiguous' | 'pr:plan-nothing-ticked';
 
 /**
- * The gate's answer: the issue that authorises, or a named refusal carrying
- * the message a person reads and the issue(s) it was about.
+ * The gate's answer: the issue that authorises **and what it authorises**, or
+ * a named refusal carrying the message a person reads and the issue(s) it was
+ * about. The two gap lists are the decision itself, in the body's own order.
  */
 export type PlanDecision =
-  | { ok: true; issue: number }
+  | { ok: true; issue: number; accepted: string[]; declined: string[] }
   | { ok: false; reason: PlanRefusal; missing: string[]; message: string; issue: number | null; issues: number[] | null };
 
 /** True only for a state this reader recognises as open; everything else is closed. */
@@ -185,7 +189,29 @@ export function resolvePlanIssue(plans: PlanCandidate[], title: string, decidedL
         'for a repository. Read the plan, tick what should happen, and move it to `human:decided`.',
     };
   }
-  return { ok: true, issue: number };
+
+  // The label says a person answered; the boxes say **what** they answered,
+  // and until #368 nothing read them. A decision that accepts nothing is not
+  // an adoption: there is no gap to close, so the pull request would carry the
+  // record, the deny list and its own deliberate red and close a plan issue
+  // that asked for none of it. That is its own refusal and not
+  // `plan:not-decided` — the label is there, and telling a person to apply it
+  // again would send them to fix the one thing they did right.
+  const { accepted, declined } = parseDecision(planIssue.body ?? '');
+  if (accepted.length === 0) {
+    return {
+      ok: false,
+      reason: 'pr:plan-nothing-ticked',
+      missing: ['plan:nothing-ticked'],
+      issue: number,
+      issues: null,
+      message:
+        `the adoption plan issue (#${number}) carries \`${decidedLabel}\` and not one of its boxes is ticked` +
+        `${declined.length === 0 ? ', and its body holds no checklist at all' : ''}; a decision that accepts nothing is not ` +
+        'an adoption. Tick what should happen — the box is what this acts on — and run this again.',
+    };
+  }
+  return { ok: true, issue: number, accepted, declined };
 }
 
 /** Every named reason this module can refuse to assemble a pull request for. */
@@ -255,6 +281,14 @@ export type PlanOptions = {
   templates?: Record<string, string>;
   /** What this repository ships; read from disk when it is not supplied. */
   shipped?: Shipped;
+  /**
+   * The gaps whose box the person left empty (#368). A planned file one of
+   * them would have written is skipped as `declined` and is not in the diff;
+   * a declined gap that writes no file changes nothing here. Absent means
+   * nothing was declined, which is what every caller that does not read a
+   * plan issue — the tests of the planner itself — means.
+   */
+  declined?: readonly string[];
 };
 
 /** The declaration's path for a record, relative to the repository root. */
@@ -275,6 +309,23 @@ export function proofTestFor(record: AdoptionRecord): string {
  * missing import is `structural` and says only that the file could not run.
  */
 export function renderProofTest(record: AdoptionRecord, checks: string[]): string {
+  // An empty `checks` is a branch whose workflow box was left empty: the
+  // generated workflow is not in the diff, so the second assertion below would
+  // fail at the head as well as on the base and the pull request would prove
+  // nothing. The record assertion carries the red on its own there — absent on
+  // the base, present here — which is what the deliberate red is for.
+  const workflowTest = checks.length === 0
+    ? []
+    : [
+        "test('the generated workflow runs every check the adoption records', () => {",
+        '  assert.ok(existsSync(WORKFLOW), WORKFLOW + " is missing: nothing would run the checks the merge gate requires.");',
+        "  const workflow = readFileSync(WORKFLOW, 'utf8');",
+        '  for (const name of CHECKS) {',
+        '    assert.ok(workflow.includes("\\n  " + name + ":"), WORKFLOW + " declares no `" + name + "` job.");',
+        '  }',
+        '});',
+        '',
+      ];
   return [
     `// ${MARKER} — the deliberate red of the adoption pull request.`,
     '// It fails on the base, where none of the adoption exists, and passes here.',
@@ -299,14 +350,7 @@ export function renderProofTest(record: AdoptionRecord, checks: string[]): strin
     '  assert.equal(record.commands.test, TEST_COMMAND);',
     '});',
     '',
-    "test('the generated workflow runs every check the adoption records', () => {",
-    '  assert.ok(existsSync(WORKFLOW), WORKFLOW + " is missing: nothing would run the checks the merge gate requires.");',
-    "  const workflow = readFileSync(WORKFLOW, 'utf8');",
-    '  for (const name of CHECKS) {',
-    '    assert.ok(workflow.includes("\\n  " + name + ":"), WORKFLOW + " declares no `" + name + "` job.");',
-    '  }',
-    '});',
-    '',
+    ...workflowTest,
   ].join('\n');
 }
 
@@ -334,8 +378,15 @@ function planFile(path: string, content: string, commit: CommitName, base: strin
 }
 
 /** The workflow entries, with the marker keeping a hand-written file safe. */
-function planWorkflow(rendered: RenderedWorkflow, base: string | null): PlannedFile {
+function planWorkflow(rendered: RenderedWorkflow, base: string | null, declined: readonly string[]): PlannedFile {
   const path = `${WORKFLOW_DIR}/${rendered.name}`;
+  // A file the decision declined is left out before anything else is asked of
+  // it: the person ticked no box for it, so whether the base carries it and
+  // whether it is generated are questions about a file this branch has no
+  // business writing.
+  if (isDeclined(path, declined)) {
+    return { path, content: null, outcome: 'skipped', reason: 'declined', commit: 'adopt' };
+  }
   if (base !== null && !isGenerated(base)) {
     return { path, content: null, outcome: 'skipped', reason: 'not-generated', commit: 'adopt' };
   }
@@ -408,15 +459,22 @@ export function planPullRequest(record: AdoptionRecord, options: PlanOptions): P
 
   const shipped = options.shipped ?? readShipped();
   const rendering = renderWorkflows(record, options.templates ?? readTemplates());
+  const declined = options.declined ?? [];
 
   const test = proofTestFor(record);
   const declaration = declarationFor(record);
+  const workflows = rendering.files.map((rendered) => planWorkflow(rendered, options.baseFile(`${WORKFLOW_DIR}/${rendered.name}`), declined));
+  // Which checks this branch *produces*, which is not the same as which ones
+  // the record would render: a workflow the decision declined is in no commit,
+  // so its jobs exist nowhere and neither the deliberate red nor the body may
+  // name them (#368).
+  const checks = workflows.some((file) => file.content !== null) ? rendering.checks : [];
   const files: PlannedFile[] = [
     // The red first, so the plan reads in the order the commits land.
-    planFile(test, renderProofTest(record, rendering.checks), 'red', options.baseFile(test)),
+    planFile(test, renderProofTest(record, checks), 'red', options.baseFile(test)),
     planFile(declaration, renderDeclaration(record), 'red', options.baseFile(declaration)),
     planFile(RECORD_FILE, `${JSON.stringify(record, null, 2)}\n`, 'adopt', options.baseFile(RECORD_FILE)),
-    ...rendering.files.map((rendered) => planWorkflow(rendered, options.baseFile(`${WORKFLOW_DIR}/${rendered.name}`))),
+    ...workflows,
     planSettings(options.baseFile(SETTINGS_FILE), shipped),
   ];
 
@@ -425,7 +483,7 @@ export function planPullRequest(record: AdoptionRecord, options: PlanOptions): P
     slug: ADOPTION_SLUG,
     files,
     globs: [...ADOPTION_GLOBS],
-    checks: rendering.checks,
+    checks,
     proof: { slug: ADOPTION_SLUG, command, source: 'record', declaration },
   };
 }
@@ -514,6 +572,14 @@ export type BodyContext = {
   defaultBranch: string;
   /** Where git runs hooks from is a clone's own answer, so the body names the command. */
   record: AdoptionRecord;
+  /**
+   * What the person ticked, and who they were (#368). Absent only where no
+   * plan issue was read — the planner's own cases — and the section is then
+   * left out rather than rendered empty.
+   */
+  decision?: DecisionRecord;
+  /** The label the decision was recorded with; named beside who applied it. */
+  decidedLabel?: string;
 };
 
 /** One bullet per planned file: what happened to it, and why. */
@@ -535,6 +601,42 @@ export const COPIED_CHECKS = ['scope', 'negative-control'];
  * that named it anyway would send a reader looking for a job the workflow does
  * not declare.
  */
+/**
+ * The section that says what the person ticked. It is here because the only
+ * trace of the decision used to be the plan issue body's edit history, which
+ * no script and no closeout reads: a reviewer of this pull request alone could
+ * not tell an adoption of everything from an adoption of two gaps out of five.
+ * A declined gap whose remedy is a file names that file, so the absence is
+ * legible; a declined gap whose remedy is not a file is named and nothing more.
+ */
+function decisionSection(decision: DecisionRecord, label: string): string[] {
+  const accepted = decision.accepted.length === 0
+    ? ['Nothing was ticked.']
+    : decision.accepted.map((gap) => `- \`${gap}\``);
+  const declined = decision.declined.length === 0
+    ? ['Nothing: every box of the plan was ticked.']
+    : decision.declined.map((gap) => {
+        const paths = GAP_PATHS[gap] ?? [];
+        return paths.length === 0
+          ? `- \`${gap}\` — its remedy is not a file, so nothing here changes because of it`
+          : `- \`${gap}\` — so \`${paths.join('`, `')}\` is **not** in this diff`;
+      });
+  return [
+    '## The decision this acts on',
+    '',
+    `The plan issue was ticked box by box, and this branch is what those ticks say. ${decidedByPhrase(decision, label)}`,
+    '',
+    '**Accepted:**',
+    '',
+    ...accepted,
+    '',
+    '**Declined:**',
+    '',
+    ...declined,
+    '',
+  ];
+}
+
 function greenPhrase(checks: string[]): string {
   const green = checks.filter((name) => !COPIED_CHECKS.includes(name));
   if (green.length === 0) return 'no other job of it is';
@@ -572,14 +674,24 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     'git runs hooks from, which is not tracked and which no pull request can carry.',
     'Run `node scripts/adopt.mts --hooks` once in each clone.',
     '',
+    ...(context.decision === undefined ? [] : decisionSection(context.decision, context.decidedLabel ?? 'human:decided')),
     '## Proof',
     '',
     `\`node scripts/proof.mts ${plan.slug}\` runs \`${plan.proof.command}\` — the command the`,
     `adoption record holds — over the declaration \`${plan.proof.declaration}\`.`,
     '',
     `This pull request proves itself: \`${test}\` is a deliberate red. It asserts the`,
-    `adoption record and the \`${plan.checks.join('`, `')}\` job(s) of the generated`,
-    'workflow, so it fails on the base, where none of them exists, and passes here.',
+    ...(plan.checks.length === 0
+      ? [
+          'adoption record, and nothing about the generated workflow: the decision above left',
+          'that workflow out of this branch, and a test asserting a file no commit here carries',
+          'would be red at the head as well as on the base and would prove nothing.',
+        ]
+      : [
+          `adoption record and the \`${plan.checks.join('`, `')}\` job(s) of the generated`,
+          'workflow.',
+        ]),
+    'It fails on the base, where none of it exists, and passes here.',
     '`ci/negative-control.mts` copies it onto a checkout of the base and requires that',
     'run to fail; an adoption whose own checks cannot go green is one nobody should',
     'trust. The red is committed on its own, first, as `test(red):`.',
@@ -590,14 +702,24 @@ export function renderBody(plan: PullRequestPlan, context: BodyContext): string 
     // `.github/scripts/agentic/`, which `node scripts/init.mts` copies and
     // this branch does not carry, so they fail on the pull request that
     // introduces them and pass on every one after it (#302).
-    `**\`${COPIED_CHECKS.join('` and `')}\` are expected red on this pull request; ${greenPhrase(plan.checks)}`,
-    'expected green on it.** `agentic-checks.yml` runs the two of them with',
-    '`node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
-    '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
-    'two checks it installs cannot run on the pull request that installs them. Both reds are',
-    'correct here — nothing is wrong with the adoption, so do not debug it over them — and',
-    'they stop at the first pull request opened after this one is merged. Until then, do not',
-    'make them required checks on the default branch, or this pull request cannot land.',
+    ...(plan.checks.length === 0
+      ? [
+          '**No generated workflow is in this pull request**, because the box for it was left',
+          'empty, so none of the checks `agentic-checks.yml` would have declared runs here and',
+          'none of them is expected red or green. Whatever checks this repository already had',
+          'are the ones that run on this branch. Ticking that box on a fresh plan issue is what',
+          'installs them.',
+        ]
+      : [
+          `**\`${COPIED_CHECKS.join('` and `')}\` are expected red on this pull request; ${greenPhrase(plan.checks)}`,
+          'expected green on it.** `agentic-checks.yml` runs the two of them with',
+          '`node .github/scripts/agentic/scope-check.mts` and `…/negative-control.mts`, which',
+          '`node scripts/init.mts` copies into the repository and this branch does not carry: the',
+          'two checks it installs cannot run on the pull request that installs them. Both reds are',
+          'correct here — nothing is wrong with the adoption, so do not debug it over them — and',
+          'they stop at the first pull request opened after this one is merged. Until then, do not',
+          'make them required checks on the default branch, or this pull request cannot land.',
+        ]),
     '',
     '## Files',
     '',

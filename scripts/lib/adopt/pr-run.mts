@@ -42,6 +42,7 @@ import {
   resolvePlanIssue,
   type PlanCandidate,
 } from './pr.mts';
+import { decidedBy, renderDecisionComment, type DecisionRecord } from './decision.mts';
 import { GENERATED_BY, RECORD_FILE, buildRecord, type AdoptionRecord } from './record.mts';
 import type { CommandResult, GitOptions } from './git.mts';
 import type { Inventory } from './inventory.mts';
@@ -119,9 +120,16 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
   // history is not a standing authorisation. Where preference cannot resolve
   // it (several open matches, which only a person opening one by hand
   // produces) the run refuses by name rather than picking.
+  //
+  // **The body is requested, because the decision is in it (#368).** The plan
+  // issue renders one checkbox per gap and asks a person to tick what should
+  // happen; the label says they answered and the boxes say what they
+  // answered. A search that asked for `number,title,state,labels` could not
+  // read a tick at all, so the two halves of the question — "was this decided"
+  // and "what was decided" — were one read short of each other.
   const search = gh([
     'issue', 'list', '--search', `"${context.planIssueTitle}" in:title`,
-    '--state', 'all', '--limit', '100', '--json', 'number,title,state,labels',
+    '--state', 'all', '--limit', '100', '--json', 'number,title,state,labels,body',
   ]);
   if (search.status !== 0 || !search.stdout.trim()) return failure('pr:plan-unreadable');
   let plans: unknown;
@@ -149,6 +157,39 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
     };
   }
   const planNumber = decision.issue;
+
+  // 1b. who decided. The accepted and declined gaps come from the body above;
+  // the login comes from the issue's own timeline, which is the only place
+  // GitHub records who applied a label. It is read here, before anything is
+  // built, so a run that cannot answer the question refuses before it pushes
+  // rather than after.
+  //
+  // **Fail closed, as this module's header promises.** A timeline that cannot
+  // be read is `pr:timeline-unreadable`, not a `decidedBy` quietly reported as
+  // absent: the field would then mean two different things — "nobody is
+  // recorded" and "the read failed" — and the comment this run leaves on the
+  // issue is a record other people rely on. A timeline that *answers* and
+  // names no `labeled` event for the label is `null`, which is a fact about
+  // the issue and is said in those words.
+  //
+  // One page, not `--paginate`: `gh api --paginate` prints one JSON document
+  // per page, which is not a JSON document, and a plan issue with more than a
+  // hundred timeline events is not a thing this script produces. A plan issue
+  // that somehow has one reports `null` and says the timeline named nobody —
+  // the direction that never attributes a decision to the wrong person.
+  const timeline = gh(['api', `repos/{owner}/{repo}/issues/${planNumber}/timeline?per_page=100`]);
+  if (timeline.status !== 0) return failure('pr:timeline-unreadable', firstLine(timeline.stderr || timeline.stdout || ''));
+  let events: unknown;
+  try {
+    events = JSON.parse(timeline.stdout);
+  } catch {
+    return failure('pr:timeline-unreadable', 'the timeline was not JSON');
+  }
+  const decided: DecisionRecord = {
+    accepted: decision.accepted,
+    declined: decision.declined,
+    decidedBy: decidedBy(events, context.decidedLabel),
+  };
 
   // 2. the record. An existing one is used as it stands, so the pull request
   // carries what the repository already decided; one that a person wrote is
@@ -202,7 +243,7 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
   let plan;
   let branch;
   try {
-    plan = planPullRequest(record, { root, baseFile });
+    plan = planPullRequest(record, { root, baseFile, declined: decided.declined });
     branch = buildBranch(plan, { git: (args, options) => git(args, options), base, indexFile: join(indexDir, 'index') });
   } catch (err) {
     if (err instanceof PrError) return refusedByModule(err);
@@ -231,11 +272,35 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
     return failure('pr:not-pushed', dataLine ? dataLine.replace(/\t/g, ' ').trim() : firstLine(push.stderr || push.stdout || 'push failed'));
   }
 
-  // 6. the pull request. The body is the one `ci/scope-check.mts` reads: the
+  // 6. the decision, recorded on the issue that asked the question (#368).
+  //
+  // **After the push and before the pull request.** Before the pull request,
+  // because the acceptance criterion asks for it there and because a comment
+  // that names a pull request which then fails to open is a record of
+  // something that did not happen. After the push, because a second run over a
+  // branch someone already holds returns `held` above and never reaches here:
+  // commenting first would leave a second identical record on the issue every
+  // time anyone re-ran the flag.
+  //
+  // A comment that cannot be written is a named failure and no pull request
+  // follows it. The branch is pushed by then and stays pushed — that is stated
+  // in `docs/adopt.md`'s crash-policy section, and re-running is the remedy,
+  // since the push is then `held` and the run stops before it duplicates
+  // anything.
+  const comment = gh(['issue', 'comment', String(planNumber), '--body', renderDecisionComment(decided, context.decidedLabel, ADOPTION_BRANCH)]);
+  if (comment.status !== 0) return failure('pr:decision-not-recorded', firstLine(comment.stderr || comment.stdout || ''));
+
+  // 7. the pull request. The body is the one `ci/scope-check.mts` reads: the
   // closing keyword in plain text, and `## Files` naming exactly what the
   // branch carries. No `type:` label is applied — an agent that labels its own
   // work buys its own exemptions (`agents/implementer.md`).
-  const body = renderBody(plan, { issue: planNumber, defaultBranch: inventory.defaultBranch, record });
+  const body = renderBody(plan, {
+    issue: planNumber,
+    defaultBranch: inventory.defaultBranch,
+    record,
+    decision: decided,
+    decidedLabel: context.decidedLabel,
+  });
   const created = gh(['pr', 'create', '--base', inventory.defaultBranch, '--head', ADOPTION_BRANCH, '--title', PR_TITLE, '--body', body]);
   if (created.status !== 0) return failure('pr:not-created', firstLine(created.stderr || created.stdout || ''));
 
@@ -246,6 +311,7 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
       base,
       head: branch.head,
       issue: planNumber,
+      decision: decided,
       pr: created.stdout.trim().split('\n').filter(Boolean).pop() ?? '',
       commits: branch.commits.map(({ subject, sha, paths }) => ({ subject, sha, paths })),
       files: plan.files.map(({ content: _content, ...rest }) => rest),

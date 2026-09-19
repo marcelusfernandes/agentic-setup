@@ -16,12 +16,19 @@ node scripts/adopt.mts --pr
 ```
 
 It assembles one branch — `chore/adopt-agentic-setup` — carrying the adoption record, the
-generated workflows, the merged deny list, the proof declaration and one deliberate red
-test under the record's `proof.dir`; pushes it; and opens a pull request against the
+generated workflows the decision accepted, the merged deny list, the proof declaration and
+one deliberate red
+test under the record's `proof.dir`; pushes it; comments the decision on the plan issue;
+and opens a pull request against the
 default branch. On success it prints the branch, the base and head commits, the plan issue
-it closes, the pull request's URL, one entry per file with what happened to it, the globs
+it closes, the decision it acted on, the pull request's URL, one entry per file with what
+happened to it, the globs
 the body declares, the checks the generated workflow produces, and the proof the branch
 declares.
+
+```json
+{ "decision": { "accepted": ["ruleset:absent"], "declined": ["workflows:missing"], "decidedBy": "the-owner" } }
+```
 
 ### The sequence, end to end
 
@@ -30,7 +37,7 @@ declares.
 | 1 | `node scripts/adopt.mts --inventory` | describes the repository; writes nothing |
 | 2 | `node scripts/adopt.mts --plan-issue` | opens one `human:pending` issue with that plan |
 | 3 | *a person* | reads the plan, ticks what should happen, moves the issue to `human:decided` |
-| 4 | `node scripts/adopt.mts --pr` | assembles the branch, pushes it, opens the pull request |
+| 4 | `node scripts/adopt.mts --pr` | reads the ticks, assembles the branch from them, pushes it, records the decision on the plan issue, opens the pull request |
 | 5 | *the checks, then a review* | the generated `test` and `check` jobs run and are expected green; `scope` and `negative-control` are expected **red** on this one pull request (below) |
 | 6 | `node scripts/land.mts <pr>` | queues the merge — **`adopt` never merges anything** |
 
@@ -44,6 +51,100 @@ exists and carries `human:decided`**:
 exit 1, nothing pushed and no pull request opened. A repository with no plan issue at all
 is refused the same way, with `missing: ["plan:not-found"]`. Adoption is not something a
 script decides for a repository; the issue is the question and the label is the answer.
+
+### The ticks decide what the pull request carries
+
+The label says a person answered. The **boxes** say what they answered, and `--pr` reads
+them: the search asks GitHub for the issue's `body` alongside its `state` and `labels`,
+and each checkbox line of the `## What adoption would do` section is one gap.
+
+```
+- [x] `workflows:missing` — copy the missing workflow(s) into `.github/workflows`
+- [ ] `ruleset:absent` — create the `agentic-setup` branch ruleset on `main`
+```
+
+A ticked box is **accepted**; an empty one is **declined**. Both lists go into the pull
+request's body under `## The decision this acts on`, and into a comment on the plan issue
+before the pull request is opened, so the decision is legible from either end. Until this
+existed the ticks were read by nothing: a person who ticked two gaps of five and one who
+ticked all five got the same pull request, and the only trace of what was decided was the
+issue body's edit history, which no script and no closeout reads.
+
+**A gap is read by its name, never by its prose.** The name is the first backticked span
+of the line, and everything after it is a remedy a person may rewrite while they answer —
+and they do, because "no: we maintain these by hand" is how a person declines something.
+Only the first span counts, so a remedy quoting a second path (``create `state:ready` ``)
+does not turn that path into a second decision. `[X]` is a tick, `*` is as good a bullet
+as `-`, and a line whose gap name is not backticked contributes nothing rather than a
+guess. A name this version does not recognise is carried through to the record of the
+decision rather than refused: a typo in a box is not a reason to stop an adoption.
+
+**What declining actually changes depends on whether the gap's remedy is a file.**
+
+| Declined gap | What the pull request does |
+| --- | --- |
+| `workflows:missing` | `.github/workflows/**` is **not in the diff** — the files are planned as `skipped (declined)` and appear in the body's "left exactly as they are" list |
+| `ruleset:absent`, `ruleset:review-not-required` | named as declined; the remedy is a GitHub API call (`init.mts --rules`), never a file |
+| `labels:missing` | named as declined; the remedy is `gh label create` |
+| `hooks:not-installed` | named as declined; the remedy lives under the directory git runs hooks from, which no pull request can carry (above) |
+| `test-command:none` | named as declined; the remedy is an environment variable |
+| `record:stale` | named as declined; the remedy is `--record --force`, which `--pr` never runs — it uses the record it was handed as it stands |
+
+`agentic.config.json`, `.claude/settings.json` and the proof files answer no gap, so no
+tick governs them: the record is what every generated step reads, and the proof files are
+this pull request's own deliberate red rather than a remedy.
+
+Declining the workflows has one consequence worth stating, because it looks like a bug
+otherwise: the deliberate red then asserts the adoption record **and nothing about the
+workflow**. A generated test that asserted a file no commit carries would be red at the
+head as well as on the base, which proves nothing. The body says so in its `## Proof`
+section, and says that no generated check is expected red or green on that pull request
+because none of them is installed by it.
+
+### A decision that accepts nothing is refused
+
+```json
+{ "refused": "…", "reason": "pr:plan-nothing-ticked", "missing": ["plan:nothing-ticked"], "issue": 41 }
+```
+
+exit 1, nothing pushed, no comment and no pull request. A plan carrying `human:decided`
+with no box ticked — or with the checklist deleted outright — asks for no gap to be
+closed, so the pull request would carry the record, the deny list and its own deliberate
+red and close an issue that requested none of it.
+
+It is **not** `pr:plan-not-decided`. The two are opposite mistakes: there the label is
+missing, here the label is the one thing that is right. A refusal telling a person to
+apply `human:decided` when they already have would send them to fix what they did
+correctly, so this one names the boxes.
+
+### The decision is recorded on the issue that asked
+
+Before it opens the pull request, `--pr` comments on the plan issue: the accepted gaps,
+the declined ones (with the paths a declined gap left out, where it has any), and the
+login that applied `human:decided`. That login is read from the issue's **timeline** —
+the last `labeled` event naming the label, because a label removed and applied again is
+an ordinary thing and the decision in force is the standing one.
+
+The order is deliberate. **After the push**, because a second run over a branch someone
+already holds answers `{ held }` and never reaches the comment, so re-running the flag
+never leaves a second identical record. **Before `gh pr create`**, because a comment
+naming a pull request that then fails to open is a record of something that did not
+happen.
+
+Two things can go wrong there, and both fail closed:
+
+- `pr:timeline-unreadable` — the timeline read failed or was not JSON. It runs before
+  anything is built, so nothing is pushed and no comment is left. It is an error and not
+  a `decidedBy` quietly reported as absent, because that field would then mean two
+  different things: "nobody is recorded" and "the read failed".
+- `pr:decision-not-recorded` — `gh issue comment` failed. The branch is pushed by then
+  and stays pushed; no pull request is opened. Running `--pr` again answers `{ held }`
+  rather than duplicating anything, so the remedy is to comment by hand, or to delete the
+  branch and run again.
+
+A timeline that *answers* and names no `labeled` event for the label is a different
+thing: `decidedBy` is `null`, and the comment and the body both say the timeline names
+nobody, in those words. That is a fact about the issue rather than a failed read.
 
 ### Which plan issue authorises, when two share the title
 
