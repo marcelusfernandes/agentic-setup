@@ -19,11 +19,11 @@
 // through the same two functions.
 //
 // GitHub is a controlled `gh` fixture (a bash script first on PATH) for every
-// issue-closed case, the real tree's rows included. Nothing here calls the
-// live API unless it is asked to: set `AGENTIC_PROVENANCE_LIVE_GH=1` and the
-// real tree's check runs against the `gh` on PATH; unset, it is skipped with a
-// note naming the variable. Ancestry is never opportunistic; it needs no
-// credentials, only history, hence `fetch-depth: 0` in test.yml.
+// issue-closed case, the real tree's rows included. Nothing here calls the live
+// API unless asked: set `AGENTIC_PROVENANCE_LIVE_GH=1` and the real tree's
+// check runs against the `gh` on PATH; unset, it is skipped with a note naming
+// the variable. Ancestry is never opportunistic -- it needs no credentials,
+// only history, hence `fetch-depth: 0` in test.yml.
 //
 // That default is #356: the check used to shell out once per row of every
 // closeout -- 129 calls per run -- to a shared quota, and exhausting it failed
@@ -434,10 +434,9 @@ if (!existsSync(readmePath)) {
     honest,
   );
 
-  // #356: the issue-closed half is opt-in now and this is the document that
-  // says so. These three are also the negative control's red -- the overlay
-  // copies test files onto the base and not this README, so a base still
-  // calling the check "authenticated" fails here.
+  // #356: this is the document that says the issue-closed half is opt-in, and
+  // these three are also the negative control's red -- it copies the diff's
+  // test files onto the base and not this README.
   check('README.md names the opt-in that runs the issue-closed check', /AGENTIC_PROVENANCE_LIVE_GH/.test(honest), honest);
   check('README.md says that check is opt-in and skipped by default', /opt-in/.test(honest) && /skipped by default/.test(honest), honest);
   check('README.md separates the API declining from the record being wrong', /declining to answer/.test(honest) && /different answers/.test(honest), honest);
@@ -511,8 +510,7 @@ chmodSync(join(bin, 'gh'), 0o755);
 const withGh: Env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
 
 // The opt-in half of #356, proved against the fixture rather than the network:
-// with LIVE_GH_ENV set the source is a lookup against whatever PATH offers --
-// the fake above here, the real CLI in a run that asked for it.
+// with LIVE_GH_ENV set the source is a lookup against whatever PATH offers.
 check(
   'with the opt-in set, the source is a lookup against the gh on PATH',
   issueSourceFor(ROOT, { ...withGh, [LIVE_GH_ENV]: '1' }).kind === 'lookup',
@@ -520,11 +518,11 @@ check(
 );
 
 // AC4 of #356: determinism must not cost the check its reach. These two run
-// the real tree's own closeout rows -- every one of them, the rows the live
-// call used to read -- through the issue-closed check with the fixture
-// answering, so the real record is exercised and not a one-row synthetic
-// document. The first is the clean case; the second picks a real row and has
-// the fixture call that issue open, the defect the live call existed to catch.
+// the real tree's own closeout rows -- the rows the live call used to read --
+// through the issue-closed check with the fixture answering, so the real record
+// is exercised and not a one-row synthetic document. The first is the clean
+// case; the second picks a real row and has the fixture call that issue open,
+// the defect the live call existed to catch.
 const realWithFixture = audit(ROOT, withGh);
 check(
   "the real tree's closeout rows pass the issue-closed check against the fixture",
@@ -645,10 +643,9 @@ check(
 );
 
 // #356: the two failures gh reports identically -- non-zero, one GraphQL line
-// on stderr -- are different answers, and the pin has to say which. A rate
-// limit is the API declining to answer and proves nothing about the record, so
-// it is a note; a number that resolves to nothing is a defect in the closeout,
-// so it stays red.
+// on stderr -- are different answers. A rate limit is the API declining to
+// answer and proves nothing about the record, so it is a note; a number that
+// resolves to nothing is a defect in the closeout, so it stays red.
 const RATE_LIMITED = 'GraphQL: API rate limit already exceeded';
 const rateLimited = fixtureRepo();
 writeCloseout(rateLimited.repo, 'M1.md', closeout('1', rateLimited.mainSha, [[1, 11, rateLimited.mainSha]]));
