@@ -25,20 +25,16 @@
 // note naming the variable. Ancestry is never opportunistic; it needs no
 // credentials, only history, hence `fetch-depth: 0` in test.yml.
 //
-// That default is #356. The check used to shell out unconditionally, once per
-// row of every closeout -- 129 calls per run -- to a quota shared with every
-// other agent and tool on the account. Exhausting it failed this file as
-// `docs/closeout/M*.md is clean`, naming a file when the cause was an HTTP
-// status from another machine, and a required gate read that non-zero exit as
-// a change proved. In CI the live half never ran at all (`contents: read`, no
-// token), so the run that asks GitHub with a real token is, and remains,
-// `scripts/close-milestone.mts`, the only way a milestone closes.
+// That default is #356: the check used to shell out once per row of every
+// closeout -- 129 calls per run -- to a shared quota, and exhausting it failed
+// this file as `docs/closeout/M*.md is clean`, naming a file when the cause was
+// an HTTP status elsewhere. `docs/closeout/README.md` carries the rest, and the
+// cases below hold it to it.
 //
-// Third fail-open, stated with the other two below: with the opt-in set, a
-// `gh` that cannot answer -- a rate limit, a 5xx, no network -- is a note per
-// row, not a failure. A number that resolves to nothing is not that case and
-// stays red; `classifyGhFailure` tells the two apart, since the CLI gives them
-// the same exit and the same shape of stderr.
+// Third fail-open, with the other two below: with the opt-in set, a `gh` that
+// cannot answer -- a rate limit, a 5xx, no network -- is a note per row, not a
+// failure; a number that resolves to nothing stays red. `classifyGhFailure`
+// tells them apart, since the CLI gives both the same exit and stderr shape.
 //
 // One more fail-open, stated here so it is not discovered in a log: the
 // shallow-checkout case below needs `git clone --depth 1` to work in the
@@ -437,6 +433,14 @@ if (!existsSync(readmePath)) {
     /HEAD[\s\S]{0,200}?(last resort|neither)/i.test(honest),
     honest,
   );
+
+  // #356: the issue-closed half is opt-in now and this is the document that
+  // says so. These three are also the negative control's red -- the overlay
+  // copies test files onto the base and not this README, so a base still
+  // calling the check "authenticated" fails here.
+  check('README.md names the opt-in that runs the issue-closed check', /AGENTIC_PROVENANCE_LIVE_GH/.test(honest), honest);
+  check('README.md says that check is opt-in and skipped by default', /opt-in/.test(honest) && /skipped by default/.test(honest), honest);
+  check('README.md separates the API declining from the record being wrong', /declining to answer/.test(honest) && /different answers/.test(honest), honest);
   check(
     'README.md states that rows are in ascending issue order',
     /issue order/.test(readme) && /ascending/.test(readme),
