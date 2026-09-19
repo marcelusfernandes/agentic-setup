@@ -353,6 +353,16 @@ function buildRulesetPayload(
         required_approving_review_count: requireReview ? 1 : 0,
         dismiss_stale_reviews_on_push: requireReview || fetchedFlag('dismiss_stale_reviews_on_push'),
         require_last_push_approval: requireReview || fetchedFlag('require_last_push_approval'),
+        // The other two parameters the API documents as required on this
+        // rule. They are not part of --require-review's opt-in — that flag
+        // owns the three fields above — but the API refuses a create that
+        // omits them ("Invalid property /rules/0: data matches no possible
+        // input", HTTP 422, #373), and the update path only ever worked
+        // because the spread above carried them over from the fetched
+        // ruleset. Sent false on a create, fetched value on an update, the
+        // way the stale-approval fields beside them are carried.
+        require_code_owner_review: fetchedFlag('require_code_owner_review'),
+        required_review_thread_resolution: fetchedFlag('required_review_thread_resolution'),
         allowed_merge_methods: ['squash'],
       },
     },
