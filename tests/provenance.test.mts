@@ -33,8 +33,8 @@
 //
 // Third fail-open, with the other two below: with the opt-in set, a `gh` that
 // cannot answer -- a rate limit, a 5xx, no network -- is a note per row, not a
-// failure; a number that resolves to nothing stays red. `classifyGhFailure`
-// tells them apart, since the CLI gives both the same exit and stderr shape.
+// failure; a number that resolves to nothing stays red, and says so in words
+// that cannot be read as a rate limit. `classifyGhFailure` tells them apart.
 //
 // One more fail-open, stated here so it is not discovered in a log: the
 // shallow-checkout case below needs `git clone --depth 1` to work in the
@@ -215,11 +215,10 @@ export const EMPTY_TEMPLATE_MESSAGE = "still the empty template — a milestone'
 export const NO_CLOSEOUT_MESSAGE = 'no docs/closeout/M<n>.md yet — the provenance pin has nothing to check';
 
 // --- the issue-closed check's source ---------------------------------------
-// The one half of this pin that needs an answer from outside the checkout:
-// ancestry is git, and git is here, but whether #123 is closed is not. Since
+// The one half of this pin needing an answer from outside the checkout:
+// ancestry is git and git is here, but whether #123 is closed is not. Since
 // #356 that answer is a value, chosen once and passed in, so the default run
-// asks nothing and the synthetic cases below keep the controlled fixture they
-// already had.
+// asks nothing and the synthetic cases keep the fixture they already had.
 
 /** The environment variable that opts the real tree back into a live `gh`. */
 export const LIVE_GH_ENV = 'AGENTIC_PROVENANCE_LIVE_GH';
@@ -251,8 +250,7 @@ type IssueSource =
  * `GraphQL: Could not resolve to an issue or pull request with the number of
  * N. (repository.issue)`. Everything else it can fail with — a rate limit, a
  * 5xx, no network, a timeout — is the API declining to answer, so this is a
- * list of one and the default is `unavailable`: a wording that drifts costs a
- * skip, never a false red naming a closeout file.
+ * list of one: a wording that drifts costs a skip, never a false red.
  */
 const NO_SUCH_ISSUE = /could not resolve to an? (issue|pull ?request)/i;
 
@@ -374,14 +372,13 @@ function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audi
       if (source.kind !== 'lookup') continue;
       const answer = source.lookup(row.issue);
       // The API declining to answer is not evidence about the record: a note
-      // naming the row and what was said, so the run reads as "this was not
-      // checked", never as "this closeout is wrong".
+      // naming the row and what was said, so it reads as "not checked".
       if (answer.kind === 'unavailable') {
         notes.push(`${file}: the issue-closed check was skipped for #${row.issue} — ${answer.detail}`);
         continue;
       }
       if (answer.kind === 'no-such-issue') {
-        errors.push(`${file}: gh could not answer for #${row.issue}: ${answer.detail}`);
+        errors.push(`${file}: #${row.issue} resolves to no issue or pull request — the row is wrong, not the API: ${answer.detail}`);
         continue;
       }
       if (answer.state !== 'CLOSED') errors.push(`${file}: #${row.issue} is listed as shipped but is ${answer.state}`);
@@ -434,9 +431,9 @@ if (!existsSync(readmePath)) {
     honest,
   );
 
-  // #356: this is the document that says the issue-closed half is opt-in, and
-  // these three are also the negative control's red -- it copies the diff's
-  // test files onto the base and not this README.
+  // #356: this document says the issue-closed half is opt-in, and these three
+  // are also the negative control's red -- it copies the diff's test files
+  // onto the base and not this README.
   check('README.md names the opt-in that runs the issue-closed check', /AGENTIC_PROVENANCE_LIVE_GH/.test(honest), honest);
   check('README.md says that check is opt-in and skipped by default', /opt-in/.test(honest) && /skipped by default/.test(honest), honest);
   check('README.md separates the API declining from the record being wrong', /declining to answer/.test(honest) && /different answers/.test(honest), honest);
@@ -638,7 +635,7 @@ writeCloseout(missingIssue.repo, 'M1.md', closeout('1', missingIssue.mainSha, [[
 const missingAudit = audit(missingIssue.repo, withGh);
 check(
   'an issue gh cannot resolve fails rather than passing silently',
-  missingAudit.errors.some((e) => e.includes('#9999999') && e.includes('gh could not answer')),
+  missingAudit.errors.some((e) => e.includes('#9999999') && e.includes('resolves to no issue')),
   missingAudit.errors.join('\n'),
 );
 
@@ -671,7 +668,10 @@ writeCloseout(noSuchIssue.repo, 'M1.md', closeout('1', noSuchIssue.mainSha, [[1,
 const noSuchIssueAudit = audit(noSuchIssue.repo, { ...withGh, FAKE_GH_FAIL: NO_SUCH_ISSUE_STDERR });
 check(
   'a row naming an issue that resolves to nothing stays a failure, not a skip',
-  noSuchIssueAudit.errors.some((e) => e.includes('#1') && e.includes('gh could not answer')),
+  // ...and says so in words a reader cannot mistake for an availability
+  // problem: "could not answer" is what `unavailable` means, and the whole
+  // point of the split is that these two do not read alike.
+  noSuchIssueAudit.errors.some((e) => e.includes('#1') && e.includes('resolves to no issue') && !/could not answer|rate limit/i.test(e)),
   noSuchIssueAudit.errors.join('\n'),
 );
 
