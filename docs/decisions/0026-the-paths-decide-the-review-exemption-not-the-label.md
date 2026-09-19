@@ -192,9 +192,13 @@ test rather than a merge. The cost accepted is the duplication itself, for as lo
 consolidation is deferred, and it is deferred so that a change to the *review* gate and a
 change to what the *negative control* reads are not in one pull request.
 
-**A workflow-only change now always owes a review.** Before this item a `type:docs` pull
-request touching only `.github/workflows/**` merged unreviewed; after it, that pull request
-refuses `docs:label-mismatch` until the label comes off and a reviewer reads it. That is the
+**A workflow-only change now owes a review — with the rename above as its one exception.**
+Before this item a `type:docs` pull request touching only `.github/workflows/**` merged
+unreviewed; after it, that pull request refuses `docs:label-mismatch` until the label comes
+off and a reviewer reads it. "Workflow-only" means the diff stays inside those paths: a
+rename *out* of them is not a workflow-only change and reaches `land` as the renamed path
+alone, which is the limit the carve-out bullet states. A rename *within* them is still
+carved out, since the new path matches too. That is the
 point, and it is a real cost: workflow edits are often trivial, and the label lands on them
 by inheritance, since the orchestrator copies `type:docs` from the linked issue
 (`skills/orchestrate/SKILL.md`) rather than deciding it per diff. Who pays: whoever files a
