@@ -6,6 +6,19 @@
 // from a real temporary git repository with a real linked worktree and a
 // real (bare, local) "origin" remote, so `git fetch --prune`, `git
 // for-each-ref` and `git worktree list --porcelain` are exercised for real.
+//
+// Negative control -- what fails on the base (before this PR), case by case.
+// Three assertion reds: #43 (CONFLICTING with an empty checks answer) reads
+// `pending` on the base, which never asks `gh pr list` for `mergeable` -- the
+// state D15 measured on PR #217, where the wait loop slept toward a timeout;
+// #45 (a cancelled run superseded by a newer run of the same check) reads
+// `red`, since the base classifies bucket `cancel` unconditionally; #46 (a
+// run bucketed `pass` while its status is IN_PROGRESS) reads `green`, since
+// the base reads the bucket and nothing else. #44 (UNKNOWN) is coverage, not
+// red, and it is stated rather than claimed: `pending` is what the base
+// prints too -- it is here so a later change cannot make "GitHub has not
+// computed it yet" a conflict and refuse healthy pull requests. #42 keeps the
+// boundary of the D16 rule: a cancellation nothing supersedes is still red.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,6 +101,10 @@ JSON
   {"number":40,"title":"In review pending checks","body":"","labels":[{"name":"state:in-review"}]},
   {"number":41,"title":"In review gh pr checks prints non-JSON","body":"","labels":[{"name":"state:in-review"}]},
   {"number":42,"title":"In review cancelled check reads red","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":43,"title":"In review conflicting PR, no check runs at all","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":44,"title":"In review mergeability not computed yet","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":45,"title":"In review cancelled run superseded by a live one","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":46,"title":"In review a run gh bucketed before it completed","body":"","labels":[{"name":"state:in-review"}]},
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
@@ -111,19 +128,31 @@ JSON
     esac
     ;;
   "pr list")
-    cat <<'JSON'
+    prs=\$(cat <<'JSON'
 [
-  {"number":100,"headRefName":"feat/20-x","labels":[],"reviewDecision":null},
-  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"reviewDecision":null},
-  {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null},
-  {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
-  {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
-  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
-  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null},
-  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null},
-  {"number":108,"headRefName":"codex/task-8","labels":[{"name":"review:approved"}],"reviewDecision":null}
+  {"number":100,"headRefName":"feat/20-x","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":143,"headRefName":"feat/43-conflicting","labels":[],"reviewDecision":null,"mergeable":"CONFLICTING"},
+  {"number":144,"headRefName":"feat/44-unknown-mergeability","labels":[],"reviewDecision":null,"mergeable":"UNKNOWN"},
+  {"number":145,"headRefName":"feat/45-superseded-cancel","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":146,"headRefName":"feat/46-bucketed-early","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":108,"headRefName":"codex/task-8","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeable":"MERGEABLE"}
 ]
 JSON
+)
+    # Real gh answers with the fields the call asked for and no others, so a
+    # list that does not name mergeable does not get it -- which makes the
+    # conflict cases a pin on the call, not only on the classification.
+    case "\$*" in
+      *mergeable*) printf '%s\\n' "\$prs" ;;
+      *) printf '%s\\n' "\$prs" | sed 's/,"mergeable":"[A-Z]*"//' ;;
+    esac
     ;;
   "pr checks")
     case "\${3:-}" in
@@ -143,8 +172,30 @@ JSON
         exit 1
         ;;
       142)
-        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel"}]'
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel","state":"CANCELLED"}]'
         exit 1
+        ;;
+      # A head that conflicts with its base carries no check runs at all, so
+      # gh answers an empty array (D15, PR #217).
+      143)
+        echo '[]'
+        exit 1
+        ;;
+      144)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pending","state":"IN_PROGRESS"}]'
+        exit 8
+        ;;
+      # D16: a label edit re-triggered the workflow, so one check name carries
+      # a cancelled run and the run that replaced it -- gh's own dedupe sorts
+      # by startedAt and the live run can report none, so both survive.
+      145)
+        echo '[{"name":"test (node)","bucket":"cancel","state":"CANCELLED"},{"name":"test (node)","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'
+        exit 1
+        ;;
+      # D16's other half: a run bucketed from a snapshot taken before it
+      # finished. Only its state says it has not completed.
+      146)
+        echo '[{"name":"scope","bucket":"pass","state":"SUCCESS"},{"name":"test (node)","bucket":"pass","state":"IN_PROGRESS"}]'
         ;;
       *)
         echo "fake-gh: unknown pr checks: $*" >&2
@@ -181,6 +232,10 @@ for (const branch of [
   'feat/40-pending-checks',
   'feat/41-nonjson-checks',
   'feat/42-cancelled-check',
+  'feat/43-conflicting',
+  'feat/44-unknown-mergeability',
+  'feat/45-superseded-cancel',
+  'feat/46-bucketed-early',
   'feat/50-prune-target',
   'feat/60-shadowed',
   // The Codex route's lock shape (#157), which `^[a-z]+/<n>-` never matches:
@@ -544,6 +599,27 @@ check(
   JSON.stringify(inReview41),
 );
 check('in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")', inReview42?.pr === 142 && inReview42?.checks === 'red', JSON.stringify(inReview42));
+
+// --- #239 AC1 (D15): a conflicting head carries no check runs, so gh answers
+// an empty array, which the base reads as "still pending" and the
+// orchestrator then waits on for checks that never arrive. `conflict` is its
+// own value and takes precedence over the checks bucket, because the empty
+// array is a *consequence* of the conflict. `UNKNOWN` is not a conflict:
+// GitHub answers it while it is still computing mergeability, routinely on a
+// freshly pushed head. ------------------------------------------------------
+const inReview43 = (out?.inReview ?? []).find((i: any) => i.number === 43);
+const inReview44 = (out?.inReview ?? []).find((i: any) => i.number === 44);
+check('in-review reads conflict for a CONFLICTING PR whose checks answer is empty', inReview43?.pr === 143 && inReview43?.checks === 'conflict', JSON.stringify(inReview43));
+check('in-review reads UNKNOWN mergeability as the checks say, never as a conflict', inReview44?.pr === 144 && inReview44?.checks === 'pending', JSON.stringify(inReview44));
+
+// --- #239 AC6 (D16): a run is judged by its `state`, never by timestamps. A
+// cancelled run another run of the same check supersedes is the noise a
+// re-triggered workflow leaves behind; a run that has not completed is
+// pending whatever its bucket says. -----------------------------------------
+const inReview45 = (out?.inReview ?? []).find((i: any) => i.number === 45);
+const inReview46 = (out?.inReview ?? []).find((i: any) => i.number === 46);
+check('in-review ignores a cancelled run superseded by a newer run of the same check', inReview45?.pr === 145 && inReview45?.checks === 'green', JSON.stringify(inReview45));
+check('in-review reads a run whose status is not completed as pending, whatever its bucket', inReview46?.pr === 146 && inReview46?.checks === 'pending', JSON.stringify(inReview46));
 
 const orphanRealpath = realpathSync(worktreeDir);
 const orphans: string[] = out?.orphanWorktrees ?? [];
