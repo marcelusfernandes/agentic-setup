@@ -274,6 +274,20 @@ check(
   r.out,
 );
 
+// The other half of the ranking, and the reason it is a ranking rather than a
+// narrower match: `FAIL tests/check.mts: v is not 6` carries no count of its
+// own and is no stack frame, so it is only a mention — and a runner that
+// prints `FAIL <path>` and nothing else says no more than that. With nothing
+// reporting another file as the owner of a red, the mention is believed. The
+// noisy-red case above is exactly that shape; this pins it deliberately
+// rather than by accident.
+r = nc(noisyRedHead);
+check(
+  'a failure naming the overlaid file without a count of its own is believed when nothing contradicts it',
+  r.status === 0 && /negative-control: pass/.test(r.out) && !/unattributed/.test(r.out),
+  r.out,
+);
+
 check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
 
 // --- `proof/<slug>.json`: the overlay a branch declares (#136) -------------
@@ -553,11 +567,26 @@ const UNRELATED = [
   "process.exit(existsSync(join(dir, 'breaker.case.mts')) ? 1 : 0);",
   '',
 ].join('\n');
+// The same trigger, but this one reports its failure in a sentence that
+// quotes an overlaid file's name — the shape of a `check(...)` case name that
+// cites a path, of which this repository writes nineteen. Bare substring
+// matching reads it as "the overlay failed"; it is a mention, not an owner.
+const MENTIONS = [
+  "import { existsSync } from 'node:fs';",
+  "import { dirname, join } from 'node:path';",
+  "import { fileURLToPath } from 'node:url';",
+  'const dir = dirname(fileURLToPath(import.meta.url));',
+  "if (!existsSync(join(dir, 'mentioner.case.mts'))) process.exit(0);",
+  "console.error('FAIL  mentioner.case.mts is listed in the pin table');",
+  'process.exit(1);',
+  '',
+].join('\n');
 const attrBase = commit(attrRepo, {
   'package.json': JSON.stringify({ name: 'a', private: true, scripts: { test: 'node tests/run-all.mts' } }),
   'lib.mts': 'export const v = 1;\n',
   'tests/run-all.mts': RUNNER,
   'tests/unrelated.case.mts': UNRELATED,
+  'tests/mentions.case.mts': MENTIONS,
 }, 'chore: base');
 
 const attrRun = (head: string) =>
@@ -647,6 +676,34 @@ check(
 check(
   'that pass warns about the unrelated red and names the file it was in',
   /warning:/.test(r.out) && /unrelated\.case\.mts/.test(r.out),
+  r.out,
+);
+
+// 4. A mention is not an owner. The only line naming an overlaid file quotes
+//    it inside a sentence, while the failure that states its own owner names
+//    a different file. Reading the mention as attribution reports `pass` and
+//    warns that the run's only owned red is not this change's — the same
+//    output saying both things at once. Neither is the honest reading.
+git(['checkout', '-q', '-b', 'feat/34-prose-mention', attrBase], attrRepo);
+const proseMentionHead = commit(attrRepo, {
+  'lib.mts': 'export const v = 5;\n',
+  'tests/mentioner.case.mts': 'process.exit(0);\n',
+}, 'feat: a test the base passes, whose name another file quotes when it fails');
+git(['checkout', '-q', 'main'], attrRepo);
+r = attrRun(proseMentionHead);
+check(
+  'a prose mention of an overlaid file does not outvote a failure that names its own owner',
+  r.status === 1 && /negative-control: unattributed/.test(r.out),
+  r.out,
+);
+check(
+  'the contradiction is explained: the mention is named as a mention, the owned red as the owner',
+  /mention it in passing/.test(r.out) && /mentions\.case\.mts: 0 passed, 1 failed/.test(r.out),
+  r.out,
+);
+check(
+  'the contradictory run never reports `pass` and an unrelated-red warning together',
+  !(/negative-control: pass/.test(r.out) && /warning:/.test(r.out)),
   r.out,
 );
 
