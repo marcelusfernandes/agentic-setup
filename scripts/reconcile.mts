@@ -263,17 +263,17 @@ function bucketOf(c: PrCheckEntry): string {
 }
 
 /**
- * The runs that still say something about the pull request, with the noise a
- * re-triggered workflow leaves behind removed: a cancelled run is dropped
- * when another run of the *same check* survives beside it, because a label
- * edit cancels the run in flight and the cancellation of a superseded run
- * reports on the edit, not on the check (D16). It reads no timestamp, so it
- * is right whichever of the pair gh listed first. It is not a full answer to
- * D16: where gh's own `startedAt` dedupe has already kept the cancelled run
- * and dropped the live one, only an un-deduped read (`gh pr view --json
- * statusCheckRollup`) could recover it, and that is not this change. A
- * cancelled run nothing supersedes is kept and stays red — a check cancelled
- * and never replaced did not hold the line.
+ * The runs that still say something about the pull request: a cancelled run
+ * is dropped when another run of the *same check* survives beside it, because
+ * that cancellation reports on what replaced the run, not on the check (D16).
+ * It reads no timestamp, so it is right whichever of the pair gh listed first.
+ * The pair is rarer than D16 sounds: gh's `eliminateDuplicates` keys on name,
+ * workflow *and* event and picks by `startedAt`, so the label re-trigger D16
+ * describes — same workflow, same event — is always collapsed before this sees
+ * it, and only a cross-workflow or cross-event name collision reaches here.
+ * D16's own case needs an un-deduped read (`gh pr view --json
+ * statusCheckRollup`): #361, not this change. A cancelled run nothing
+ * supersedes stays red.
  */
 function liveChecks(entries: PrCheckEntry[]): PrCheckEntry[] {
   const isCancelled = (c: PrCheckEntry) =>
@@ -467,10 +467,10 @@ function pendingHumanLabel(labels: Label[] | undefined): string | null {
  * rather than failing the whole pass over one PR's checks. Cached by PR
  * number so a PR closing more than one in-review issue costs one call.
  *
- * `state` is read beside `bucket` because that dedupe is neither complete
- * nor timestamp-safe (D16): gh keys it on a check's name *and workflow*, so
- * two runs of one name can both survive, and it picks between the rest by
- * `startedAt`, which a just-started run does not report — see `liveChecks`.
+ * `state` is read beside `bucket` because that dedupe is neither complete nor
+ * timestamp-safe (D16): it keys on name, workflow *and* event, so two runs of
+ * one name can both survive, and it picks between the rest by `startedAt`,
+ * which a just-started run does not report — see `liveChecks`.
  */
 const checksCache = new Map<number, ChecksValue>();
 function checksForPr(prNumber: number): ChecksValue {

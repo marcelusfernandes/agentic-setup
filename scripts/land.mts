@@ -295,15 +295,18 @@ function bucketOf(c: Check): string {
  * The runs that still say something about the pull request. A cancelled run
  * is dropped when another run of the *same check* survives beside it: a label
  * edit re-triggers the workflow and cancels the run in flight, so that
- * cancellation reports on the edit, not on the check (D16). It reads no
- * timestamp, so it is right whichever of the pair gh listed first. It is not
- * a full answer to D16: where gh's own `startedAt` dedupe has already kept
- * the cancelled run and dropped the live one — a just-started run reports no
- * `startedAt` — only an un-deduped read (`gh pr view --json
+ * cancellation reports on what replaced the run, not on the check (D16). It
+ * reads no timestamp, so it is right whichever of the pair gh listed first.
+ * The pair is rarer than D16 sounds: gh's `eliminateDuplicates` keys on name,
+ * workflow *and* event and picks the survivor by `startedAt`, so the label
+ * re-trigger D16 describes — same workflow, same event — is always collapsed
+ * before this sees it, and only a cross-workflow or cross-event name
+ * collision reaches here. D16's own case is therefore untouched by this rule:
+ * where gh has already kept the cancelled run because the live one reports no
+ * `startedAt`, recovering it needs an un-deduped read (`gh pr view --json
  * statusCheckRollup`, whose contexts would then need `--required` re-derived
- * by name) could recover it, and that is not this change. A cancelled run
- * nothing supersedes is kept and still fails: a check cancelled and never
- * replaced did not hold the line.
+ * by name). That is #361, not this change. A cancelled run nothing supersedes
+ * is kept and still fails: cancelled and never replaced did not hold the line.
  */
 function liveChecks(entries: Check[]): Check[] {
   const isCancelled = (c: Check) =>
