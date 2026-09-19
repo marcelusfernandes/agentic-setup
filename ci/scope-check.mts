@@ -22,6 +22,17 @@
 // sees it in the diff) or is granted by an `authorised:` line in one of
 // those issue bodies.
 //
+// It also holds every changed file to FILE_LINE_LIMIT, and says which of two
+// things it found (#310). A file this diff took past the limit — new at head
+// over it, or longer at the head than at the base — **fails** the check under
+// `### File growth`. A file that was already over the limit at the base and
+// that this diff did not lengthen is **reported** under `### Already over the
+// line limit` and does not fail: a pull request is not blamed for length it
+// did not add. Reporting it is the point — before #310 that case produced no
+// message at all, so a file that had crossed the limit was exempt from then
+// on. "Under the limit" and "not failing this check" are two questions, and
+// the summary answers them separately.
+//
 // It also names, as a `warning:` that never changes the exit code, every
 // mechanism file the diff changes when the same diff records no decision
 // (`decisionNudge` in lib/scope.mts) — the shape negative-control.mts uses
@@ -51,7 +62,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, decisionNudge, dogfoodTrigger, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { checkScope, collectLinkedGlobs, decisionNudge, dogfoodTrigger, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, inheritedOverLimit, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import type { FileLinesEntry } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
@@ -220,7 +231,16 @@ const authorisedGlobs = linkedGlobs.flatMap((g) => g.authorised);
 const ignoredPrGrants = parseAuthorisedGlobs(prBody);
 const result = checkScope({ files, issueGlobs, authorisedGlobs });
 const dangling = danglingReferences(removed, files, [...issueGlobs, ...authorisedGlobs]);
-const growth = baseRef && headRef ? fileGrowth(growthEntries(baseRef, headRef, files)) : [];
+const lengths = baseRef && headRef ? growthEntries(baseRef, headRef, files) : [];
+// Two halves of the same rule, read off the same entries. `growth` is the
+// length this diff added and fails the check; `inherited` is length it found
+// already over the limit and only reports (#310). Folding the second into
+// `ok` would blame a pull request for somebody else's file, which is the
+// reason the exemption was written in the first place — but leaving it unsaid
+// is how a file that crossed the limit stayed across it, with every later
+// change to it silently exempt.
+const growth = fileGrowth(lengths);
+const inherited = inheritedOverLimit(lengths);
 const ok = result.ok && dangling.length === 0 && growth.length === 0;
 // A grant written outside ## Files never reaches parseAuthorisedGlobs at
 // all, so it is not even among the ignored grants above; only worth
@@ -266,6 +286,7 @@ console.log(JSON.stringify({
   ok,
   danglingReferences: dangling,
   growth,
+  inherited,
   ...(ignoredPrGrants.length ? { ignoredPrGrants } : {}),
   ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}),
   ...(decisionWarning ? { decisionNudge: nudged, warning: decisionWarning } : {}),
@@ -310,8 +331,26 @@ appendSummary(
           '',
           '### File growth',
           '',
-          `**FAILED** — new or grown past ${FILE_LINE_LIMIT} lines:`,
+          // "took it past the limit" is false for a file already over that
+          // grows further — 900 to 950 is further past, not past. What is
+          // true of all three sub-cases (new at head over the limit, grown
+          // from under to over, grown from over to more over) is that the
+          // file is over at the head and this pull request is what added the
+          // length. Kept parallel to the reported section below, which is the
+          // same sentence with both halves negated.
+          `**FAILED** — over ${FILE_LINE_LIMIT} lines at the head, and this pull request added or lengthened them, so it is answerable for them:`,
           ...growth.map((g) => `- \`${g.path}\` ${g.baseLines === null ? 'is new at' : `grew from ${g.baseLines} to`} ${g.headLines} line(s)`),
+        ]
+      : []),
+    ...(inherited.length
+      ? [
+          '',
+          '### Already over the line limit',
+          '',
+          `**REPORTED, not failed** — over ${FILE_LINE_LIMIT} lines at the base, and this pull request did not lengthen them, so it is not answerable for them:`,
+          ...inherited.map((g) => `- \`${g.path}\` was already over at the base: ${g.baseLines} line(s) there, ${g.headLines} at the head`),
+          '',
+          `What closes it: a pull request that brings the file back under ${FILE_LINE_LIMIT} lines — split it, or move part of it out. Until one does, every pull request that touches the file repeats this message, the ones that shorten it included.`,
         ]
       : []),
     ...(decisionWarning ? ['', `> warning: ${decisionWarning}`] : []),

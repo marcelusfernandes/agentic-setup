@@ -207,23 +207,62 @@ export const FILE_LINE_LIMIT = 800;
 export type FileLinesEntry = { path: string; baseLines: number | null; headLines: number; generated: boolean };
 export type FileGrowth = { path: string; baseLines: number | null; headLines: number };
 
+export type LengthOutcome = 'exempt-generated' | 'under-limit' | 'pushed-over' | 'inherited-over';
+
 /**
- * A file that is new or grew past FILE_LINE_LIMIT, unless its first line
- * marks it `@generated`. `baseLines` is null for a file that did not exist
- * at the base (new at head) — that always counts as "grew" when it lands
- * over the limit. A file already over the limit that shrinks or holds
- * steady is not a violation: only crossing further, or landing over it for
- * the first time, is.
+ * What one file's length relation is called. Four relations, four names,
+ * decided in one place so the two halves of the old condition cannot drift
+ * apart (#310):
+ *
+ * - `exempt-generated` — `@generated` on the first line, whatever the length;
+ * - `under-limit` — at or below FILE_LINE_LIMIT at the head, whatever it was
+ *   at the base;
+ * - `pushed-over` — over the limit at the head *and* longer than at the base,
+ *   or new at head (`baseLines` null) and landing over it. This diff added
+ *   the length, so this diff is answerable for it: it fails the check;
+ * - `inherited-over` — over the limit at the head, and the base was at least
+ *   as long. The length came from somewhere else, so the check reports it and
+ *   does not fail on it. A file that shrinks while staying over the limit is
+ *   `inherited-over` too: it is still over, and it is still not this diff's
+ *   doing.
+ *
+ * Before #310 the last name did not exist and the case produced nothing at
+ * all, so a file that had crossed the limit was exempt from then on and the
+ * rule stopped applying to exactly the files that had already broken it.
+ * Naming the case does not change what fails — `pushed-over` is the old
+ * condition, unchanged — it changes what is visible.
+ */
+export function lengthOutcome({ baseLines, headLines, generated }: FileLinesEntry): LengthOutcome {
+  if (generated) return 'exempt-generated';
+  if (headLines <= FILE_LINE_LIMIT) return 'under-limit';
+  if (baseLines !== null && headLines <= baseLines) return 'inherited-over';
+  return 'pushed-over';
+}
+
+const withOutcome = (entries: FileLinesEntry[], wanted: LengthOutcome): FileGrowth[] =>
+  entries
+    .filter((entry) => lengthOutcome(entry) === wanted)
+    .map(({ path, baseLines, headLines }) => ({ path, baseLines, headLines }));
+
+/**
+ * The files this diff is answerable for: new at head over FILE_LINE_LIMIT, or
+ * grown past it against the base. The failing half of the rule, and the one
+ * the caller folds into its exit status.
  */
 export function fileGrowth(entries: FileLinesEntry[]): FileGrowth[] {
-  const out: FileGrowth[] = [];
-  for (const { path, baseLines, headLines, generated } of entries) {
-    if (generated) continue;
-    if (headLines <= FILE_LINE_LIMIT) continue;
-    if (baseLines !== null && headLines <= baseLines) continue;
-    out.push({ path, baseLines, headLines });
-  }
-  return out;
+  return withOutcome(entries, 'pushed-over');
+}
+
+/**
+ * The files that were already over FILE_LINE_LIMIT at the base and that this
+ * diff did not lengthen. Reported, never failed on: a pull request is not
+ * blamed for length it did not add (#310). The caller says so in words, and
+ * says what closes it — a pull request that brings the file back under the
+ * limit — because nothing else will: until one does, every pull request that
+ * touches the file gets the same message, the ones that shorten it included.
+ */
+export function inheritedOverLimit(entries: FileLinesEntry[]): FileGrowth[] {
+  return withOutcome(entries, 'inherited-over');
 }
 
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
