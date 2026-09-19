@@ -585,7 +585,10 @@ each mode carries its own complete set of conditions:
   marker equal to `headRefOid`, and every required check in bucket `pass`.
 - `approved`, opt-in: everything `agent` requires *plus* `reviewDecision === 'APPROVED'` from
   the server. It is selected by `--require-review` or by a base branch whose effective rules
-  already carry `required_approving_review_count > 0`.
+  already carry `required_approving_review_count > 0`. **Extended by item 25** (#238), which
+  adds one condition this bullet does not carry: the approving review's own commit must be
+  the head as well — see
+  [`decisions/0025-a-review-pins-the-commit-it-was-cast-against.md`](decisions/0025-a-review-pins-the-commit-it-was-cast-against.md).
 - `docs`, the `type:docs` exemption: no review, and so no marker — an exemption from the
   review, never from the checks.
 

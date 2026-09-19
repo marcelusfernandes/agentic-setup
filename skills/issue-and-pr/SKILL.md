@@ -107,9 +107,26 @@ elapses. If CI or the reviewer sends it back, the implementer fixes in the same 
 - Issue `## Files`, `authorised:` lines: a line starting `authorised:` (bullet or bare)
   grants one glob outside those bullets, and **only the orchestrator writes it**. The glob
   stands alone on the line (backticked, or the first token); the justification goes on the
-  next line, indented. `issue-lint` holds a grant to the two rules it holds the bullet
-  globs to — the glob resolves, and no other issue in flight claims the file — and names
-  it as a grant when it fails (#232).
+  next line, indented, and it is not a bullet. `issue-lint` holds a grant to the two rules
+  it holds the bullet globs to — the glob resolves, and no other issue in flight claims the
+  file — and names it as a grant when it fails (#232).
+- **One glob per grant line, and `issue-lint` refuses a line that carries two.** Every
+  backticked span on a grant line used to be a granted glob, so a justification that quoted
+  a path on the same line granted that path too — an over-grant, and an over-grant fails
+  **open**: the path enters the audited scope silently and `scope` passes on a file nobody
+  meant to grant. Writing it carefully is not a control; six such lines were written in one
+  day, by the orchestrator, on the day that defect was being fixed. So a line with more than
+  one backticked span is now **refused** — it grants none of them, and `issue-lint` fails the
+  issue at dispatch naming the line and every span on it (#316). It is refused rather than
+  narrowed to the first span: narrowing would swap a silent over-grant for a silent
+  under-grant, and a line with two spans is a line whose author meant something this format
+  cannot express. Fixing one is rewriting it, not deleting a backtick at random.
+  - One backticked span, and only one, is the grant.
+  - A justification on the **same** line is allowed only unbackticked — it adds no span.
+  - A justification on a **continuation** line (indented, not a bullet) is read by no
+    parser at all, so give it no backticks of its own: the habit is what keeps it off the
+    grant line, and a *bulleted* continuation line is a different hazard — bullets are
+    globs, so its backticks would become declared scope.
 - PR `## Files`: prose. It grants nothing — the implementer writes that body, so a grant
   there would be a self-grant, and since #155 `scope` reports it as ignored and fails on
   the file anyway. An implementer that needs a file outside its globs asks the

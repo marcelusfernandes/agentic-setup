@@ -19,6 +19,19 @@
 // path (audit finding 3); that check, and its `--strict` flag (already
 // retired from the card by #45 for the same reason), are gone.
 //
+// One rule of that contract is enforced here and nowhere else: an
+// `authorised:` line grants one glob, so a line carrying more than one
+// backticked span is refused by name — it grants none of them, and the
+// failure names the line and every span (#316). Refusing beats narrowing to
+// the first span, which would trade a silent over-grant for a silent
+// under-grant. Dispatch is where it has to be said, because that is where
+// the line is written.
+//
+// This paragraph sits below the entry-point sentence above, not inside the
+// enumeration at the top, so the header's first twenty lines keep the
+// numbering `.github/workflows/issue-lint.yml` cites. A comment that moves a
+// cited line is the same defect as a stale citation, one step earlier.
+//
 //   node ci/issue-lint.mts <n> [--markdown] [--root <path>]
 //   node ci/issue-lint.mts --issue <n> --issue-body-file <path> \
 //     [--milestone-issues-file <path>] [--markdown] [--root <path>]
@@ -64,7 +77,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
-import { parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
+import { findMultiGlobGrantLines, parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
 import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDeclaration, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
@@ -199,6 +212,20 @@ const issueGlobs = parseIssueGlobs(body);
 const issueGrants = parseIssueAuthorisedGlobs(body);
 if (sec['Files'] && issueGlobs.length === 0) {
   failures.push('## Files has no bullet glob');
+}
+// A grant line carrying more than one backticked span grants nothing, and
+// this is where that refusal has to be said (#316). The parser could not take
+// only the first span — that would trade a silent over-grant for a silent
+// under-grant — so the line is refused, and the refusal belongs at dispatch,
+// where the orchestrator wrote it: `scripts/claim.mts` runs this lint before
+// it pushes the lock branch, and the `issue-lint` workflow reruns it on every
+// `edited`, so a grant added after dispatch is refused too. At `scope` time
+// the same line would only surface as a file outside the globs, with no
+// reason given — fail-closed, but to the wrong reader.
+for (const { line, spans } of findMultiGlobGrantLines(body)) {
+  failures.push(
+    `\`authorised:\` line carries more than one backticked span (${spans.map((s) => `\`${s}\``).join(', ')}), so it grants none of them — one glob per line. Put the justification on the next line, indented and not a bullet, with no backticks of its own. The line: ${line}`,
+  );
 }
 // The `Declaration: proof/<slug>.json` line is optional (#136): only a line
 // that is present and names something other than a `proof/<slug>.json` path
@@ -393,7 +420,9 @@ if (blockedByCycle !== null) {
 // --- AC3: disjointness against issues in flight in the same milestone -----
 // Both sides of every comparison below are "what this issue may touch" —
 // its bullet globs plus its grants — because that is the set `scope` checks
-// a diff against (`ci/lib/scope.mts:174`). A file granted to one issue and
+// a diff against (`checkScope` in `ci/lib/scope.mts` — named, not cited by
+// line, because a line number here goes stale on the next edit of that file
+// and a clean merge renumbers it with nothing to announce the drift). A file granted to one issue and
 // declared by another is the same collision as two declarations of it (#232).
 const selfScope = [...issueGlobs, ...issueGrants];
 const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, selfScope));

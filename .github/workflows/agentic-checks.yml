@@ -1,7 +1,10 @@
 # agentic-checks — the two PR checks the agent loop depends on.
 #
 #   scope             the diff sits inside the globs of the issue the PR closes
-#   negative-control  the tests the PR adds fail on the base without the change
+#   negative-control  the tests the PR adds fail on the base without the change,
+#                     and fail in a file the overlay placed: a red naming none of
+#                     them is reported as `unattributed`, not as a pass, because
+#                     something else was already broken (#354)
 #
 # Both read the PR body and labels, so they re-run when the PR is edited or
 # relabelled. Your own test workflow stays as it is; make it, and these two,

@@ -6,6 +6,19 @@
 // from a real temporary git repository with a real linked worktree and a
 // real (bare, local) "origin" remote, so `git fetch --prune`, `git
 // for-each-ref` and `git worktree list --porcelain` are exercised for real.
+//
+// Negative control -- what fails on the base (before this PR), case by case.
+// Three assertion reds: #43 (CONFLICTING with an empty checks answer) reads
+// `pending` on the base, which never asks `gh pr list` for `mergeable` -- the
+// state D15 measured on PR #217, where the wait loop slept toward a timeout;
+// #45 (a cancelled run superseded by a newer run of the same check) reads
+// `red`, since the base classifies bucket `cancel` unconditionally; #46 (a
+// run bucketed `pass` while its status is IN_PROGRESS) reads `green`, since
+// the base reads the bucket and nothing else. #44 (UNKNOWN) is coverage, not
+// red, and it is stated rather than claimed: `pending` is what the base
+// prints too -- it is here so a later change cannot make "GitHub has not
+// computed it yet" a conflict and refuse healthy pull requests. #42 keeps the
+// boundary of the D16 rule: a cancellation nothing supersedes is still red.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,6 +101,10 @@ JSON
   {"number":40,"title":"In review pending checks","body":"","labels":[{"name":"state:in-review"}]},
   {"number":41,"title":"In review gh pr checks prints non-JSON","body":"","labels":[{"name":"state:in-review"}]},
   {"number":42,"title":"In review cancelled check reads red","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":43,"title":"In review conflicting PR, no check runs at all","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":44,"title":"In review mergeability not computed yet","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":45,"title":"In review cancelled run superseded by a live one","body":"","labels":[{"name":"state:in-review"}]},
+  {"number":46,"title":"In review a run gh bucketed before it completed","body":"","labels":[{"name":"state:in-review"}]},
   {"number":50,"title":"In progress prune target","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":60,"title":"In progress shadowed tracking ref","body":"","labels":[{"name":"state:in-progress"}]},
   {"number":70,"title":"In progress resumable ahead of main","body":"","labels":[{"name":"state:in-progress"}]},
@@ -111,19 +128,31 @@ JSON
     esac
     ;;
   "pr list")
-    cat <<'JSON'
+    prs=\$(cat <<'JSON'
 [
-  {"number":100,"headRefName":"feat/20-x","labels":[],"reviewDecision":null},
-  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"reviewDecision":null},
-  {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null},
-  {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null},
-  {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null},
-  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null},
-  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null},
-  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null},
-  {"number":108,"headRefName":"codex/task-8","labels":[{"name":"review:approved"}],"reviewDecision":null}
+  {"number":100,"headRefName":"feat/20-x","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":130,"headRefName":"feat/30-y","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":131,"headRefName":"feat/31-z","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":140,"headRefName":"feat/40-pending-checks","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":141,"headRefName":"feat/41-nonjson-checks","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":142,"headRefName":"feat/42-cancelled-check","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":143,"headRefName":"feat/43-conflicting","labels":[],"reviewDecision":null,"mergeable":"CONFLICTING"},
+  {"number":144,"headRefName":"feat/44-unknown-mergeability","labels":[],"reviewDecision":null,"mergeable":"UNKNOWN"},
+  {"number":145,"headRefName":"feat/45-superseded-cancel","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":146,"headRefName":"feat/46-bucketed-early","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":160,"headRefName":"feat/60-shadowed","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":107,"headRefName":"codex/task-7","labels":[],"reviewDecision":null,"mergeable":"MERGEABLE"},
+  {"number":108,"headRefName":"codex/task-8","labels":[{"name":"review:approved"}],"reviewDecision":null,"mergeable":"MERGEABLE"}
 ]
 JSON
+)
+    # Real gh answers with the fields the call asked for and no others, so a
+    # list that does not name mergeable does not get it -- which makes the
+    # conflict cases a pin on the call, not only on the classification.
+    case "\$*" in
+      *mergeable*) printf '%s\\n' "\$prs" ;;
+      *) printf '%s\\n' "\$prs" | sed 's/,"mergeable":"[A-Z]*"//' ;;
+    esac
     ;;
   "pr checks")
     case "\${3:-}" in
@@ -143,8 +172,30 @@ JSON
         exit 1
         ;;
       142)
-        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel"}]'
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"cancel","state":"CANCELLED"}]'
         exit 1
+        ;;
+      # A head that conflicts with its base carries no check runs at all, so
+      # gh answers an empty array (D15, PR #217).
+      143)
+        echo '[]'
+        exit 1
+        ;;
+      144)
+        echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pending","state":"IN_PROGRESS"}]'
+        exit 8
+        ;;
+      # D16: one check name carries a cancelled run and the run that replaced
+      # it, both surfaced by gh -- its dedupe keys on the name *and* the
+      # workflow. The cancelled one reports on the label edit, not the check.
+      145)
+        echo '[{"name":"test (node)","bucket":"cancel","state":"CANCELLED"},{"name":"test (node)","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'
+        exit 1
+        ;;
+      # D16's other half: a run bucketed from a snapshot taken before it
+      # finished. Only its state says it has not completed.
+      146)
+        echo '[{"name":"scope","bucket":"pass","state":"SUCCESS"},{"name":"test (node)","bucket":"pass","state":"IN_PROGRESS"}]'
         ;;
       *)
         echo "fake-gh: unknown pr checks: $*" >&2
@@ -181,6 +232,10 @@ for (const branch of [
   'feat/40-pending-checks',
   'feat/41-nonjson-checks',
   'feat/42-cancelled-check',
+  'feat/43-conflicting',
+  'feat/44-unknown-mergeability',
+  'feat/45-superseded-cancel',
+  'feat/46-bucketed-early',
   'feat/50-prune-target',
   'feat/60-shadowed',
   // The Codex route's lock shape (#157), which `^[a-z]+/<n>-` never matches:
@@ -442,93 +497,37 @@ check(
 
 // --- AC1/AC2/AC3 (#46): resumable vs. still-inProgress ----------------------
 const resumable70 = (out?.resumable ?? []).find((i: any) => i.number === 70);
-check(
-  'resumable: remote branch, no PR, no worktree checkout, reports commits ahead of main',
-  resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2,
-  JSON.stringify(resumable70),
-);
-check(
-  'a resumable issue is removed from inProgress (AC1)',
-  (out?.inProgress ?? []).every((i: any) => i.number !== 70),
-  JSON.stringify(out?.inProgress),
-);
+check('resumable: remote branch, no PR, no worktree checkout, reports commits ahead of main', resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2, JSON.stringify(resumable70));
+check('a resumable issue is removed from inProgress (AC1)', (out?.inProgress ?? []).every((i: any) => i.number !== 70), JSON.stringify(out?.inProgress));
 
 const inProgress71 = (out?.inProgress ?? []).find((i: any) => i.number === 71);
-check(
-  'in-progress: remote branch, no PR, but checked out in a local worktree stays inProgress (AC2)',
-  inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null,
-  JSON.stringify(inProgress71),
-);
-check(
-  'a worktree-checked-out issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 71),
-  JSON.stringify(out?.resumable),
-);
+check('in-progress: remote branch, no PR, but checked out in a local worktree stays inProgress (AC2)', inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null, JSON.stringify(inProgress71));
+check('a worktree-checked-out issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 71), JSON.stringify(out?.resumable));
 
 // --- AC1/AC2/AC4 (#56): a dead-pid lock does not count as a live agent -----
 const resumable72 = (out?.resumable ?? []).find((i: any) => i.number === 72);
-check(
-  'a worktree locked by a dead pid does not count as checked out: its issue is resumable, with commitsAheadOfMain (AC1/AC2)',
-  resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0,
-  JSON.stringify(resumable72),
-);
-check(
-  'a dead-pid-locked issue is removed from inProgress',
-  (out?.inProgress ?? []).every((i: any) => i.number !== 72),
-  JSON.stringify(out?.inProgress),
-);
+check('a worktree locked by a dead pid does not count as checked out: its issue is resumable, with commitsAheadOfMain (AC1/AC2)', resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0, JSON.stringify(resumable72));
+check('a dead-pid-locked issue is removed from inProgress', (out?.inProgress ?? []).every((i: any) => i.number !== 72), JSON.stringify(out?.inProgress));
 
 const deadWorktrees: any[] = out?.deadWorktrees ?? [];
 const deadWorktree72 = deadWorktrees.find((w) => w.branch === 'feat/72-dead-locked-worktree');
 const deadLockedRealpath = realpathSync(deadLockedWorktreeDir);
-check(
-  'deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)',
-  deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath,
-  JSON.stringify(deadWorktree72),
-);
-check(
-  'a clean dead worktree (no uncommitted changes, nothing unpushed) reports dirty: false, unpushed: 0 (#88 AC1)',
-  deadWorktree72?.dirty === false && deadWorktree72?.unpushed === 0,
-  JSON.stringify(deadWorktree72),
-);
+check('deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)', deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath, JSON.stringify(deadWorktree72));
+check('a clean dead worktree (no uncommitted changes, nothing unpushed) reports dirty: false, unpushed: 0 (#88 AC1)', deadWorktree72?.dirty === false && deadWorktree72?.unpushed === 0, JSON.stringify(deadWorktree72));
 
 const deadWorktree75 = deadWorktrees.find((w) => w.branch === 'feat/75-dirty-worktree');
-check(
-  'a dead worktree with an uncommitted file reports dirty: true, unpushed: 0 (#88 AC1)',
-  deadWorktree75?.dirty === true && deadWorktree75?.unpushed === 0,
-  JSON.stringify(deadWorktree75),
-);
+check('a dead worktree with an uncommitted file reports dirty: true, unpushed: 0 (#88 AC1)', deadWorktree75?.dirty === true && deadWorktree75?.unpushed === 0, JSON.stringify(deadWorktree75));
 
 const deadWorktree76 = deadWorktrees.find((w) => w.branch === 'feat/76-unpushed-commit');
-check(
-  'a dead worktree with one local commit never pushed reports dirty: false, unpushed: 1 (#88 AC1)',
-  deadWorktree76?.dirty === false && deadWorktree76?.unpushed === 1,
-  JSON.stringify(deadWorktree76),
-);
+check('a dead worktree with one local commit never pushed reports dirty: false, unpushed: 1 (#88 AC1)', deadWorktree76?.dirty === false && deadWorktree76?.unpushed === 1, JSON.stringify(deadWorktree76));
 
 const deadWorktree77 = deadWorktrees.find((w) => w.branch === 'feat/77-no-remote-branch');
-check(
-  'a dead worktree on a branch never pushed to origin reports unpushed: null (#88 AC1)',
-  deadWorktree77?.dirty === false && deadWorktree77?.unpushed === null,
-  JSON.stringify(deadWorktree77),
-);
+check('a dead worktree on a branch never pushed to origin reports unpushed: null (#88 AC1)', deadWorktree77?.dirty === false && deadWorktree77?.unpushed === null, JSON.stringify(deadWorktree77));
 
 const inProgress73 = (out?.inProgress ?? []).find((i: any) => i.number === 73);
-check(
-  'a worktree locked by a live pid still counts as checked out: its issue stays inProgress (AC4, fail safe)',
-  inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null,
-  JSON.stringify(inProgress73),
-);
-check(
-  'a live-pid-locked issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 73),
-  JSON.stringify(out?.resumable),
-);
-check(
-  'deadWorktrees does not list a worktree locked by a live pid',
-  !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'),
-  JSON.stringify(deadWorktrees),
-);
+check('a worktree locked by a live pid still counts as checked out: its issue stays inProgress (AC4, fail safe)', inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null, JSON.stringify(inProgress73));
+check('a live-pid-locked issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 73), JSON.stringify(out?.resumable));
+check('deadWorktrees does not list a worktree locked by a live pid', !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'), JSON.stringify(deadWorktrees));
 
 // --- regression guard (#56 round 2): pid 0 in a lock reason is not evidence
 // of death — treated as alive, same as no pid at all -----------------------
@@ -538,16 +537,8 @@ check(
   inProgress74?.branch === 'feat/74-pid-zero-worktree' && inProgress74?.pr === null,
   JSON.stringify(inProgress74),
 );
-check(
-  'a pid-0-locked issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 74),
-  JSON.stringify(out?.resumable),
-);
-check(
-  'deadWorktrees does not list a worktree locked with pid 0 in the reason',
-  !deadWorktrees.some((w) => w.branch === 'feat/74-pid-zero-worktree'),
-  JSON.stringify(deadWorktrees),
-);
+check('a pid-0-locked issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 74), JSON.stringify(out?.resumable));
+check('deadWorktrees does not list a worktree locked with pid 0 in the reason', !deadWorktrees.some((w) => w.branch === 'feat/74-pid-zero-worktree'), JSON.stringify(deadWorktrees));
 
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
@@ -565,21 +556,34 @@ check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.check
 const inReview40 = (out?.inReview ?? []).find((i: any) => i.number === 40);
 const inReview41 = (out?.inReview ?? []).find((i: any) => i.number === 41);
 const inReview42 = (out?.inReview ?? []).find((i: any) => i.number === 42);
-check(
-  'in-review reads pending when gh pr checks reports a check still pending',
-  inReview40?.pr === 140 && inReview40?.checks === 'pending',
-  JSON.stringify(inReview40),
-);
+check('in-review reads pending when gh pr checks reports a check still pending', inReview40?.pr === 140 && inReview40?.checks === 'pending', JSON.stringify(inReview40));
 check(
   'in-review reads pending when gh pr checks exits non-zero with non-JSON stdout, instead of erroring the whole pass',
   inReview41?.pr === 141 && inReview41?.checks === 'pending',
   JSON.stringify(inReview41),
 );
-check(
-  'in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")',
-  inReview42?.pr === 142 && inReview42?.checks === 'red',
-  JSON.stringify(inReview42),
-);
+check('in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")', inReview42?.pr === 142 && inReview42?.checks === 'red', JSON.stringify(inReview42));
+
+// --- #239 AC1 (D15): a conflicting head carries no check runs, so gh answers
+// an empty array, which the base reads as "still pending" and the
+// orchestrator then waits on for checks that never arrive. `conflict` is its
+// own value and takes precedence over the checks bucket, because the empty
+// array is a *consequence* of the conflict. `UNKNOWN` is not a conflict:
+// GitHub answers it while it is still computing mergeability, routinely on a
+// freshly pushed head. ------------------------------------------------------
+const inReview43 = (out?.inReview ?? []).find((i: any) => i.number === 43);
+const inReview44 = (out?.inReview ?? []).find((i: any) => i.number === 44);
+check('in-review reads conflict for a CONFLICTING PR whose checks answer is empty', inReview43?.pr === 143 && inReview43?.checks === 'conflict', JSON.stringify(inReview43));
+check('in-review reads UNKNOWN mergeability as the checks say, never as a conflict', inReview44?.pr === 144 && inReview44?.checks === 'pending', JSON.stringify(inReview44));
+
+// --- #239 AC6 (D16): a run is judged by its `state`, never by timestamps. A
+// cancelled run another run of the same check supersedes is the noise a
+// re-triggered workflow leaves behind; a run that has not completed is
+// pending whatever its bucket says. -----------------------------------------
+const inReview45 = (out?.inReview ?? []).find((i: any) => i.number === 45);
+const inReview46 = (out?.inReview ?? []).find((i: any) => i.number === 46);
+check('in-review ignores a cancelled run superseded by a newer run of the same check', inReview45?.pr === 145 && inReview45?.checks === 'green', JSON.stringify(inReview45));
+check('in-review reads a run whose status is not completed as pending, whatever its bucket', inReview46?.pr === 146 && inReview46?.checks === 'pending', JSON.stringify(inReview46));
 
 const orphanRealpath = realpathSync(worktreeDir);
 const orphans: string[] = out?.orphanWorktrees ?? [];
@@ -610,11 +614,7 @@ git(['branch', '-D', 'feat/50-prune-target'], remoteDir);
 
 const outNoFetch: any = JSON.parse(reconcile('--milestone', 'M1', '--no-fetch').stdout);
 const noFetchResumable50 = (outNoFetch?.resumable ?? []).find((i: any) => i.number === 50);
-check(
-  '--no-fetch still reports the stale local ref as a resumable remote branch (AC2)',
-  noFetchResumable50 !== undefined,
-  JSON.stringify(noFetchResumable50),
-);
+check('--no-fetch still reports the stale local ref as a resumable remote branch (AC2)', noFetchResumable50 !== undefined, JSON.stringify(noFetchResumable50));
 
 const outFetched: any = JSON.parse(reconcile('--milestone', 'M1').stdout);
 const fetchedResumable50 = (outFetched?.resumable ?? []).find((i: any) => i.number === 50);
@@ -653,11 +653,7 @@ check(
     JSON.stringify(outObjectiveOnly?.milestoneLint?.missing) === JSON.stringify(['out-of-phase', 'exit-criteria', 'depends-on']),
   JSON.stringify(outObjectiveOnly?.milestoneLint),
 );
-check(
-  'the lint never changes which milestone was reconciled',
-  outObjectiveOnly?.milestone === 'M2',
-  JSON.stringify(outObjectiveOnly?.milestone),
-);
+check('the lint never changes which milestone was reconciled', outObjectiveOnly?.milestone === 'M2', JSON.stringify(outObjectiveOnly?.milestone));
 
 const rNoDescription = reconcile('--milestone', 'M3');
 check('reconcile exits 0 on a milestone with no description at all', rNoDescription.status === 0, `${rNoDescription.stdout}\n${rNoDescription.stderr}`);
