@@ -183,7 +183,11 @@ Then, by hand — the script cannot do these:
   every PR refuses in `land.mts` with no way to satisfy it (`scripts/land.mts`'s header
   names this trap). **Run `--require-review` only after that second identity exists**: the
   rule is otherwise required and nobody can satisfy it, so every merge is frozen until the
-  identity is created. Without the token, `land.mts` falls back to trusting the
-  `review:approved` label — the same identity that runs `land.mts` can write that label
-  itself, so this is meant as a bootstrap state, not a destination (`docs/decisions.md`
-  item 13).
+  identity is created. Without the token, `land.mts` runs in mode `agent`, which merges on
+  the `review:approved` label **plus** the `<!-- agentic-reviewed-sha: <oid> -->` marker
+  equal to the head — the label alone has never merged since #216, because a label records
+  no commit and so binds nothing. What the token buys is the second identity whose
+  server-verified review mode `approved` requires on top of all of it, and that review is
+  pinned to the head as well. The same identity that runs `land.mts` can write both the
+  label and the marker itself, so mode `agent` is meant as a bootstrap state, not a
+  destination (`docs/decisions.md` item 13).

@@ -325,8 +325,8 @@ and grants nothing from either: the closing keywords that name those issues, and
 #135, because the skip is by path class (below) — and `land.mts` reads two, `type:docs`
 (`scripts/land.mts:230`, the exemption from the *review*, never from the checks) and
 `review:approved` (`:255`, the marker label an agent review leaves behind in both modes;
-mode `approved` requires the server's own `APPROVED` on top of it and never falls back to
-the label alone).
+mode `approved` requires the server's own `APPROVED` on top of it, cast against this very
+head, and never falls back to the label alone).
 
 One flow has no `claim.mts` to write those labels: the **docs-writer** is launched
 directly after a merge, not dispatched from `state:ready`, so the orchestrator applies
@@ -439,7 +439,14 @@ condition of that mode is met:
   `<!-- agentic-reviewed-sha: <oid> -->` marker equal to the head, and **every required
   check in bucket `pass`**.
 - `approved`, opt-in: everything `agent` requires *plus* `reviewDecision === 'APPROVED'`
-  from the server. It is selected by `node scripts/land.mts <pr> --require-review`, or by
+  from the server, **cast against the head being merged**: the newest `APPROVED` entry of
+  `gh pr view <pr> --json reviews` carries the commit it was submitted on, and that commit
+  must be `headRefOid` too, or the run refuses `head:changed`. GitHub dismisses a stale
+  approval only where the repository raised `dismiss_stale_reviews_on_push`, so without
+  that read a review of an older commit merged the head whenever some marker equal to it
+  existed (item 25). `--json latestReviews` cannot answer it — gh returns
+  `commit: { oid: "" }` on every entry there — so `reviews` is the field. It is selected by
+  `node scripts/land.mts <pr> --require-review`, or by
   a base branch whose effective rules already carry a `pull_request` rule with
   `required_approving_review_count > 0` — **never** by whether `AGENTIC_REVIEWER_TOKEN`
   happens to be set, which selects nothing at all (it only gives the reviewer the second
@@ -482,11 +489,18 @@ everything `agent` requires, it does not replace it.
 label-plus-marker path, `approved` when the server's own review is required on top of it,
 `docs` for the `type:docs` exemption, which merges with no review at all and so reads no
 marker, and `null` on the refusals with no mode to name: a PR it could not read at all, and
-a base branch whose rules it could not read. `missing` names what is wrong on a refusal:
+a base branch whose rules it could not read. The `{ error }` lines name it too — the usage
+line as `mode: null`, because it is printed before a mode can be read, and the merge
+failure, the clean-status retry failure and the disarm failure as
+`{ error, pr, gate, mode }` — since those are exactly what an operator reads when no merge
+happened. `missing` names what is wrong on a refusal:
 `state=<x>` (not `OPEN`), `review:not-approved` (the label, or in mode `approved` the
 server's `APPROVED` decision), `head:changed` (the head is not the reviewed commit, or no
-marker records one), `gh-pr-comments` (the comments read could not answer — the script
-fails closed rather than merging), `merge:not-mergeable` (GitHub reports the head as
+marker records one, or in mode `approved` it is not the commit the approving review was
+cast against), `gh-pr-comments` (the comments read could not answer — the script
+fails closed rather than merging), `gh-pr-reviews` (mode `approved` only: the reviews read
+could not answer, so the commit that review was cast against is unknown — the same failing
+closed), `merge:not-mergeable` (GitHub reports the head as
 `CONFLICTING`, or as `UNKNOWN`, which is not a mergeability this script may assume),
 `checks:required` (a required check outside bucket `pass`, an empty list, or a bucket read
 that could not answer), `merge:not-clean` (mode `agent` only, below), `gh-rules` (the base
