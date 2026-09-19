@@ -468,7 +468,15 @@ export function planPullRequest(record: AdoptionRecord, options: PlanOptions): P
   // the record would render: a workflow the decision declined is in no commit,
   // so its jobs exist nowhere and neither the deliberate red nor the body may
   // name them (#368).
-  const checks = workflows.some((file) => file.content !== null) ? rendering.checks : [];
+  //
+  // The test is the **reason**, never `content === null`. Three other reasons
+  // plan a workflow with no content — `unchanged`, where the base already
+  // carries the generated file, and `not-generated`, where a person wrote it
+  // — and in both the workflow exists at the head and nobody declined
+  // anything. Reading "no content" as "declined" would make the body say the
+  // box was left empty over a decision that ticked it, in the one artefact
+  // whose purpose is recording what was decided.
+  const checks = workflows.some((file) => file.reason === 'declined') ? [] : rendering.checks;
   const files: PlannedFile[] = [
     // The red first, so the plan reads in the order the commits land.
     planFile(test, renderProofTest(record, checks), 'red', options.baseFile(test)),
