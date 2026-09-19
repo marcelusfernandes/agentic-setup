@@ -533,7 +533,7 @@ const RUNNER = [
   'const dir = dirname(fileURLToPath(import.meta.url));',
   'let failed = 0;',
   "for (const f of readdirSync(dir).filter((n) => n.endsWith('.case.mts')).sort()) {",
-  '  const bad = spawnSync(process.argv[0], [join(dir, f)]).status === 0 ? 0 : 1;',
+  "  const bad = spawnSync(process.argv[0], [join(dir, f)], { stdio: ['ignore', 'ignore', 'inherit'] }).status === 0 ? 0 : 1;",
   '  failed += bad;',
   '  console.log(`${f}: ${1 - bad} passed, ${bad} failed`);',
   '}',
@@ -604,7 +604,11 @@ check(
 git(['checkout', '-q', '-b', 'feat/31-overlay-red', attrBase], attrRepo);
 const overlayRedHead = commit(attrRepo, {
   'lib.mts': 'export const v = 3;\n',
-  'tests/bites.case.mts': 'process.exit(1);\n',
+  // The bare `FAIL <case name>` a harness prints names no file — a runner
+  // prints those under the file it is reporting, several lines from its
+  // name. It must not be read as another file's red, or a warning lands on
+  // nearly every honest pass naming the overlay's own failures as unrelated.
+  'tests/bites.case.mts': "console.error('FAIL the thing this change breaks');\nprocess.exit(1);\n",
 }, 'feat: a test that fails on the base');
 git(['checkout', '-q', 'main'], attrRepo);
 r = attrRun(overlayRedHead);
@@ -616,6 +620,11 @@ check(
 check(
   'a clean pass carries no warning about an unrelated red',
   !/warning:/.test(r.out),
+  r.out,
+);
+check(
+  'a bare FAIL line naming no file is not read as another file\'s red',
+  /FAIL the thing this change breaks/.test(r.out) && !/warning:/.test(r.out),
   r.out,
 );
 

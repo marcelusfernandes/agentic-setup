@@ -272,31 +272,55 @@ const locatesOverlay = (line: string, names: string[]): boolean =>
     return /^:\d/.test(line.slice(at + name.length)) || line.slice(0, at).includes('file://');
   });
 
-type Attribution = { attributed: boolean; unrelated: string[] };
+/**
+ * A failure line that says *whose* failure it is: a file-shaped token
+ * carrying a non-zero failure count on the same line, which is what a runner
+ * that spawns one process per test file prints
+ * (`negative-control.test.mts: 34 passed, 1 failed`).
+ *
+ * Only this shape may be called someone else's red. A bare `FAIL <case
+ * name>` names no file at all — a runner prints those under the file it is
+ * reporting, several lines from the name — and an aggregate
+ * (`2397 passed, 1 failed (node)`) is the whole suite, not a file. Counting
+ * either as another file's failure would put a warning on nearly every
+ * honest `pass`, naming the overlay's own failures as unrelated, which is
+ * worse than no warning at all.
+ */
+const FILE_VERDICT = /[\w.-]+\.[A-Za-z0-9]{1,6}\b[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
+
+type Attribution = { attributed: boolean; failures: string[]; elsewhere: string[] };
 
 /**
  * Which of the overlaid run's failures the overlay accounts for.
  *
  * A failure line is the overlay's when it names an overlaid file itself, or
- * when its block locates an overlaid file as a source location. Everything
- * else that reported a failure is `unrelated` and is named back to the
- * reader: an empty `unrelated` beside `attributed: false` means the command
- * failed without reporting any failure at all, which cannot be attributed
- * either — there is nothing to read.
+ * when its block locates an overlaid file as a source location. `failures`
+ * is everything else that reported a failure, in the order the run printed
+ * it, for a verdict that has to say what it did see; `elsewhere` is the
+ * subset that names another file as the owner of a non-zero count, which is
+ * the only shape that can honestly be called someone else's red. An empty
+ * `failures` beside `attributed: false` means the command failed without
+ * reporting any failure at all, which cannot be attributed either — there is
+ * nothing to read.
  */
 function attributeFailures(output: string, paths: string[]): Attribution {
   const named = overlayNames(paths);
   let attributed = false;
-  const unrelated: string[] = [];
+  const failures: string[] = [];
+  const elsewhere: string[] = [];
   for (const lines of blocks(output)) {
     const located = named.length > 0 && lines.some((line) => locatesOverlay(line, named));
     for (const line of lines) {
       if (!FAILURE_SIGNATURE.test(line)) continue;
-      if (located || (named.length > 0 && namesOverlay(line, named))) attributed = true;
-      else unrelated.push(line.trim());
+      if (located || (named.length > 0 && namesOverlay(line, named))) {
+        attributed = true;
+        continue;
+      }
+      failures.push(line.trim());
+      if (FILE_VERDICT.test(line)) elsewhere.push(line.trim());
     }
   }
-  return { attributed, unrelated };
+  return { attributed, failures, elsewhere };
 }
 
 /** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
@@ -624,10 +648,10 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     // A structural red already proved its point: `structuralInOverlay` only
     // says `true` when the diagnostic named an overlaid path, so the overlay
     // is what could not run. Every other red has to show its own evidence.
-    const { attributed, unrelated } = attributeFailures(overlaid.output, testFiles);
+    const { attributed, failures, elsewhere } = attributeFailures(overlaid.output, testFiles);
     if (!structural && !attributed) {
-      const saw = unrelated.length > 0
-        ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(unrelated)}\nFix or quarantine those and run it again`
+      const saw = failures.length > 0
+        ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(failures)}\nFix or quarantine those and run it again`
         : 'That run reported no failure of its own — it failed without saying what failed, so there is nothing to attribute. Make the command report its failures (a thrown error names the file in its stack; safe-worktree §B7) and run it again';
       return {
         outcome: 'unattributed',
@@ -637,8 +661,8 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     // The overlay's red is there and so is someone else's. The verdict stands,
     // but the unrelated red is real and the operator is told rather than left
     // to find it in the log.
-    const collateral = unrelated.length > 0
-      ? `${unrelated.length} failure(s) in that run name no overlaid file and are not this change's — act on them separately:\n${listFailures(unrelated)}`
+    const collateral = elsewhere.length > 0
+      ? `${elsewhere.length} failure(s) in that run name a file the overlay did not place, so they are not this change's — act on them separately:\n${listFailures(elsewhere)}`
       : undefined;
     return {
       outcome: 'pass',
