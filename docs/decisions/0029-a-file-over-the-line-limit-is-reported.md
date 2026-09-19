@@ -165,9 +165,12 @@ now have the fact in front of them instead of having to count lines to find it.
   differ by sentence and not only by heading. What did **not** change is the summary's
   **headline**, which `ci/scope-check.mts` composes separately and which still reads
   "N file(s) new or grown past 800 lines". Both strings are therefore live at once, in the
-  same summary, saying the same thing differently. Verified by `git grep "new or grown
-  past"` against the head of this pull request: two hits in `ci/scope-check.mts`, both in
-  the headline branches, neither touched by this diff. The earlier draft of this bullet
+  same summary, saying the same thing differently. Verified against the head of this pull
+  request with `git grep "new or grown past" -- ci hooks scripts`: two hits, both in
+  `ci/scope-check.mts`'s headline branches, neither touched by this diff. (A bare
+  `git grep` finds two more — this paragraph and the one above it. The path restriction is
+  the difference between counting the code and counting the prose about the code, and
+  getting that wrong is how the bullet below went wrong.) The earlier draft of this bullet
   claimed the old string had disappeared from the tree; it had not, and the claim was
   false when it was written — corrected here in the body, which is what
   [`README.md`](README.md) ("Correcting an item that is already written") prescribes for a
