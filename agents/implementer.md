@@ -41,12 +41,18 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    A red is not enough by itself: the check reads *which file* failed, and a run
    whose failures name no overlaid file is `unattributed`, not a pass — something
    else was already broken on the base and that is what to fix (#354).
-   **Run it by hand before you open the PR**, from your worktree:
-   `node ci/negative-control.mts --base <merge-base> --head HEAD --branch <your branch>`.
-   This card has never told you to, and that gap is why a false pass went unnoticed
-   for a full review round: the two-argument form is the only way to compare a local
-   verdict with CI's, and an implementer doing exactly that is what caught it. A
-   verdict you cannot reproduce is one you have to take on faith.
+   **Run it by hand before you open the PR**, from your worktree, after
+   `git fetch origin`:
+   `node ci/negative-control.mts --base "$(git rev-parse origin/main)" --head HEAD --branch <your branch>`.
+   Use the **tip of the base branch**, not `git merge-base`: CI passes
+   `github.event.pull_request.base.sha`, which is the tip, and on a branch behind
+   `main` the two are different commits — a local run on the merge base answers
+   about a base CI never used, which is the one way this comparison can mislead you
+   while looking like it agrees. This card has never told you to run it at all, and
+   that gap is why a false pass went unnoticed for a full review round: the
+   two-argument form is the only way to compare a local verdict with CI's, and an
+   implementer doing exactly that is what caught it. A verdict you cannot reproduce
+   is one you have to take on faith.
 5. Implement until the test command is green. Commit at every green
    (`<type>(<scope>): <imperative>`).
 6. Run the check command (types, lint). Green.
