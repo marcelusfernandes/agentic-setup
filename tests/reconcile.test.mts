@@ -185,9 +185,9 @@ JSON
         echo '[{"name":"scope","bucket":"pass"},{"name":"test (node)","bucket":"pending","state":"IN_PROGRESS"}]'
         exit 8
         ;;
-      # D16: a label edit re-triggered the workflow, so one check name carries
-      # a cancelled run and the run that replaced it -- gh's own dedupe sorts
-      # by startedAt and the live run can report none, so both survive.
+      # D16: one check name carries a cancelled run and the run that replaced
+      # it, both surfaced by gh -- its dedupe keys on the name *and* the
+      # workflow. The cancelled one reports on the label edit, not the check.
       145)
         echo '[{"name":"test (node)","bucket":"cancel","state":"CANCELLED"},{"name":"test (node)","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'
         exit 1

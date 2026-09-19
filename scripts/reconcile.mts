@@ -206,7 +206,7 @@
 // `git fetch --prune origin`, unless --no-fetch) `git for-each-ref
 // refs/remotes/origin`. Node built-ins only, no dependency.
 //
-// `inReview[].checks` comes from one `gh pr checks <pr> --json name,bucket`
+// `inReview[].checks` comes from one `gh pr checks <pr> --json name,bucket,state`
 // call per in-review PR (cached by PR number, so two issues closed by the
 // same PR still cost one call) — `gh` already deduplicates superseded check
 // runs and classifies each into `bucket` (pass, fail, pending, skipping,
@@ -267,11 +267,13 @@ function bucketOf(c: PrCheckEntry): string {
  * re-triggered workflow leaves behind removed: a cancelled run is dropped
  * when another run of the *same check* survives beside it, because a label
  * edit cancels the run in flight and the cancellation of a superseded run
- * reports on the edit, not on the check (D16). A cancelled run nothing
- * supersedes is kept and stays red — a check cancelled and never replaced is
- * a check that did not hold the line. No timestamp is consulted: the live run
- * of a just-started workflow reports no `startedAt`, which is exactly how the
- * cancelled one came to be treated as the latest.
+ * reports on the edit, not on the check (D16). It reads no timestamp, so it
+ * is right whichever of the pair gh listed first. It is not a full answer to
+ * D16: where gh's own `startedAt` dedupe has already kept the cancelled run
+ * and dropped the live one, only an un-deduped read (`gh pr view --json
+ * statusCheckRollup`) could recover it, and that is not this change. A
+ * cancelled run nothing supersedes is kept and stays red — a check cancelled
+ * and never replaced did not hold the line.
  */
 function liveChecks(entries: PrCheckEntry[]): PrCheckEntry[] {
   const isCancelled = (c: PrCheckEntry) =>
@@ -466,11 +468,9 @@ function pendingHumanLabel(labels: Label[] | undefined): string | null {
  * number so a PR closing more than one in-review issue costs one call.
  *
  * `state` is read beside `bucket` because that dedupe is neither complete
- * nor timestamp-safe (D16): gh keys it on the check's name and workflow, so
- * two runs of one name from different workflows both survive, and it picks
- * the survivor by `startedAt` — which a run still starting does not report,
- * so three label edits in a row can leave the cancelled run in the answer
- * and drop the live one. Hence `liveChecks` and `bucketOf` above.
+ * nor timestamp-safe (D16): gh keys it on a check's name *and workflow*, so
+ * two runs of one name can both survive, and it picks between the rest by
+ * `startedAt`, which a just-started run does not report — see `liveChecks`.
  */
 const checksCache = new Map<number, ChecksValue>();
 function checksForPr(prNumber: number): ChecksValue {

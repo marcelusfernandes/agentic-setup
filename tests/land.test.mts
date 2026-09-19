@@ -221,9 +221,9 @@ case "\${1:-} \${2:-}" in
       pending) echo '[{"name":"test","bucket":"pending","state":"IN_PROGRESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'; exit 8 ;;
       none) echo '[]'; exit 1 ;;
       unreadable) echo "fake-gh: could not read the checks" >&2; exit 1 ;;
-      # D16: a label edit re-triggered the workflow, so 'test' carries a
-      # cancelled run and the run that replaced it. gh's dedupe sorts by
-      # startedAt and the live run can report none, so both survive.
+      # D16: 'test' carries a cancelled run and the run that replaced it,
+      # both surfaced by gh -- its dedupe keys on the name *and* the
+      # workflow. The cancelled one reports on the label edit, not the check.
       superseded) echo '[{"name":"test","bucket":"cancel","state":"CANCELLED"},{"name":"test","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'; exit 1 ;;
       # D16's other half: a run bucketed from a snapshot taken before it
       # finished -- only its state says it has not completed.

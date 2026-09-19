@@ -122,7 +122,9 @@
 // merged itself unreviewed.
 //
 // Then the checks, in *both* gates: `gh pr checks <pr> --required --json
-// name,bucket` must return a non-empty list in which every bucket is `pass`,
+// name,bucket,state` must return a list which, once the cancellations a newer
+// run of the same check superseded are dropped, is non-empty and holds
+// nothing but runs whose effective bucket is `pass`,
 // or the run refuses with missing ['checks:required']. An empty list is not
 // "nothing is red", it is "nothing held the line"; a bucket that is merely
 // not red (`pending`, `skipping`) is not `pass`; and gh prints that JSON
@@ -293,11 +295,15 @@ function bucketOf(c: Check): string {
  * The runs that still say something about the pull request. A cancelled run
  * is dropped when another run of the *same check* survives beside it: a label
  * edit re-triggers the workflow and cancels the run in flight, so that
- * cancellation reports on the edit, not on the check (D16). One nothing
- * supersedes is kept and still fails — a check cancelled and never replaced
- * is a check that did not hold the line. No timestamp is consulted, which is
- * the point: gh's own dedupe picks by `startedAt`, and a just-started run
- * reports none, which is how the cancelled run came to look like the latest.
+ * cancellation reports on the edit, not on the check (D16). It reads no
+ * timestamp, so it is right whichever of the pair gh listed first. It is not
+ * a full answer to D16: where gh's own `startedAt` dedupe has already kept
+ * the cancelled run and dropped the live one — a just-started run reports no
+ * `startedAt` — only an un-deduped read (`gh pr view --json
+ * statusCheckRollup`, whose contexts would then need `--required` re-derived
+ * by name) could recover it, and that is not this change. A cancelled run
+ * nothing supersedes is kept and still fails: a check cancelled and never
+ * replaced did not hold the line.
  */
 function liveChecks(entries: Check[]): Check[] {
   const isCancelled = (c: Check) =>
