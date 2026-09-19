@@ -12,7 +12,20 @@
 //                control. One path is carved out of every class,
 //                AGENTIC_SKIP_GLOBS included: NEVER_SKIP_GLOBS, the gate's
 //                own code in an adopting repository
-//   pass         the baseline was green and the overlaid run failed — the tests bite
+//   pass         the baseline was green, the overlaid run failed, and at
+//                least one failure in that run names a file the overlay
+//                placed — the tests bite. When the same run also carries a
+//                failure naming nothing overlaid, the outcome stays `pass`
+//                and a `warning:` line names that unrelated red
+//   unattributed the baseline was green and the overlaid run failed, but no
+//                failure in it names any overlaid file. Something else was
+//                already broken — a flake, a regression on the base's own
+//                suite, a rate limit — and crediting it to the overlay is a
+//                `pass` on a change nothing depends on (#354). Its detail
+//                names the failures the run did report, so the reader can act
+//                on the unrelated red instead of re-running and hoping. It is
+//                deliberately not `vacuous`: "nothing depended on the change"
+//                and "something else was already broken" are different facts
 //   structural   the overlaid run failed only structurally (a missing module,
 //                a missing export, a syntax error) and no `test(red):` commit
 //                in base..head touches any of the overlaid test files
@@ -57,6 +70,20 @@
 // output instead let one unrelated structural-looking line (a dependency
 // logging `Cannot find module` and carrying on, printed in a block of its
 // own) flip an honest assertion red to `structural` (#214).
+//
+// Deciding a `pass` asks the same question of the failures: at least one of
+// them must name a file the overlay placed. It reuses the naming predicate
+// the structural read uses (`namesOverlay`, extended to the file's basename
+// because runners print one), but reads it per *failure line* rather than per
+// block, with the block kept for the one shape where a failure and the file
+// it happened in are on different lines: a stack trace, where the overlaid
+// file appears as a source location (`<path>:<line>` or a `file://` URL).
+// A second granularity is needed because a block cannot discriminate here:
+// this repository's own runner prints one `<file>: N passed, M failed` line
+// per test file, consecutively and with no blank line between them, so the
+// whole listing is a single block in which every overlaid name sits beside
+// every unrelated red — which is exactly the run that produced the false
+// pass this rule exists for (#354, run `35405433899`).
 //
 // The skip is by path class, not by the PR's own labels: the implementer
 // applies its own PR's labels, so a `type:` label could buy its own
@@ -141,11 +168,14 @@ const TEST_FILE_GLOBS = [
   '**/tests/**', '**/test/**', '**/__tests__/**', 'e2e/**', 'spec/**',
 ];
 const TAIL = 40;
+// How much of the overlaid run's own failure report a verdict repeats back.
+const FAILURES_SHOWN = 10;
+const FAILURE_WIDTH = 200;
 
 const args = parseArgs(process.argv.slice(2));
 const root = process.cwd();
 
-type Outcome = 'skipped' | 'pass' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
+type Outcome = 'skipped' | 'pass' | 'unattributed' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
 
 /** A comma-separated env list, trimmed, empty entries dropped. */
 const csv = (value: string | undefined): string[] =>
@@ -178,16 +208,95 @@ const STRUCTURAL_WARNING =
  * `structural` (#214).
  */
 function structuralInOverlay(output: string, paths: string[]): boolean {
-  const named = paths.map((p) => p.trim()).filter(Boolean);
+  const named = overlayNames(paths);
   if (named.length === 0) return false;
-  return output
-    .split(/\n[ \t]*\n/)
-    .some((block) => {
-      const lines = block.split('\n');
-      return lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
-        && lines.some((line) => named.some((path) => line.includes(path)));
-    });
+  return blocks(output).some((lines) =>
+    lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
+      && lines.some((line) => namesOverlay(line, named)));
 }
+
+// --- did anything the overlay placed actually fail? (#354) ----------------
+
+/**
+ * A line that reports a failure. Deliberately narrow, and deliberately not
+ * the structural signature: `Cannot find module` on a line of its own is a
+ * dependency logging and carrying on, which is the noise #214 taught this
+ * file to ignore. `[1-9]\d* failed` rather than `failed`, because a per-file
+ * summary line saying `0 failed` is a *green* file reporting itself, and
+ * reading it as a failure is how any red becomes every file's red.
+ */
+const FAILURE_SIGNATURE =
+  /\bFAIL(?:ED|URE|URES)?\b|\bCRASHED\b|\bnot ok\b|[✕✗✘×⨯]|Error:|Error \[|\bpanic:|\bTraceback\b|\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
+
+/** The overlaid run's output as diagnostic blocks of lines. */
+const blocks = (output: string): string[][] =>
+  output.split(/\n[ \t]*\n/).map((block) => block.split('\n'));
+
+/**
+ * The strings that stand for `paths` in a runner's output: the repository
+ * path itself and the file's basename, because a runner that spawns one
+ * process per test file prints the basename (`land.test.mts: 61 passed, 14
+ * failed`) while a stack frame prints the whole path. Matching the basename
+ * can only ever credit the overlay with a red that named a same-named file
+ * elsewhere in the tree; the path form alone missed nearly every honest red
+ * this repository has produced, which would have been the worse failure.
+ */
+const overlayNames = (paths: string[]): string[] => {
+  const named = paths.map((p) => p.trim()).filter(Boolean);
+  return [...new Set([...named, ...named.map((p) => p.split('/').pop() ?? p)])];
+};
+
+/** Whether `line` mentions one of `names` at all. */
+const namesOverlay = (line: string, names: string[]): boolean =>
+  names.some((name) => line.includes(name));
+
+/**
+ * Whether `line` names one of `names` as a *source location* — `<name>:12`
+ * or a `file://` URL — which is the shape a stack frame and a Node error
+ * header use to say where a failure happened. It is the one way a failure
+ * and the file it happened in may be on different lines and still belong
+ * together.
+ */
+const locatesOverlay = (line: string, names: string[]): boolean =>
+  names.some((name) => {
+    const at = line.indexOf(name);
+    if (at < 0) return false;
+    return /^:\d/.test(line.slice(at + name.length)) || line.slice(0, at).includes('file://');
+  });
+
+type Attribution = { attributed: boolean; unrelated: string[] };
+
+/**
+ * Which of the overlaid run's failures the overlay accounts for.
+ *
+ * A failure line is the overlay's when it names an overlaid file itself, or
+ * when its block locates an overlaid file as a source location. Everything
+ * else that reported a failure is `unrelated` and is named back to the
+ * reader: an empty `unrelated` beside `attributed: false` means the command
+ * failed without reporting any failure at all, which cannot be attributed
+ * either — there is nothing to read.
+ */
+function attributeFailures(output: string, paths: string[]): Attribution {
+  const named = overlayNames(paths);
+  let attributed = false;
+  const unrelated: string[] = [];
+  for (const lines of blocks(output)) {
+    const located = named.length > 0 && lines.some((line) => locatesOverlay(line, named));
+    for (const line of lines) {
+      if (!FAILURE_SIGNATURE.test(line)) continue;
+      if (located || (named.length > 0 && namesOverlay(line, named))) attributed = true;
+      else unrelated.push(line.trim());
+    }
+  }
+  return { attributed, unrelated };
+}
+
+/** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
+const listFailures = (failures: string[]): string => {
+  const shown = failures.slice(0, FAILURES_SHOWN).map((line) => `  - ${line.slice(0, FAILURE_WIDTH)}`);
+  const rest = failures.length - shown.length;
+  return [...shown, ...(rest > 0 ? [`  - … and ${rest} more`] : [])].join('\n');
+};
 
 function finish(outcome: Outcome, detail: string, warning?: string): never {
   const ok = outcome === 'skipped' || outcome === 'pass';
@@ -504,10 +613,29 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
         detail: `\`${testCommand}\` failed on the base only structurally (missing module or export, or a syntax error) with ${testFiles.length} test file(s): ${named} — the file could not run there at all, which is not an assertion catching the change. Either write a throwing stub so the red is a runtime red (safe-worktree §B7), or commit the failing test first with a subject starting \`test(red):\` that touches one of those files.\n${tail(overlaid.output)}`,
       };
     }
+    // A structural red already proved its point: `structuralInOverlay` only
+    // says `true` when the diagnostic named an overlaid path, so the overlay
+    // is what could not run. Every other red has to show its own evidence.
+    const { attributed, unrelated } = attributeFailures(overlaid.output, testFiles);
+    if (!structural && !attributed) {
+      const saw = unrelated.length > 0
+        ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(unrelated)}\nFix or quarantine those and run it again`
+        : 'That run reported no failure of its own — it failed without saying what failed, so there is nothing to attribute. Make the command report its failures (a thrown error names the file in its stack; safe-worktree §B7) and run it again';
+      return {
+        outcome: 'unattributed',
+        detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), but no failure in that run names any of them: ${named}. A red the overlay did not cause is not this control's red — reading any red as "the tests bite" reports \`pass\` on a change nothing depends on, which is the one thing this check exists to prevent (#354). This is not \`vacuous\`: the tests may well bite, but something else was already broken and the run could not tell. ${saw}. By hand: \`node ci/negative-control.mts --base ${base} --head ${head}${branchRef ? ` --branch ${branchRef}` : ''}\`.\n${tail(overlaid.output)}`,
+      };
+    }
+    // The overlay's red is there and so is someone else's. The verdict stands,
+    // but the unrelated red is real and the operator is told rather than left
+    // to find it in the log.
+    const collateral = unrelated.length > 0
+      ? `${unrelated.length} failure(s) in that run name no overlaid file and are not this change's — act on them separately:\n${listFailures(unrelated)}`
+      : undefined;
     return {
       outcome: 'pass',
-      detail: `\`${testCommand}\` failed on the base (exit ${overlaid.status}) with ${testFiles.length} test file(s): ${named}.`,
-      warning: structural ? STRUCTURAL_WARNING : undefined,
+      detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), and a failure in that run names one of them: ${named}.`,
+      warning: structural ? STRUCTURAL_WARNING : collateral,
     };
   } finally {
     spawnSync('git', ['worktree', 'remove', '--force', tmp], { cwd: root, encoding: 'utf8' });
