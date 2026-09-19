@@ -100,6 +100,14 @@
 // class would otherwise let a PR rewrite the gate's own code under the gate's
 // own exemption.
 //
+// `--base`/`--head` are a supported interface, not an implementation detail:
+// being able to re-run this check by hand, against CI's own base, is what let
+// an implementer compare a local `vacuous` with a CI `pass`, eliminate the
+// stale-base and merge-ref explanations by measurement, and find the false
+// pass #354 is about. A stricter verdict nobody can reproduce by hand would
+// be worth less than the defect it removes, so every verdict that refuses
+// prints the two-argument invocation that reproduces it.
+//
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
 // the event or --labels a,b, and --branch <ref> (or the event's head ref)
 // naming the head branch. Test files: TEST_FILE_GLOBS below, extended
