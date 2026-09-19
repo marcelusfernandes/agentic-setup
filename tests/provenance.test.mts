@@ -350,10 +350,22 @@ const real = audit(ROOT);
 check(`docs/closeout/M*.md is clean (${real.files.length} file(s))`, real.errors.length === 0, real.errors.join('\n'));
 for (const note of real.notes) console.error(`note  provenance: ${note}`);
 
+// #356: the default run asks GitHub nothing. The issue-closed half used to
+// shell out to whatever `gh` was on PATH, once per row of every closeout --
+// 129 calls against a shared, exhaustible quota, from a unit test in the
+// required `test` suite. It is opt-in now, and the note says so by name.
+check(
+  'the real-tree audit does not call GitHub by default, and the note names the opt-in',
+  real.notes.some((n) => /AGENTIC_PROVENANCE_LIVE_GH/.test(n)),
+  real.notes.join('\n'),
+);
+
 // --- synthetic repositories ------------------------------------------------
 // A fake `gh` first on PATH: every issue is CLOSED except the numbers in
-// FAKE_GH_OPEN, #99 does not exist, and FAKE_GH_AUTH=fail is the
-// unauthenticated runner.
+// FAKE_GH_OPEN, #99 does not exist, FAKE_GH_AUTH=fail is the unauthenticated
+// runner, and FAKE_GH_FAIL is the message a refusing API answers with --
+// a rate limit, a network error, a 5xx -- on stderr with a non-zero exit,
+// which is the shape gh gives a missing issue too (#356).
 const FAKE_GH = `#!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
   "auth status")
@@ -361,6 +373,7 @@ case "\${1:-} \${2:-}" in
     exit 0 ;;
   "issue view")
     n="$3"
+    if [ -n "\${FAKE_GH_FAIL:-}" ]; then echo "\$FAKE_GH_FAIL" >&2; exit 1; fi
     if [ "$n" = "99" ]; then echo "could not resolve to an Issue with the number 99" >&2; exit 1; fi
     for open in \${FAKE_GH_OPEN:-}; do
       if [ "$open" = "$n" ]; then echo '{"state":"OPEN"}'; exit 0; fi
@@ -470,6 +483,40 @@ check(
   'an issue gh cannot resolve fails rather than passing silently',
   missingAudit.errors.some((e) => e.includes('#99') && e.includes('gh could not answer')),
   missingAudit.errors.join('\n'),
+);
+
+// #356: the two failures gh reports identically -- non-zero, one GraphQL line
+// on stderr -- are different answers, and the pin has to say which. A rate
+// limit is the API declining to answer: the record is not proved wrong by it,
+// so it is a note. A number that resolves to nothing is the record naming an
+// issue that does not exist: that is a defect in the closeout, so it stays red.
+const RATE_LIMITED = 'GraphQL: API rate limit already exceeded';
+const rateLimited = fixtureRepo();
+writeCloseout(rateLimited.repo, 'M1.md', closeout('1', rateLimited.mainSha, [[1, 11, rateLimited.mainSha]]));
+const rateLimitedAudit = audit(rateLimited.repo, { ...withGh, FAKE_GH_FAIL: RATE_LIMITED });
+check(
+  'an API that declines to answer is skipped, not failed',
+  rateLimitedAudit.errors.length === 0,
+  rateLimitedAudit.errors.join('\n'),
+);
+check(
+  'the skip says which issue it could not check and what the API said',
+  rateLimitedAudit.notes.some((n) => n.includes('#1') && n.includes(RATE_LIMITED)),
+  rateLimitedAudit.notes.join('\n'),
+);
+
+// The wording is gh's own, taken from `gh issue view <missing> --json state`
+// against this repository, not from the fixture above: the classifier is held
+// to what the real CLI prints (invariant 10 -- the pin writes the shape out).
+const NO_SUCH_ISSUE_STDERR =
+  'GraphQL: Could not resolve to an issue or pull request with the number of 9999999. (repository.issue)';
+const noSuchIssue = fixtureRepo();
+writeCloseout(noSuchIssue.repo, 'M1.md', closeout('1', noSuchIssue.mainSha, [[1, 11, noSuchIssue.mainSha]]));
+const noSuchIssueAudit = audit(noSuchIssue.repo, { ...withGh, FAKE_GH_FAIL: NO_SUCH_ISSUE_STDERR });
+check(
+  'a row naming an issue that resolves to nothing stays a failure, not a skip',
+  noSuchIssueAudit.errors.some((e) => e.includes('#1') && e.includes('gh could not answer')),
+  noSuchIssueAudit.errors.join('\n'),
 );
 
 const noGh = fixtureRepo();
