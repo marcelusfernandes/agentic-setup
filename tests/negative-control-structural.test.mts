@@ -42,6 +42,19 @@ const failingOnAbsentModule = (module: string): string => [
   'finish();',
 ].join('\n');
 
+// A note on the case names below, because the omission is deliberate: none of
+// them quotes `Cannot find module` literally, although that is exactly what
+// they are about. A failing case prints its name, `tests/run.mts` prints the
+// file's `N passed, M failed` line immediately above it with no blank line
+// between, and `structuralInOverlay` reads a diagnostic *block* — so a case
+// name carrying the signature sits in the same block as the overlaid file's
+// own name and reports this pull request's honest red as `structural`. That
+// is the prose-mention hazard `ci/negative-control.mts` documents on
+// `overlayNames`, measured here: with the literal string in two case names
+// this branch's own negative control passed with a `warning:` that described
+// nothing real. The assertions still match the literal header; only the names
+// avoid it.
+
 // --- AC1: the error header survives the truncation -------------------------
 // The detail a failure carries is truncated, and must stay truncated — the
 // whole point of the tail is that a suite's FAIL lines stay readable. What
@@ -60,7 +73,7 @@ const headerAt = pinLines.findIndex((line) => line.includes('Cannot find module'
 const tailAt = pinLines.findIndex((line) => line.includes('MODULE_NOT_FOUND'));
 
 check('the fixture failure is a real MODULE_NOT_FOUND, not a synthetic string', tailAt >= 0, pinOut);
-check("a failure's detail carries the `Cannot find module` header", headerAt >= 0, pinOut);
+check("a failure's detail carries the missing-module header, not only its tail", headerAt >= 0, pinOut);
 check("a failure's detail still carries the truncated tail", tailAt >= 0, pinOut);
 check(
   'the error header is printed ahead of the tail, not inside it',
@@ -97,7 +110,7 @@ const nc = (head: string, base = structuralBase, cwd = structural) =>
 
 let r = nc(structuralHead);
 check(
-  'an overlaid run whose harness output carries `Cannot find module` is `structural`',
+  'an overlaid run whose harness output carries the missing-module header is `structural`',
   r.status === 1 && /negative-control: structural/.test(r.out),
   r.out,
 );
