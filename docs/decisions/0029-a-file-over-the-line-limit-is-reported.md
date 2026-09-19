@@ -168,11 +168,11 @@ now have the fact in front of them instead of having to count lines to find it.
   same summary, saying the same thing differently. Verified against the head of this pull
   request with `git grep "new or grown past" -- ci hooks scripts`: two hits, both in
   `ci/scope-check.mts`'s headline branches, neither touched by this diff. (A bare
-  `git grep` finds two more — this paragraph and the one above it. The path restriction is
-  the difference between counting the code and counting the prose about the code, and
-  getting that wrong is how the bullet below went wrong.) The earlier draft of this bullet
-  claimed the old string had disappeared from the tree; it had not, and the claim was
-  false when it was written — corrected here in the body, which is what
+  `git grep` also matches this bullet's own quotations of the string; the path restriction
+  is the difference between counting the code and counting the prose about the code.) The
+  earlier draft of this bullet claimed the old string had disappeared from the tree. It
+  had not — the claim was asserted without running the grep — so it was false when it was
+  written, and it is corrected here in the body, which is what
   [`README.md`](README.md) ("Correcting an item that is already written") prescribes for a
   statement that was never true rather than one the ground moved under.
 - **The summary's headline still reads all-clear on a run that reports an inherited
