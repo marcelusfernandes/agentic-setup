@@ -722,4 +722,52 @@ for (const [label, id, field, detail] of [
   );
 }
 
+// --- #373 AC2/AC3: the write GitHub refuses. Every refusal above is a read
+// that changed nothing, and ends in a report line and exit 0. A POST or PUT
+// that comes back refused is the other case: the protection the run was
+// asked for does not exist, so the process exits 1 — after the whole report,
+// the filesystem work included, has printed, because that work did happen.
+// And the line keeps what GitHub said, not only what gh said: its 422
+// answers "gh: Invalid request." first and names the refused property on the
+// next line, so the first line alone sends the operator hunting for a
+// malformed command instead of the field. The fake gh's `ruleset-write-fail`
+// marker is the only fixture that reaches a write: `rulesets-403` is tested
+// before every arm and fails the list GET instead.
+const PROPERTY_LINE = 'Invalid property /rules/0: data matches no possible input. (HTTP 422)';
+const REFUSAL_LINE = `  ! ruleset: gh: Invalid request. ${PROPERTY_LINE}`;
+/**
+ * The report printed whole before the failure: its first section, the
+ * pre-push line the filesystem half ends on, and the by-hand block after the
+ * refusal — the order is the assertion, not just the presence.
+ */
+function reportPrintedWhole(stdout: string): boolean {
+  const refusal = stdout.indexOf(REFUSAL_LINE);
+  return (
+    stdout.startsWith('templates\n') &&
+    stdout.includes('git pre-push\n  + ') &&
+    refusal !== -1 &&
+    stdout.indexOf('next, by hand:') > refusal
+  );
+}
+
+const stateRefusedPost = ghState('rules-refused-post');
+writeFileSync(join(stateRefusedPost, 'ruleset-write-fail'), '');
+const refusedPost = initWithGh(ghRepo, stateRefusedPost, '--rules');
+check('init --rules exits 1 when GitHub refuses the ruleset POST', refusedPost.status === 1, `exit ${refusedPost.status}\n${refusedPost.stdout}${refusedPost.stderr}`);
+check('init --rules did reach the POST the refusal is about', ghLog(stateRefusedPost).includes('rulesets -X POST'), ghLog(stateRefusedPost));
+check('the refused POST is reported with the line that names the property', refusedPost.stdout.includes(REFUSAL_LINE), refusedPost.stdout);
+check('the whole report prints before a refused POST fails the run', reportPrintedWhole(refusedPost.stdout), refusedPost.stdout);
+check('init --rules claims no ruleset was created when the POST was refused', claimedNoOutcome(refusedPost.stdout), refusedPost.stdout);
+
+const stateRefusedPut = rulesState('refused-put', [
+  { id: 81, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateRefusedPut, 'ruleset-write-fail'), '');
+const refusedPut = initWithGh(ghRepo, stateRefusedPut, '--rules');
+check('init --rules exits 1 when GitHub refuses the ruleset PUT', refusedPut.status === 1, `exit ${refusedPut.status}\n${refusedPut.stdout}${refusedPut.stderr}`);
+check('init --rules did reach the PUT the refusal is about', ghLog(stateRefusedPut).includes('rulesets/81 -X PUT'), ghLog(stateRefusedPut));
+check('the refused PUT is reported with the line that names the property', refusedPut.stdout.includes(REFUSAL_LINE), refusedPut.stdout);
+check('the whole report prints before a refused PUT fails the run', reportPrintedWhole(refusedPut.stdout), refusedPut.stdout);
+check('init --rules claims no ruleset was updated when the PUT was refused', claimedNoOutcome(refusedPut.stdout), refusedPut.stdout);
+
 finish();
