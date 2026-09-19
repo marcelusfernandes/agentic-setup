@@ -65,8 +65,9 @@ already-required `test` check, not a new check name. It reads every
   (`git merge-base --is-ancestor <sha> <ref>`), or is not a commit in the
   repository at all;
 - the rows are not in ascending issue order;
-- a listed issue is not closed — only where `gh` is authenticated, which the `test` job
-  is not; see the paragraph below.
+- a listed issue is not closed — only when the run opts in with
+  `AGENTIC_PROVENANCE_LIVE_GH=1`; that half is skipped by default, and the
+  `test` job never sets it. See the paragraph below.
 
 That main ref is resolved, not assumed. The pin takes the first of
 `origin/main`, then `main`, then `HEAD` that resolves to a commit in the
@@ -78,10 +79,19 @@ the branch under test that is the right thing to prove reachability against.
 
 Ancestry needs history, which is why `.github/workflows/test.yml` checks out with
 `fetch-depth: 0`; a shallow checkout fails the pin rather than passing quietly.
-The issue-closed check needs credentials the `test` job does not have
-(`contents: read`, no token), so against the real tree it runs only when `gh` is
-authenticated and leaves a note on stderr when it is not — its refusal path is
-covered by a controlled `gh` fixture in the test. In CI that half is a no-op by
+The issue-closed check asks GitHub, so it is **opt-in and skipped by default**:
+unset, it leaves one note on stderr naming `AGENTIC_PROVENANCE_LIVE_GH`; set to
+`1`, it runs against the `gh` on `PATH`. It used to shell out unconditionally,
+once per row of every closeout, to a quota shared with every agent and tool on
+the account — and exhausting that quota failed this pin as
+`docs/closeout/M*.md is clean`, naming a file when the cause was an HTTP status
+from another machine (#356). With the opt-in set, a `gh` that cannot answer — a
+rate limit, a 5xx, no network — is a note per row rather than a failure, while a
+number that resolves to nothing stays a failure: **the API declining to answer
+and the record being wrong are different answers**, and only the second is
+evidence about a closeout. Every one of those paths, and the real tree's own
+rows, are covered by a controlled `gh` fixture in the test. The `test` job could
+not run the live half anyway (`contents: read`, no token), so in CI it is a no-op by
 design and not an oversight: the run that asks GitHub with a real token is
 `scripts/close-milestone.mts`, the only way a milestone closes. It reads the
 milestone's issues itself and refuses `milestone:open-issues` while one is still
