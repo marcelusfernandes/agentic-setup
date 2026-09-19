@@ -293,6 +293,44 @@ check('shape 3 — a span plus an unbackticked justification on the same line pa
 const shapeFour = lint(3165, issueBody({ files: SPAN_PLUS_CONTINUATION }));
 check('shape 4 — a justification on a continuation line passes, and nothing on that line is granted', shapeFour.status === 0 && grantsOf(shapeFour.out) === ONLY_GRANT, shapeFour.out);
 
+// --- #357: a bare glob with a backticked justification is refused too ------
+// The mirror of the shape above, and the one #316's "more than one span"
+// scopes out: one bare token, then a backticked justification. The parser
+// took the span whenever there was one, so the line granted the path the
+// author was pointing at and lost the glob they wrote. Refused rather than
+// narrowed to the bare token, for #316's reason, and refused here — at
+// dispatch, where the orchestrator writes the line — rather than at `scope`
+// on somebody else's pull request, where it would surface only as a file
+// outside the globs with no reason given.
+const BARE_ALONE = '## Files\n- `tests/**`\n- authorised: scripts/reconcile.mts\n';
+const BARE_PLUS_PROSE = '## Files\n- `tests/**`\n- authorised: scripts/reconcile.mts — see the issue comment\n';
+const BARE_PLUS_SPAN = '## Files\n- `tests/**`\n- authorised: scripts/reconcile.mts (see `package.json`)\n';
+// Every failure the lint raises about a grant line, so a case can assert how
+// many there are rather than that at least one matches: a second,
+// differently worded refusal of the same line would otherwise pass unseen.
+const grantFailures = (out: string): string[] => (parse(out)?.failures ?? []).filter((f: any) => typeof f === 'string' && /`authorised:` line/.test(f));
+
+const shapeFive = lint(3571, issueBody({ files: BARE_ALONE }));
+check('shape 5 — a bare glob alone: the issue passes and the bare token is the one grant', shapeFive.status === 0 && grantsOf(shapeFive.out) === ONLY_GRANT, shapeFive.out);
+
+const shapeSix = lint(3572, issueBody({ files: BARE_PLUS_PROSE }));
+check('shape 6 — a bare glob plus an unbackticked justification passes, granting the bare token alone', shapeSix.status === 0 && grantsOf(shapeSix.out) === ONLY_GRANT, shapeSix.out);
+
+const shapeSeven = lint(3573, issueBody({ files: BARE_PLUS_SPAN }));
+const shapeSevenOut = parse(shapeSeven.out);
+const shapeSevenRefusal = grantFailures(shapeSeven.out);
+check('shape 7 — a bare glob with a backticked justification fails at dispatch instead of granting the span', shapeSeven.status === 1 && shapeSevenOut?.ok === false, shapeSeven.out);
+check('shape 7 — the refusal names the line, the bare glob and the span', shapeSevenRefusal.length === 1 && shapeSevenRefusal[0].includes('authorised: scripts/reconcile.mts (see `package.json`)') && shapeSevenRefusal[0].includes('scripts/reconcile.mts') && shapeSevenRefusal[0].includes('package.json'), shapeSeven.out);
+check('shape 7 — neither the bare glob nor the span is reported as a grant', grantsOf(shapeSeven.out) === '[]', shapeSeven.out);
+const shapeSevenMd = lint(3574, issueBody({ files: BARE_PLUS_SPAN }), { markdown: true });
+check('shape 7 — the --markdown comment carries the refusal too', shapeSevenMd.status === 1 && /FAIL/.test(shapeSevenMd.out) && /see `package.json`/.test(shapeSevenMd.out), shapeSevenMd.out);
+
+// AC3: two different mistakes, two remedies. An author fixing one must not be
+// told the other, so each line draws exactly one refusal and never the
+// other's wording.
+check('shape 7 — the bare-glob refusal is the only one on that line, and never says "more than one"', shapeSevenRefusal.length === 1 && /bare glob/.test(shapeSevenRefusal[0]) && !/more than one/.test(shapeSevenRefusal[0]), JSON.stringify(shapeSevenRefusal));
+check('shape 2 — the two-span refusal is the only one on that line, and never says "bare glob"', grantFailures(shapeTwo.out).length === 1 && /more than one/.test(grantFailures(shapeTwo.out)[0]) && !/bare glob/.test(grantFailures(shapeTwo.out)[0]), JSON.stringify(grantFailures(shapeTwo.out)));
+
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);

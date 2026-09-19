@@ -664,4 +664,41 @@ check('the issue and PR grant parsers agree on every one of the four shapes', al
 const rTwoSpans = scope(files, file('issue-grant-two-spans.md', twoSpans), prPlain);
 check('scope grants nothing from a two-span grant line: both files are violations and none is named as authorised', rTwoSpans.status === 1 && JSON.stringify(scopeJson(rTwoSpans.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) && !/Authorised by #1:/.test(rTwoSpans.out), rTwoSpans.out);
 
+// #357: the mirror image of the shape above, and the one #316's "more than
+// one backticked span" scopes out. One **bare** token, then a backticked
+// justification: the parser took the span whenever there was one, so
+// `authorised: src/a.ts (see \`src/lib/b.ts\`)` granted `src/lib/b.ts` — the
+// path the author pointed at, not the one they meant — and lost `src/a.ts`,
+// the glob they did write. Both halves wrong from one line, and the granting
+// half fails open exactly as #316's did.
+//
+// The rule that closes it: when a grant line carries a backticked span, the
+// glob is that span and it stands alone on the line, so the remainder must
+// open with it. A span behind a bare token is a justification, and the line
+// is refused rather than narrowed to the bare token — taking it silently
+// would discard what the author wrote, which is #316's reason unchanged.
+// Four shapes below, and the two refusals stay apart: an author fixing one
+// is never told the other.
+const findBare = scopeLib.findBareGlobBacktickedJustificationLines;
+const bareAlone = '## Files\n- `lib/**`\n- authorised: src/a.ts\n';
+const barePlusProse = '## Files\n- `lib/**`\n- authorised: src/a.ts — see the issue comment\n';
+const barePlusSpan = '## Files\n- `lib/**`\n- authorised: src/a.ts (see `src/lib/b.ts`)\n';
+const bareShapes = [bareAlone, barePlusProse, barePlusSpan];
+const refusedBareSpan = [{ line: 'authorised: src/a.ts (see `src/lib/b.ts`)', bare: 'src/a.ts', spans: ['src/lib/b.ts'] }];
+check('shape 5 — a bare glob alone grants that glob', pAG(bareAlone) === '["src/a.ts"]', pAG(bareAlone));
+check('shape 6 — a bare glob plus an unbackticked justification grants the bare glob alone', pAG(barePlusProse) === '["src/a.ts"]', pAG(barePlusProse));
+check('shape 7 — a bare glob plus a backticked justification grants nothing at all, in both grant parsers', pAG(barePlusSpan) === '[]' && pAGpr(barePlusSpan) === '[]', `${pAG(barePlusSpan)} / ${pAGpr(barePlusSpan)}`);
+check('findBareGlobBacktickedJustificationLines names the refused line, the bare token and the span, and refuses neither bare shape above', findBare !== undefined && JSON.stringify(findBare(barePlusSpan)) === JSON.stringify(refusedBareSpan) && findBare(bareAlone).length === 0 && findBare(barePlusProse).length === 0, findBare ? JSON.stringify(bareShapes.map((b) => findBare(b))) : 'findBareGlobBacktickedJustificationLines is not exported');
+// AC3: the two mistakes are different mistakes. Neither finder may claim the
+// other's line, or an author fixing one is handed the other's remedy.
+check('the two refusals stay distinguishable: neither finder reports the other shape', findBare !== undefined && findBare(twoSpans).length === 0 && findMulti(barePlusSpan).length === 0, findBare ? `${JSON.stringify(findBare(twoSpans))} / ${JSON.stringify(findMulti(barePlusSpan))}` : 'findBareGlobBacktickedJustificationLines is not exported');
+// The same #231 pin, over the three bare shapes: the parsers read a grant
+// through one function and must answer the same on each of them.
+check('the issue and PR grant parsers agree on every one of the three bare shapes', bareShapes.every((b) => pAG(b) === pAGpr(b)), JSON.stringify(bareShapes.map((b) => [pAG(b), pAGpr(b)])));
+// End to end through the real script: the refused line widens nothing, so
+// `src/a.ts` is a violation too — it was never granted — and the span the
+// old parser would have taken is not reported as authorised either.
+const rBareSpan = scope(files, file('issue-grant-bare-span.md', barePlusSpan), prPlain);
+check('scope grants nothing from a bare glob with a backticked justification: both files are violations and none is named as authorised', rBareSpan.status === 1 && JSON.stringify(scopeJson(rBareSpan.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) && !/Authorised by #1:/.test(rBareSpan.out), rBareSpan.out);
+
 finish();
