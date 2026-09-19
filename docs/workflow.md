@@ -187,13 +187,34 @@ layer three and an indirect form walks past it — `gh api -X PATCH` on the issu
 contain the words `issue edit` — so it saves a round trip and does not replace the reading
 of the diff. The line may be a bullet
 or bare, and the word is matched in any case. What follows it is read once, like this:
-**every backticked span on the line is a granted glob** when there is at least one —
-so a justification on the same line must contain no backticks of its own, or it grants
-whatever it quotes — and **otherwise the first whitespace-delimited token** is the glob,
-with a trailing `,` or `;` stripped and the rest of the line ignored. There is no comma
-split: `authorised: a.ts, b.ts` grants `a.ts` alone. One glob per line; a second grant
-gets a second line. The justification goes on the next line, indented, which the parser
-skips:
+**exactly one backticked span on the line is the granted glob**; **more than one grants
+nothing at all**, and `issue-lint` fails the issue over it, naming the line and every
+span on it (#316). Where there is no backticked span, **the first whitespace-delimited
+token** is the glob, with a trailing `,` or `;` stripped and the rest of the line
+ignored. There is no comma split: `authorised: a.ts, b.ts` grants `a.ts` alone — an
+under-grant a person reads, which is why that shape is left as it is. One glob per line;
+a second grant gets a second line.
+
+A line with two spans is **refused, not narrowed to the first one.** Every span used to
+be granted, so a justification that quoted a path on the same line granted that path too
+— and an over-grant fails *open*: the path enters the audited scope in silence and
+`scope` passes on a file nobody meant to grant. Taking only the first span would trade
+that for a silent under-grant, discarding what the writer wrote without saying so; a line
+carrying two spans is a line whose author meant something this format cannot express, so
+the check says which line and leaves the rewriting to a person. Fixing one means writing
+the grant again, not deleting a backtick until the check goes quiet.
+
+The refusal lands at dispatch, where the line is written: `claim.mts` runs the lint before
+it pushes the lock branch, and the `issue-lint` workflow runs it again on every edit of
+the issue, so a grant added after dispatch is refused too.
+
+The justification goes on the next line, indented and **not** a bullet, which the parser
+skips. Give it no backticks of its own. On the line itself that is the rule — a same-line
+justification is allowed only unbackticked, since it must add no span. On the
+continuation line it is a habit rather than a rule: an indented non-bullet line is read
+by no parser, so backticks there grant nothing, but the habit is what keeps them off the
+grant line. A *bulleted* continuation line is a different hazard — bullets are globs, so
+its backticks become declared scope rather than prose.
 
 ```
 - authorised: `src/api/admin-create-user.ts`

@@ -636,6 +636,36 @@ const sequencedGrant = lint(1242, issueBody({ files: GRANT_FILES, deps: '## Depe
 const sequencedGrantOut = parse(sequencedGrant.out);
 check('a grant overlap is sequenced, not a failure, when a Blocked by: orders the two', sequencedGrant.status === 0 && sequencedGrantOut?.ok === true && (sequencedGrantOut?.sequenced ?? []).some((s: any) => s?.issue === 245 && s?.files?.includes('scripts/reconcile.mts')), sequencedGrant.out);
 
+// --- #316: a grant line carrying more than one backticked span is refused --
+// The refusal has to reach the writer where they write, which is the issue at
+// dispatch: `scripts/claim.mts` runs this lint before it pushes the lock
+// branch, and the `issue-lint` workflow reruns it on every `edited`, so a
+// grant added after dispatch is refused too. Four shapes, four outcomes.
+const ONE_SPAN = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts`\n';
+const TWO_SPANS = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts` (needed alongside `package.json`)\n';
+const SPAN_PLUS_PROSE = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts` — see the issue comment\n';
+const SPAN_PLUS_CONTINUATION = '## Files\n- `tests/**`\n- authorised: `scripts/reconcile.mts`\n  (orchestrator: AC1 imports it from `package.json`)\n';
+const grantsOf = (out: string): string => JSON.stringify((parse(out)?.globs ?? []).filter((g: any) => g.grant === true).map((g: any) => g.glob));
+const ONLY_GRANT = JSON.stringify(['scripts/reconcile.mts']);
+
+const shapeOne = lint(3161, issueBody({ files: ONE_SPAN }));
+check('shape 1 — one span: the issue passes and the span is the one grant', shapeOne.status === 0 && grantsOf(shapeOne.out) === ONLY_GRANT, shapeOne.out);
+
+const shapeTwo = lint(3162, issueBody({ files: TWO_SPANS }));
+const shapeTwoOut = parse(shapeTwo.out);
+const shapeTwoRefusal = (shapeTwoOut?.failures ?? []).filter((f: any) => typeof f === 'string' && /authorised:/.test(f) && /more than one/.test(f));
+check('shape 2 — two spans: the issue fails at dispatch instead of granting both', shapeTwo.status === 1 && shapeTwoOut?.ok === false, shapeTwo.out);
+check('shape 2 — the refusal names the line and both spans', shapeTwoRefusal.length === 1 && shapeTwoRefusal[0].includes('authorised: `scripts/reconcile.mts` (needed alongside `package.json`)') && shapeTwoRefusal[0].includes('scripts/reconcile.mts') && shapeTwoRefusal[0].includes('package.json'), shapeTwo.out);
+check('shape 2 — neither span is reported as a grant', grantsOf(shapeTwo.out) === '[]', shapeTwo.out);
+const shapeTwoMd = lint(3163, issueBody({ files: TWO_SPANS }), { markdown: true });
+check('shape 2 — the --markdown comment carries the refusal too', shapeTwoMd.status === 1 && /FAIL/.test(shapeTwoMd.out) && /needed alongside/.test(shapeTwoMd.out), shapeTwoMd.out);
+
+const shapeThree = lint(3164, issueBody({ files: SPAN_PLUS_PROSE }));
+check('shape 3 — a span plus an unbackticked justification on the same line passes, granting the span alone', shapeThree.status === 0 && grantsOf(shapeThree.out) === ONLY_GRANT, shapeThree.out);
+
+const shapeFour = lint(3165, issueBody({ files: SPAN_PLUS_CONTINUATION }));
+check('shape 4 — a justification on a continuation line passes, and nothing on that line is granted', shapeFour.status === 0 && grantsOf(shapeFour.out) === ONLY_GRANT, shapeFour.out);
+
 // --- AC5: Blocked-by numbers must exist -------------------------------------
 const validBlocker = lint(115, issueBody({ deps: '## Dependencies\nBlocked by: #5\n' }));
 check('a Blocked-by number that gh can find does not fail', validBlocker.status === 0, validBlocker.out);
@@ -643,11 +673,7 @@ check('a Blocked-by number that gh can find does not fail', validBlocker.status 
 const invalidBlocker = lint(116, issueBody({ deps: '## Dependencies\nBlocked by: #999\n' }));
 const invalidBlockerOut = parse(invalidBlocker.out);
 check('a Blocked-by number that gh cannot find fails with ok: false', invalidBlocker.status === 1 && invalidBlockerOut?.ok === false, invalidBlocker.out);
-check(
-  'the missing-blocker failure names #999 in failures[]',
-  Array.isArray(invalidBlockerOut?.failures) && invalidBlockerOut.failures.some((f: any) => typeof f === 'string' && f.includes('#999')),
-  invalidBlocker.out,
-);
+check('the missing-blocker failure names #999 in failures[]', Array.isArray(invalidBlockerOut?.failures) && invalidBlockerOut.failures.some((f: any) => typeof f === 'string' && f.includes('#999')), invalidBlocker.out);
 
 const noneBlocker = lint(117, issueBody({ deps: '## Dependencies\nBlocked by: none\n' }));
 check('"Blocked by: none" needs no gh lookup and passes', noneBlocker.status === 0, noneBlocker.out);
@@ -662,15 +688,7 @@ check('"Blocked by: 999" (no #) is still checked against gh and fails when not f
 // --- AC6: output shape, --markdown, and the { error } path ------------------
 check('a failing issue exits 1 with ok: false', missingGoal.status === 1 && missingGoalOut?.ok === false, missingGoal.out);
 check('a passing issue exits 0 with ok: true', valid.status === 0 && validOut?.ok === true, valid.out);
-check(
-  'the JSON result carries every required key, and no more',
-  typeof validOut?.issue === 'number' &&
-    typeof validOut?.ok === 'boolean' &&
-    Array.isArray(validOut?.failures) &&
-    Array.isArray(validOut?.globs) &&
-    Array.isArray(validOut?.sequenced),
-  valid.out,
-);
+check('the JSON result carries every required key, and no more', typeof validOut?.issue === 'number' && typeof validOut?.ok === 'boolean' && Array.isArray(validOut?.failures) && Array.isArray(validOut?.globs) && Array.isArray(validOut?.sequenced), valid.out);
 // AC1 (of #62): the entry-point reference check is gone, and with it the
 // `warnings` key — this issue's default `## Files` (`tests/**`) covers
 // tests/smoke.mts, which .github/workflows/test.yml references by path, so
@@ -699,11 +717,7 @@ const badMilestoneFile = join(repo, `bad-milestone-${seq++}.json`);
 writeFileSync(badMilestoneFile, 'not valid json');
 const badMilestone = lint(119, issueBody(), { milestone: badMilestoneFile });
 const badMilestoneOut = parse(badMilestone.out);
-check(
-  'an unparseable --milestone-issues-file exits 1 with { error }, not a crash',
-  badMilestone.status === 1 && typeof badMilestoneOut?.error === 'string',
-  badMilestone.out,
-);
+check('an unparseable --milestone-issues-file exits 1 with { error }, not a crash', badMilestone.status === 1 && typeof badMilestoneOut?.error === 'string', badMilestone.out);
 
 // { error } + --markdown: the marker still leads, so the workflow's own
 // comment is never orphaned without it on this path.
@@ -711,11 +725,7 @@ const badMilestoneMd = ci('issue-lint.mts', ['--issue', '120', '--issue-body-fil
   cwd: repo,
   env: { PATH: PATH_WITH_FAKE_GH },
 });
-check(
-  'the { error } path still starts with the marker under --markdown',
-  badMilestoneMd.status === 1 && badMilestoneMd.out.startsWith('<!-- agentic-issue-lint -->'),
-  badMilestoneMd.out,
-);
+check('the { error } path still starts with the marker under --markdown', badMilestoneMd.status === 1 && badMilestoneMd.out.startsWith('<!-- agentic-issue-lint -->'), badMilestoneMd.out);
 
 // AC4 (of #37): the real body of issue #31 (`gh issue view 31 --json body -q
 // .body`), pasted verbatim, as it was when this issue was opened — "Blocked
