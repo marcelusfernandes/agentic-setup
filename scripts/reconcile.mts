@@ -63,15 +63,19 @@
 //                                                              // local worktree of this
 //                                                              // checkout (dead-locked ones
 //                                                              // don't count)
-//     inReview: [{ number, pr, checks: 'green'|'red'|'pending', reviewApproved, foreignLock }],
-//                                                              // checks comes from one
-//                                                              // `gh pr checks <pr>` call per
-//                                                              // in-review PR, not from the
-//                                                              // list-call's rollup.
-//                                                              // foreignLock: the other
-//                                                              // route's lock and its pull
-//                                                              // request — reported, never
-//                                                              // reviewed or landed here
+//     inReview: [{ number, pr, checks, reviewApproved, foreignLock }],
+//       checks is 'green' | 'red' | 'pending' | 'conflict'. The first three come from one
+//       `gh pr checks <pr>` call per in-review PR, not from the list-call's rollup.
+//       'conflict' comes from the list call's own `mergeable` and takes precedence over
+//       every bucket: a head that conflicts with its base carries no check runs, so the
+//       empty answer gh gives is a consequence of the conflict, not evidence about the
+//       checks — reading it as 'pending' is what left the loop waiting for checks that
+//       never arrive. Only `CONFLICTING` does this. `UNKNOWN` is a mergeability GitHub has
+//       not computed yet, routine on a freshly pushed head, and keeps whatever its checks
+//       say. The remedy for 'conflict' is the loop's own branch, in docs/orchestration.md
+//       step 5: "main moved and conflicts".
+//       foreignLock: the other route's lock and its pull request — reported, never
+//       reviewed or landed here
 //     stale: [{ number, reason }],                            // in-progress, no PR, no remote branch
 //     humanPending: [{ number, title, label }],               // carries human:pending or the
 //                                                              // legacy bare human (any case);
@@ -234,15 +238,47 @@ import { codexLockBranch, lockBranches, parseBlockedBy } from './lib/issues.mts'
 
 type Label = { name: string };
 type Issue = { number: number; title: string; body: string; labels: Label[]; milestone?: { title?: string } | null };
-type PR = { number: number; headRefName: string; labels: Label[]; reviewDecision: string | null };
+type PR = { number: number; headRefName: string; labels: Label[]; reviewDecision: string | null; mergeable?: string };
 type Milestone = { number: number; title: string; state: string; description?: string | null };
-type PrCheckEntry = { name?: string; bucket?: string };
+type PrCheckEntry = { name?: string; bucket?: string; state?: string };
+type ChecksValue = 'green' | 'red' | 'pending' | 'conflict';
 
 // `gh pr checks --json name,bucket` categorizes each check's raw CI state
 // into exactly one of these five buckets (see `gh pr checks --help`) — this
 // mirrors that five-way split, not GitHub's raw CheckConclusionState names.
 const CHECK_GREEN = new Set(['pass', 'skipping']);
 const CHECK_RED = new Set(['fail', 'cancel']);
+
+// `state` is the run's conclusion once it has one and its *status* until
+// then, so these are the values that mean "not completed" — and a run
+// reporting one of them is pending however it was bucketed, since gh derives
+// the bucket from a snapshot and the snapshot can be older than the run (D16).
+const CHECK_RUNNING = new Set(['queued', 'in_progress', 'pending', 'waiting', 'requested', 'expected']);
+const CHECK_CANCELLED = new Set(['cancelled', 'canceled']); // both spellings GitHub has used
+
+/** A run's effective bucket: `pending` while its own state says it has not completed. */
+function bucketOf(c: PrCheckEntry): string {
+  const state = String(c.state ?? '').toLowerCase();
+  return CHECK_RUNNING.has(state) ? 'pending' : String(c.bucket ?? '').toLowerCase();
+}
+
+/**
+ * The runs that still say something about the pull request, with the noise a
+ * re-triggered workflow leaves behind removed: a cancelled run is dropped
+ * when another run of the *same check* survives beside it, because a label
+ * edit cancels the run in flight and the cancellation of a superseded run
+ * reports on the edit, not on the check (D16). A cancelled run nothing
+ * supersedes is kept and stays red — a check cancelled and never replaced is
+ * a check that did not hold the line. No timestamp is consulted: the live run
+ * of a just-started workflow reports no `startedAt`, which is exactly how the
+ * cancelled one came to be treated as the latest.
+ */
+function liveChecks(entries: PrCheckEntry[]): PrCheckEntry[] {
+  const isCancelled = (c: PrCheckEntry) =>
+    CHECK_CANCELLED.has(String(c.state ?? '').toLowerCase()) || bucketOf(c) === 'cancel';
+  const superseded = new Set(entries.filter((c) => !isCancelled(c)).map((c) => String(c.name ?? '')));
+  return entries.filter((c) => !(isCancelled(c) && superseded.has(String(c.name ?? ''))));
+}
 
 function fail(message: string): never {
   console.log(JSON.stringify({ error: message }));
@@ -428,21 +464,28 @@ function pendingHumanLabel(labels: Label[] | undefined): string | null {
  * `gh` failure: no such PR, no auth, `gh` not on PATH) degrades to 'pending'
  * rather than failing the whole pass over one PR's checks. Cached by PR
  * number so a PR closing more than one in-review issue costs one call.
+ *
+ * `state` is read beside `bucket` because that dedupe is neither complete
+ * nor timestamp-safe (D16): gh keys it on the check's name and workflow, so
+ * two runs of one name from different workflows both survive, and it picks
+ * the survivor by `startedAt` — which a run still starting does not report,
+ * so three label edits in a row can leave the cancelled run in the answer
+ * and drop the live one. Hence `liveChecks` and `bucketOf` above.
  */
-const checksCache = new Map<number, 'green' | 'red' | 'pending'>();
-function checksForPr(prNumber: number): 'green' | 'red' | 'pending' {
+const checksCache = new Map<number, ChecksValue>();
+function checksForPr(prNumber: number): ChecksValue {
   const cached = checksCache.get(prNumber);
   if (cached) return cached;
-  const r = spawnSync('gh', ['pr', 'checks', String(prNumber), '--json', 'name,bucket'], { encoding: 'utf8' });
+  const r = spawnSync('gh', ['pr', 'checks', String(prNumber), '--json', 'name,bucket,state'], { encoding: 'utf8' });
   const out = (r.stdout ?? '').trim();
-  let result: 'green' | 'red' | 'pending' = 'pending';
+  let result: ChecksValue = 'pending';
   if (out) {
     try {
-      const entries: PrCheckEntry[] = JSON.parse(out);
-      const bucket = (c: PrCheckEntry) => String(c.bucket ?? '').toLowerCase();
-      if (Array.isArray(entries) && entries.length > 0) {
-        if (entries.some((c) => CHECK_RED.has(bucket(c)))) result = 'red';
-        else if (entries.every((c) => CHECK_GREEN.has(bucket(c)))) result = 'green';
+      const parsed = JSON.parse(out);
+      const entries: PrCheckEntry[] = Array.isArray(parsed) ? liveChecks(parsed) : [];
+      if (entries.length > 0) {
+        if (entries.some((c) => CHECK_RED.has(bucketOf(c)))) result = 'red';
+        else if (entries.every((c) => CHECK_GREEN.has(bucketOf(c)))) result = 'green';
       }
     } catch {
       // Non-JSON stdout: leave result at 'pending' rather than failing the
@@ -521,9 +564,10 @@ const closedNumbers = new Set(
   ghJson<{ number: number }[]>(['issue', 'list', '--state', 'closed', '--json', 'number', '--limit', '1000'], []).map((i) => i.number),
 );
 
-// 4. open PRs.
+// 4. open PRs. `mergeable` rides along on this one list call: without it a
+// conflict is indistinguishable from checks that have not started (D15).
 const prs = ghJson<PR[]>(
-  ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,labels,reviewDecision', '--limit', '200'],
+  ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,labels,reviewDecision,mergeable', '--limit', '200'],
   [],
 );
 
@@ -646,6 +690,18 @@ function prFor(branch: string | null): PR | null {
   return prs.find((p) => p.headRefName === branch) ?? null;
 }
 
+/**
+ * A pull request's `inReview` checks value. 'conflict' takes precedence over
+ * every bucket — the empty answer a conflicting head's `gh pr checks` gives
+ * is a *consequence* of the conflict, not evidence about the checks, and
+ * reading it as 'pending' left the loop waiting for checks that never arrive
+ * (D15, PR #217). Only `CONFLICTING`: `UNKNOWN` is a mergeability GitHub has
+ * not computed yet, routine on a freshly pushed head.
+ */
+function checksFor(pr: PR): ChecksValue {
+  return pr.mergeable === 'CONFLICTING' ? 'conflict' : checksForPr(pr.number);
+}
+
 // Issues a person must decide on before any agent touches them. They are
 // excluded from `ready` whatever their state label says.
 const humanPending = issues
@@ -720,7 +776,8 @@ const inReview = issues
     return {
       number: i.number,
       pr: pr ? pr.number : null,
-      checks: pr ? checksForPr(pr.number) : 'pending' as const,
+      // 'conflict' short-circuits the buckets; see `checksFor` and the header.
+      checks: pr ? checksFor(pr) : 'pending' as const,
       reviewApproved: pr ? hasLabel(pr.labels, 'review:approved') || pr.reviewDecision === 'APPROVED' : false,
       // The other route's lock and pull request: reported so the state is
       // visible, never reviewed or landed from here.

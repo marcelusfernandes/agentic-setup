@@ -105,11 +105,21 @@
 // Mode 'approved' is where that gap is narrowest, because there the server
 // keeps a record of its own — see that mode's entry above.
 //
-// A head GitHub does not report as MERGEABLE refuses with missing
-// ['merge:not-mergeable'] — CONFLICTING, and UNKNOWN too, because a
-// mergeability GitHub has not computed is not a mergeability this script may
-// assume. #241 armed `--auto` on a conflicting pull request, where the very
-// commit that resolves the conflict would then have merged itself unreviewed.
+// A head GitHub reports as CONFLICTING refuses with missing ['pr:conflict'],
+// before any merge call. It is named apart from the refusal below because it
+// is the one state with a remedy: the implementer merges `origin/<base>` on
+// the published branch and the new head is reviewed again
+// (docs/orchestration.md step 5, "main moved and conflicts"). And it has to
+// be named at all because a conflicting head carries no check runs, so every
+// reader that only classifies checks reads the conflict as "still running"
+// and waits for what will never arrive (#239, D15/D20).
+// Any other head GitHub does not report as MERGEABLE refuses with missing
+// ['merge:not-mergeable'] — UNKNOWN included, because a mergeability GitHub
+// has not computed is not a mergeability this script may assume; that is not
+// a conflict, it is an answer that has not arrived, and this file fails
+// closed on those (invariant 3). #241 armed `--auto` on a conflicting pull
+// request, where the very commit that resolves the conflict would then have
+// merged itself unreviewed.
 //
 // Then the checks, in *both* gates: `gh pr checks <pr> --required --json
 // name,bucket` must return a non-empty list in which every bucket is `pass`,
@@ -197,7 +207,7 @@ type PRComments = { comments?: Array<{ body?: unknown }> };
 type PRReview = { state?: unknown; commit?: { oid?: unknown } | null };
 type PRReviews = { reviews?: PRReview[] };
 type Rule = { type?: string; parameters?: { required_approving_review_count?: number } };
-type Check = { bucket?: unknown };
+type Check = { name?: unknown; bucket?: unknown; state?: unknown };
 type Mode = 'agent' | 'approved' | 'docs';
 
 // The marker the orchestrator writes with the head it reviewed. Only a full
@@ -266,22 +276,57 @@ function effectiveRules(base: string): Rule[] | null {
   }
 }
 
+// `state` carries the run's conclusion once it has one and its *status*
+// until then, so these are the values that mean "not completed". A run
+// reporting one of them is pending however it was bucketed: gh derives the
+// bucket from a snapshot, and the snapshot can be older than the run (D16).
+const CHECK_RUNNING = new Set(['queued', 'in_progress', 'pending', 'waiting', 'requested', 'expected']);
+const CHECK_CANCELLED = new Set(['cancelled', 'canceled']); // both spellings GitHub has used
+
+/** A run's effective bucket: `pending` while its own state says it has not completed. */
+function bucketOf(c: Check): string {
+  const state = String(c?.state ?? '').toLowerCase();
+  return CHECK_RUNNING.has(state) ? 'pending' : String(c?.bucket ?? '').toLowerCase();
+}
+
 /**
- * True only when `gh pr checks --required` answers with a non-empty list in
- * which every check sits in bucket `pass`. gh prints the JSON and exits
+ * The runs that still say something about the pull request. A cancelled run
+ * is dropped when another run of the *same check* survives beside it: a label
+ * edit re-triggers the workflow and cancels the run in flight, so that
+ * cancellation reports on the edit, not on the check (D16). One nothing
+ * supersedes is kept and still fails — a check cancelled and never replaced
+ * is a check that did not hold the line. No timestamp is consulted, which is
+ * the point: gh's own dedupe picks by `startedAt`, and a just-started run
+ * reports none, which is how the cancelled run came to look like the latest.
+ */
+function liveChecks(entries: Check[]): Check[] {
+  const isCancelled = (c: Check) =>
+    CHECK_CANCELLED.has(String(c?.state ?? '').toLowerCase()) || bucketOf(c) === 'cancel';
+  const superseded = new Set(entries.filter((c) => !isCancelled(c)).map((c) => String(c?.name ?? '')));
+  return entries.filter((c) => !(isCancelled(c) && superseded.has(String(c?.name ?? ''))));
+}
+
+/**
+ * True only when `gh pr checks --required` answers with a list that, once the
+ * superseded cancellations are dropped, is non-empty and holds nothing but
+ * runs whose effective bucket is `pass`. gh prints the JSON and exits
  * non-zero whenever something is not green, so the status is ignored and an
- * unparseable answer is a refusal, never a pass.
+ * unparseable answer is a refusal, never a pass. A list that is empty — or
+ * that only held cancellations something replaced — is a refusal too: an
+ * empty list is not "nothing is red", it is "nothing held the line".
  */
 function everyRequiredCheckPasses(pr: number): boolean {
-  const out = gh(['pr', 'checks', String(pr), '--required', '--json', 'name,bucket']);
+  const out = gh(['pr', 'checks', String(pr), '--required', '--json', 'name,bucket,state']);
   let parsed: unknown;
   try {
     parsed = JSON.parse(out.stdout);
   } catch {
     return false;
   }
-  if (!Array.isArray(parsed) || parsed.length === 0) return false;
-  return parsed.every((c) => (c as Check | null)?.bucket === 'pass');
+  if (!Array.isArray(parsed)) return false;
+  const live = liveChecks(parsed as Check[]);
+  if (live.length === 0) return false;
+  return live.every((c) => bucketOf(c) === 'pass');
 }
 
 /** Milliseconds, synchronously, with no dependency and no event loop: this script is a straight line. */
@@ -458,8 +503,29 @@ if (mode === 'approved') {
 
 const gate: 'ruleset' | 'client-checks' = rules.some((r) => r.type === 'required_status_checks') ? 'ruleset' : 'client-checks';
 
+// A conflict is its own refusal, before the general one below, because it is
+// the one state here with a remedy the orchestrator can act on: the
+// implementer merges `origin/<base>` on the published branch, and the new
+// head is reviewed again and gets a fresh marker
+// (docs/orchestration.md step 5, "main moved and conflicts"). It also has to
+// be named, not merely refused: a conflicting head carries no check runs at
+// all, so every reader that only classifies checks calls it "still running"
+// and waits for what never arrives (#239, D15/D20).
+if (view.mergeable === 'CONFLICTING') {
+  fail({
+    refused: `PR #${pr}: GitHub reports its head as CONFLICTING with ${view.baseRefName} — merge origin/${view.baseRefName} into the branch, have the new head reviewed, then land again.`,
+    pr,
+    missing: ['pr:conflict'],
+    gate,
+    mode,
+  });
+}
+
 // A head that cannot merge must not have a merge armed on it: the commit
-// that later makes it mergeable is one nobody reviewed (#241).
+// that later makes it mergeable is one nobody reviewed (#241). UNKNOWN lands
+// here and not above: a mergeability GitHub has not computed is not a
+// conflict, it is an answer that has not arrived, and this script fails
+// closed on those (invariant 3) rather than assuming either way.
 if (view.mergeable !== 'MERGEABLE') {
   fail({
     refused: `PR #${pr}: GitHub reports its head as ${view.mergeable ?? 'unknown'}, not MERGEABLE — nothing is queued on a head that cannot merge.`,
