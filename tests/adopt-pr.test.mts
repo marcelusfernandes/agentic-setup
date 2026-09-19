@@ -128,9 +128,11 @@ check('it names the one adoption branch and its slug', mod?.ADOPTION_BRANCH === 
 // one that resolves by whichever match the search returned first, which is
 // exactly the defect these cases exist to catch.
 
+/** Every box of the fixture plan ticked: `--pr` acts on the ticks, and these cases are about the gate (#368). */
+const TICKED = ['ruleset:absent', 'ruleset:review-not-required', 'labels:missing', 'hooks:not-installed', 'workflows:missing', 'test-command:none', 'record:stale'].map((gap) => `- [x] \`${gap}\` — adopt it`).join('\\n');
 /** One issue of the plan title, as `gh issue list --json …` renders it. */
 const issueJson = (n: number, label: string, state: 'OPEN' | 'CLOSED'): string =>
-  `{"number":${n},"title":"${PLAN_ISSUE_TITLE}","state":"${state}","labels":[{"name":"${label}"}]}`;
+  `{"number":${n},"title":"${PLAN_ISSUE_TITLE}","state":"${state}","labels":[{"name":"${label}"}],"body":"${TICKED}"}`;
 
 const OPEN_PENDING = issueJson(PLAN_ISSUE, PENDING_LABEL, 'OPEN');
 const OPEN_DECIDED = issueJson(PLAN_ISSUE, DECIDED_LABEL, 'OPEN');
@@ -203,6 +205,7 @@ ${PLAN_ARMS}
     for a in "\$@"; do printf '%s\\0' "\$a" >> "\$state/issue-create.args"; done
     echo "https://github.com/org/repo/issues/${PLAN_ISSUE}"
     ;;
+  "issue comment"|"api repos/{owner}/{repo}/issues/"*) echo '[{"event":"labeled","label":{"name":"human:decided"},"actor":{"login":"the-owner"}}]' ;;
   "label create")
     echo "fake-gh: label created"
     ;;
