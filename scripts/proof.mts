@@ -33,6 +33,13 @@
 // it rejected when there is one. `tail` is the last 40 lines of the run's
 // output, stdout and stderr together.
 //
+// The run is bounded in two dimensions, both explicit (#297). `spawnSync`
+// defaults to a 1 MiB buffer and to no timeout at all, so a suite that printed
+// more than that came back as a command that could not be executed, and a
+// command that hung hung the caller with no verdict ever. Each limit has an
+// env override, and an override can raise a limit until it stops limiting —
+// they are the operator's escape, not a contract (invariant 4).
+//
 // **Crash policy: fail closed.** `pass` is the only outcome that exits 0;
 // `fail` and `cannot-run` exit 1. Nothing is ever reported as passing because
 // a read failed: a declaration that is present and unusable, a record that is
@@ -50,6 +57,31 @@ const USAGE = 'usage: node scripts/proof.mts <slug>';
 
 /** How many lines of the run's output the report carries, as `negative-control` does. */
 const TAIL = 40;
+
+/** A positive integer from `value`, or `fallback` when it is absent or is not one. */
+const limit = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * How much of the run's output is held in memory. `spawnSync`'s default is
+ * 1 MiB, and a command that prints more is killed with ENOBUFS — which this
+ * runner reported as a proof that could not run, so a noisy suite read as a
+ * broken command. 64 MiB is past anything this repository's own suite has
+ * printed and still far below a runner's memory.
+ * `AGENTIC_RUN_MAX_BUFFER` (bytes) raises or lowers it.
+ */
+const MAX_BUFFER = limit(process.env.AGENTIC_RUN_MAX_BUFFER, 64 * 1024 * 1024);
+
+/**
+ * How long the run may take. `spawnSync` has no timeout by default, so a
+ * command that hangs hangs whatever is waiting on this runner — a session's
+ * stop gate among them — with no verdict at the end of it. 30 minutes is well
+ * past this repository's own suite, which takes minutes, and well short of a
+ * CI job's own limit. `AGENTIC_RUN_TIMEOUT_MS` raises or lowers it.
+ */
+const TIMEOUT_MS = limit(process.env.AGENTIC_RUN_TIMEOUT_MS, 30 * 60 * 1000);
 
 /**
  * The reason a command that resolved could not be executed at all. Annotated
@@ -113,12 +145,29 @@ try {
 // --- 4. the run ---------------------------------------------------------------
 // The command runs in the repository root, never in the caller's directory:
 // a proof is a statement about the repository.
-const run = spawnSync(resolved.command, [], { cwd: root, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+const run = spawnSync(resolved.command, [], {
+  cwd: root,
+  shell: true,
+  encoding: 'utf8',
+  env: { ...process.env, CI: '1' },
+  maxBuffer: MAX_BUFFER,
+  timeout: TIMEOUT_MS,
+});
 const output = `${run.stdout ?? ''}${run.stderr ?? ''}`.trim();
 const tail = output.split('\n').slice(-TAIL).join('\n');
 
 // 127 is the shell's "command not found", and `error` is a spawn that never
-// started: neither is a proof that failed, so neither is `fail`.
+// started: neither is a proof that failed, so neither is `fail`. A run killed
+// for outrunning one of the two limits is neither either — it is a command
+// that *did* run, so it keeps a reason of its own rather than borrowing
+// `proof:command-not-runnable`, which says the command never started. The
+// distinction is the whole value of the report here: only these two are
+// cleared by raising a limit.
+const spawnCode = (run.error as NodeJS.ErrnoException | undefined)?.code;
+const overran: ProofReason | null =
+  spawnCode === 'ENOBUFS' ? 'proof:output-too-large'
+    : spawnCode === 'ETIMEDOUT' ? 'proof:command-timed-out'
+      : null;
 const unrunnable = run.status === 127 || Boolean(run.error);
 const outcome: Outcome = unrunnable ? 'cannot-run' : run.status === 0 ? 'pass' : 'fail';
 
@@ -128,5 +177,5 @@ report({
   outcome,
   command: resolved.command,
   tail,
-  ...(unrunnable ? { reason: NOT_RUNNABLE } : {}),
+  ...(unrunnable ? { reason: overran ?? NOT_RUNNABLE } : {}),
 });

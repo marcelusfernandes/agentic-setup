@@ -1,0 +1,9 @@
+{
+  "tests": [
+    "tests/negative-control-structural.test.mts",
+    "tests/negative-control-runs.test.mts",
+    "tests/negative-control.test.mts",
+    "tests/proof.test.mts"
+  ],
+  "describes": "the four test files whose red proves this branch, deliberately without tests/lib/harness.mts: the harness fix is the change, and overlaying it on the base would let the change prove itself"
+}

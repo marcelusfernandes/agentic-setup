@@ -50,18 +50,25 @@
 //                the check (#355); see the note below for what carries the
 //                weight instead
 //   no-tests     the diff adds or changes no test files
-//   cannot-run   the test command could not be found or detected, or the
-//                branch's `proof/<slug>.json` could not be read as written.
+//   cannot-run   the test command could not be found or detected, it ran and
+//                outran one of the two limits below, or the branch's
+//                `proof/<slug>.json` could not be read as written.
 //                When nothing was detected, the detail names the escape a
 //                repository has whatever its stack: a `Makefile` with a
 //                `test:` target, which ci/lib/detect.mts reads first. The
 //                declaration's causes, each naming the path it rejected:
 //                it does not parse, it is not a JSON object, it has no
 //                `"tests"` array, its `"command"` is not a non-empty string,
+//                it carries a key the format does not define, its
+//                `"describes"` is not a non-empty sentence,
 //                a declared path is absolute or escapes the repository root
 //                once normalised, a declared path is absent from the head
 //                commit, or the declaration exists at head and its blob
-//                cannot be read
+//                cannot be read. A run that printed more than
+//                AGENTIC_RUN_MAX_BUFFER holds, or that outlived
+//                AGENTIC_RUN_TIMEOUT_MS, is named as that rather than as a
+//                command that could not be executed: only those two are
+//                cleared by raising a limit (#297)
 //   inconclusive the baseline itself failed, before the overlay — a base that
 //                cannot run its own tests makes the negative control unable
 //                to discriminate anything
@@ -137,21 +144,22 @@
 // command for both runs. It is read from the head *commit*, never from an
 // issue or PR body (invariant 9): the slug comes from the branch, and the
 // only thing an issue carries is a `Declaration:` line that `issue-lint`
-// checks the shape of.
+// checks the shape of. The declaration is read and validated by
+// `ci/lib/proof.mts`, the module `scripts/lib/proof.mts` reads it with too,
+// so the runner and this check cannot accept one file and reject it: two
+// parsers meant a branch could declare a proof one honoured and the other
+// refused, and the looser of the two is the one that decides what is
+// overlaid (#297).
 //
-// The declaration fails closed. Presence is decided from the head *tree*
-// (`git ls-tree`), never from the exit status of `git show`: only "absent
-// from the head commit" means "this branch declares nothing", and every
-// other failure — a corrupt object, an unreadable head, a `git` that cannot
-// run — is `cannot-run`. A declaration that does not parse, names no test,
-// carries a `command` that is not a non-empty string, or names a path that
-// is absolute, escapes the repository root once normalised, or is absent at
-// head, is `cannot-run` too, named path and all, before any worktree is
-// made. A broken declaration must not silently narrow the control: a fall
-// back to the detected globs would report "we could not verify this" as
-// "this passed", which is the one thing this check exists to prevent.
-// Without a declaration nothing changes, including the path-class skip,
-// which is decided before the declaration is read.
+// The declaration fails closed, and why each refusal is the shape it is
+// belongs with the reader: `ci/lib/proof.mts` states it, including why
+// presence comes from the head *tree* and never from the exit status of
+// `git show`. What this file owes the reader is the consequence. Every
+// refusal is `cannot-run`, named path and all, before any worktree is made,
+// because a fall back to the detected globs would report "we could not
+// verify this" as "this passed" — the one thing this check exists to
+// prevent. Without a declaration nothing changes, including the path-class
+// skip, which is decided before the declaration is read.
 //
 // `test-only` is the one verdict that passes without any red at all, so what
 // it rests on is written out here (#355). The overlay is a comparison: head's
@@ -186,6 +194,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { parseArgs } from './lib/args.mts';
 import { detectCommands } from './lib/detect.mts';
+import { branchSlug, headDeclarationPath, KNOWN_KEYS, ProofError, readDeclarationAtHead, validateDeclaredPaths } from './lib/proof.mts';
+import type { Declaration } from './lib/proof.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
 
@@ -215,6 +225,33 @@ const TAIL = 40;
 // How much of the overlaid run's own failure report a verdict repeats back.
 const FAILURES_SHOWN = 10;
 const FAILURE_WIDTH = 200;
+
+/** A positive integer from `value`, or `fallback` when it is absent or is not one. */
+const limit = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * How much of each run's output this check holds in memory. `spawnSync`
+ * defaults to 1 MiB, and a command that prints more is killed with ENOBUFS,
+ * which arrives here as "the command could not be executed" — so a suite that
+ * was merely noisy was reported as a broken one, on a check whose whole job is
+ * to read that output. 64 MiB is past anything this repository's own suite has
+ * printed and still far below a runner's memory. AGENTIC_RUN_MAX_BUFFER
+ * (bytes) raises or lowers it; an override can raise it until it stops
+ * limiting, which is the operator's to decide (invariant 4).
+ */
+const RUN_MAX_BUFFER = limit(process.env.AGENTIC_RUN_MAX_BUFFER, 64 * 1024 * 1024);
+
+/**
+ * How long either run may take. `spawnSync` has no timeout by default, so a
+ * test command that hangs on the base hangs the job until the workflow's own
+ * limit — hours later, with no verdict and nothing to read. 30 minutes is well
+ * past this repository's own suite and well short of a job timeout.
+ * AGENTIC_RUN_TIMEOUT_MS raises or lowers it.
+ */
+const RUN_TIMEOUT_MS = limit(process.env.AGENTIC_RUN_TIMEOUT_MS, 30 * 60 * 1000);
 
 const args = parseArgs(process.argv.slice(2));
 const root = process.cwd();
@@ -458,121 +495,32 @@ if (legacyLabel) {
 
 // --- the proof a branch declares, when it declares one (#136) -------------
 
-type Declaration = { path: string; tests: string[]; command?: string };
-
-/** The `<slug>` of a `<type>/<n>-<slug>` ref, or `null` for any other shape. */
-function branchSlug(ref: string): string | null {
-  const m = ref.replace(/^refs\/heads\//, '').trim().match(/^[^/]+\/\d+-([a-z0-9-]+)$/);
-  return m ? m[1] : null;
-}
-
-type Presence = 'present' | 'absent' | 'unresolvable';
-
 /**
- * Whether `path` is in the head *commit*, answered from the tree rather than
- * from the exit status of `git show`.
- *
- * `git show <head>:<path>` fails identically for a path the commit does not
- * have, for a blob whose object is missing or corrupt, and for a `git` that
- * cannot run at all, so its status alone cannot tell "this branch declares
- * nothing" from "we could not read what it declares" — and reading the
- * second as the first is the silent fallback this check exists to prevent.
- * `git ls-tree` answers from the tree: exit 0 with the path on stdout when
- * the commit has it, exit 0 and empty stdout when it does not, and non-zero
- * only when the question itself could not be asked — a path outside the
- * repository, or a head that will not resolve.
+ * The check's own sentence for a declaration `ci/lib/proof.mts` refused. The
+ * reason is the contract and the phrasing is this file's: an operator reads
+ * these in a job summary, where "has no `"tests"` array of file paths" says
+ * more than a reason name does. `detail` is the underlying cause — what
+ * `JSON.parse` or `git` said — which the reason alone cannot carry.
  */
-function pathAtHead(path: string): { presence: Presence; error: string } {
-  const r = spawnSync('git', ['ls-tree', '--name-only', head, '--', path], { cwd: root, encoding: 'utf8' });
-  if (r.status !== 0) {
-    return { presence: 'unresolvable', error: (r.stderr ?? '').trim() || r.error?.message || `git ls-tree exited ${r.status}` };
+function declarationWhy(error: ProofError): string {
+  const because = error.detail ? ` (${error.detail})` : '';
+  switch (error.reason) {
+    case 'proof:unparsable':
+      return `does not parse as JSON${because}`;
+    case 'proof:unknown-key':
+      return `carries \`"${error.field}"\`, which is not part of a proof declaration (${KNOWN_KEYS.join(', ')})`;
+    case 'proof:missing-tests':
+      return 'has no `"tests"` array of file paths';
+    case 'proof:empty-command':
+      return 'has a `"command"` that is not a non-empty string';
+    case 'proof:wrong-type':
+      if (error.field === 'tests') return 'has no `"tests"` array of file paths';
+      if (error.field === 'command') return 'has a `"command"` that is not a non-empty string';
+      if (error.field === 'describes') return 'has a `"describes"` that is not a non-empty sentence';
+      return 'is not a JSON object';
+    default:
+      return `${error.message}${because}`;
   }
-  return { presence: (r.stdout ?? '').trim() === '' ? 'absent' : 'present', error: '' };
-}
-
-/** The sentence every rejected declaration ends with. */
-const brokenDeclaration = (path: string, why: string): never =>
-  finish('cannot-run', `\`${path}\` ${why}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`);
-
-/**
- * `proof/<slug>.json` as it stands at head, or `null` when the branch
- * declares nothing. Never reads the working tree: the file is taken from the
- * head commit, so the check does not depend on what is checked out. Only
- * "absent from the head tree" is "declares nothing"; a declaration that is
- * present and unusable — unreadable, unparsable, or not the shape — exits
- * `cannot-run` rather than falling back to the globs, because a declaration
- * that is present is the contract.
- */
-function readDeclaration(slug: string): Declaration | null {
-  const path = `proof/${slug}.json`;
-  const bad = (why: string): never => brokenDeclaration(path, why);
-
-  const at = pathAtHead(path);
-  if (at.presence === 'absent') return null; // this branch declares nothing
-  if (at.presence === 'unresolvable') bad(`could not be looked up in the head commit (${at.error})`);
-
-  const show = spawnSync('git', ['show', `${head}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  if (show.status !== 0) {
-    bad(`is in the head commit and could not be read (${(show.stderr ?? '').trim() || show.error?.message || `git show exited ${show.status}`})`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(show.stdout);
-  } catch (error) {
-    bad(`does not parse as JSON (${error instanceof Error ? error.message : String(error)})`);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) bad('is not a JSON object');
-  const decl = parsed as Record<string, unknown>;
-
-  const tests = decl.tests;
-  if (!Array.isArray(tests) || tests.length === 0 || !tests.every((t) => typeof t === 'string' && t.trim() !== '')) {
-    bad('has no `"tests"` array of file paths');
-  }
-  const command = decl.command;
-  if (command !== undefined && (typeof command !== 'string' || command.trim() === '')) {
-    bad('has a `"command"` that is not a non-empty string');
-  }
-  return {
-    path,
-    tests: (tests as string[]).map((t) => t.trim()),
-    command: typeof command === 'string' ? command.trim() : undefined,
-  };
-}
-
-/**
- * A copy of `decl` whose `tests` are normalised POSIX paths, or `cannot-run`
- * naming the first path that is not one.
- *
- * The declaration is written by the implementer and the overlay follows it
- * literally: `join(tmp, file)` with an absolute or `..` path reads and
- * removes outside the temporary worktree, and a path the head does not have
- * used to be replayed as "deleted in the PR — delete it on the base too",
- * which turns a typo into an unrelated base file removed and a control run on
- * a tree nobody described. Both are refused here, before the worktree exists
- * and therefore before anything can be written or removed.
- */
-function validateDeclaredPaths(decl: Declaration): Declaration {
-  const bad = (why: string): never => brokenDeclaration(decl.path, why);
-  const tests = decl.tests.map((file) => {
-    const slashed = file.replace(/\\/g, '/');
-    if (slashed.startsWith('/') || /^[A-Za-z]:/.test(slashed)) {
-      bad(`names the absolute path \`${file}\`; a declared test path is relative to the repository root`);
-    }
-    const normalised = posix.normalize(slashed);
-    if (normalised === '..' || normalised.startsWith('../')) {
-      bad(`names \`${file}\`, which escapes the repository root once normalised (\`${normalised}\`)`);
-    }
-    const at = pathAtHead(normalised);
-    if (at.presence === 'unresolvable') {
-      bad(`names \`${file}\`, which could not be looked up in the head commit (${at.error})`);
-    }
-    if (at.presence === 'absent') {
-      bad(`names \`${file}\`, which the head commit does not have; a declared path that is missing at head is a typo, not a file the pull request deletes`);
-    }
-    return normalised;
-  });
-  return { ...decl, tests };
 }
 
 const branchRef = typeof args.branch === 'string' ? args.branch.trim() : String(event?.pull_request?.head?.ref ?? '').trim();
@@ -580,8 +528,19 @@ const slug = branchRef ? branchSlug(branchRef) : null;
 if (branchRef && !slug) {
   console.log(`note: \`${branchRef}\` is not a \`<type>/<n>-<slug>\` branch, so no proof declaration is looked up for it.`);
 }
-const declared = slug ? readDeclaration(slug) : null;
-const declaration = declared ? validateDeclaredPaths(declared) : null;
+let declaration: Declaration | null = null;
+if (slug) {
+  try {
+    const declared = readDeclarationAtHead(root, head, slug);
+    declaration = declared ? validateDeclaredPaths(root, head, declared) : null;
+  } catch (error) {
+    if (!(error instanceof ProofError)) throw error;
+    finish(
+      'cannot-run',
+      `\`${headDeclarationPath(slug)}\` ${declarationWhy(error)}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`,
+    );
+  }
+}
 if (declaration) {
   console.log(`note: \`${declaration.path}\` declares this branch's proof; the overlay is the ${declaration.tests.length} file(s) it names${declaration.command ? ` and its command \`${declaration.command}\`` : ''}.`);
 }
@@ -611,13 +570,29 @@ const withheld = changed.filter((f) => !overlaidPaths.has(f));
 const notATestFile = changed.filter((f) => !matchesAny(f, TEST_FILE_GLOBS) && f !== declaration?.path);
 /** The files that keep this diff inside the control, for a `vacuous` to name. */
 const keptInTheControl = [...new Set([...withheld, ...notATestFile])].map((f) => `\`${f}\``).join(', ');
+/**
+ * How a `vacuous` verdict tells the reader to get the entry point into the
+ * overlay — and only by a route that is open to this diff (#297, AC5).
+ *
+ * A declaration replaces the diff's test files outright: no test glob is
+ * consulted once one is read, so half of the sentence this used to print —
+ * the globs, and the variable that extends them — was advice a branch with a
+ * declaration could act on and see nothing change. Naming both routes when
+ * only one is live is the same defect in prose that the check spends its
+ * verdicts on in code.
+ */
+const overlayRoute = declaration
+  ? `The entry point is overlaid only when \`${declaration.path}\` names it in its \`tests\`, which here is ${declaration.tests.map((f) => `\`${f}\``).join(', ')}: this branch declares its proof, so no test glob is consulted at all and extending one would change nothing here. So make the entry point discover its tests rather than list them, and either add it to that \`tests\` list, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`${declaration.path}\`, which replaces the detected command for both runs.`
+  : 'The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path `proof/<slug>.json` names in its `tests`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the `command` of `proof/<slug>.json`, which replaces the detected command for both runs.';
 if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), declare the proof in `proof/<slug>.json`, or add the path class to AGENTIC_SKIP_GLOBS.');
 
 const commands = detectCommands(root);
 const testCommand = declaration?.command ?? commands.test;
 if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow, name the command in `proof/<slug>.json`, or give the repository a `Makefile` with a `test:` target — `ci/lib/detect.mts` reads a Makefile before every other stack marker, so that target is the written escape for a stack it cannot detect.');
 
-type RunResult = { status: number | null; crashed: boolean; output: string };
+/** `buffer` and `timeout` are runs that started and were killed; `null` covers the rest. */
+type Overrun = 'buffer' | 'timeout' | null;
+type RunResult = { status: number | null; crashed: boolean; overran: Overrun; output: string };
 
 /**
  * Runs the detected test command in `cwd`; never throws. The two streams are
@@ -628,9 +603,41 @@ type RunResult = { status: number | null; crashed: boolean; output: string };
  * name out of the stack header that follows it.
  */
 function runTests(cwd: string): RunResult {
-  const r = spawnSync(String(testCommand), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
-  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim() };
+  const r = spawnSync(String(testCommand), [], {
+    cwd,
+    shell: true,
+    encoding: 'utf8',
+    env: { ...process.env, CI: '1' },
+    maxBuffer: RUN_MAX_BUFFER,
+    timeout: RUN_TIMEOUT_MS,
+  });
+  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  const overran: Overrun = code === 'ENOBUFS' ? 'buffer' : code === 'ETIMEDOUT' ? 'timeout' : null;
+  return {
+    status: r.status,
+    crashed: r.status === 127 || Boolean(r.error),
+    overran,
+    output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim(),
+  };
 }
+
+/**
+ * The `cannot-run` detail for a run that produced no usable verdict. Three
+ * different facts, kept apart because only two of them are cleared by raising
+ * a limit: the command never started, it printed more than this check can
+ * hold, or it was still running when the clock ran out. Reporting all three as
+ * "could not be executed" sent an operator looking for a missing binary that
+ * was never missing.
+ */
+const unrunnable = (run: RunResult, which: string): string => {
+  if (run.overran === 'buffer') {
+    return `\`${testCommand}\` printed more than the ${RUN_MAX_BUFFER}-byte buffer this check holds, while running ${which}, so its output could not be read and no verdict can rest on it. Raise AGENTIC_RUN_MAX_BUFFER, or make the command print less.`;
+  }
+  if (run.overran === 'timeout') {
+    return `\`${testCommand}\` was still running after the ${RUN_TIMEOUT_MS} ms this check allows it and timed out, while running ${which}. Raise AGENTIC_RUN_TIMEOUT_MS, or find what the command is waiting on.`;
+  }
+  return `\`${testCommand}\` could not be executed on the base checkout (${which}).`;
+};
 
 const tail = (output: string): string => output.split('\n').slice(-TAIL).join('\n');
 
@@ -701,9 +708,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
 
     const baseline = runTests(tmp);
     console.log(`--- \`${testCommand}\` on pristine base ${base.slice(0, 7)} ---\n${tail(baseline.output)}\n---`);
-    if (baseline.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
-    }
+    if (baseline.crashed) return { outcome: 'cannot-run', detail: unrunnable(baseline, 'the baseline') };
     if (baseline.status !== 0) {
       return {
         outcome: 'inconclusive',
@@ -716,9 +721,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     const overlaid = runTests(tmp);
     console.log(`--- \`${testCommand}\` on base ${base.slice(0, 7)} with ${testFiles.length} test file(s) from head ---\n${tail(overlaid.output)}\n---`);
 
-    if (overlaid.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
-    }
+    if (overlaid.crashed) return { outcome: 'cannot-run', detail: unrunnable(overlaid, 'the overlaid run') };
     if (overlaid.status === 0 && withheld.length === 0 && notATestFile.length === 0) {
       return {
         outcome: 'test-only',
@@ -728,7 +731,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     if (overlaid.status === 0) {
       return {
         outcome: 'vacuous',
-        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs. This diff is not \`test-only\` (#355), and here is why, because that is what a reader asks next: ${keptInTheControl} — the overlay withheld it, or it is outside TEST_FILE_GLOBS as written in this file — so a test could have bitten here and did not.`,
+        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. ${overlayRoute} This diff is not \`test-only\` (#355), and here is why, because that is what a reader asks next: ${keptInTheControl} — the overlay withheld it, or it is outside TEST_FILE_GLOBS as written in this file — so a test could have bitten here and did not.`,
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
