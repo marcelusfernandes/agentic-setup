@@ -463,8 +463,12 @@ because the gate does too; a rules read that cannot answer refuses with
 read fails.
 
 **Required checks are verified, not assumed.** In both gates `land.mts` reads `gh pr checks
-<pr> --required --json name,bucket` and refuses unless that list is non-empty and every
-bucket is `pass`. An empty list is not "nothing is red", it is "nothing held the line"; a
+<pr> --required --json name,bucket,state` and refuses unless that list, once the
+cancellations a newer run of the same check superseded are dropped, is non-empty and holds
+nothing but runs whose *effective* bucket is `pass` — a run whose `state` says it has not
+completed is `pending` whatever it was bucketed, since `gh` derives the bucket from a
+snapshot that can be older than the run. An empty list is not "nothing is red", it is
+"nothing held the line"; a
 `pending` or `skipping` bucket is not `pass`; and `gh` prints the JSON while exiting
 non-zero, so the buckets are read from its output rather than guessed from its exit code.
 `gate` names who *else* holds the line — `ruleset` when the base branch's effective rules
@@ -500,8 +504,12 @@ marker records one, or in mode `approved` it is not the commit the approving rev
 cast against), `gh-pr-comments` (the comments read could not answer — the script
 fails closed rather than merging), `gh-pr-reviews` (mode `approved` only: the reviews read
 could not answer, so the commit that review was cast against is unknown — the same failing
-closed), `merge:not-mergeable` (GitHub reports the head as
-`CONFLICTING`, or as `UNKNOWN`, which is not a mergeability this script may assume),
+closed), `pr:conflict` (GitHub reports the head as `CONFLICTING` — refused before any
+merge call, and named apart from the next one because it is the one state here with a
+remedy: the implementer merges `origin/<base>` on the published branch, and the new head
+is reviewed again and gets a fresh marker),
+`merge:not-mergeable` (anything else GitHub does not report as `MERGEABLE`, `UNKNOWN`
+included, which is not a mergeability this script may assume),
 `checks:required` (a required check outside bucket `pass`, an empty list, or a bucket read
 that could not answer), `merge:not-clean` (mode `agent` only, below), `gh-rules` (the base
 branch's effective rules could not be read) or `gh-pr-view` (could not read the PR at all).

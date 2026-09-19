@@ -32,8 +32,18 @@
 //   * case W: the base selects mode `approved` from AGENTIC_REVIEWER_TOKEN
 //     alone and refuses a label-only PR; this suite requires the token to
 //     change nothing at all.
-//   * case AC: the base never reads `mergeable`, so a CONFLICTING pull
-//     request is queued rather than refused.
+//   * case AC: the base already refuses a head that is not MERGEABLE, but it
+//     gives CONFLICTING and UNKNOWN the same `merge:not-mergeable` — so the
+//     orchestrator cannot tell "merge origin/main on the branch" from
+//     "GitHub has not answered yet, run land again". Asserting
+//     `missing: ['pr:conflict']` on PR 32 is the assertion red (#239, D15 and
+//     D20). PR 35 (UNKNOWN) is coverage, not red: it keeps naming
+//     `merge:not-mergeable`, which is where land.mts fails closed
+//     (CLAUDE.md invariant 3) and where #241's incident lives.
+//   * cases AW and AX (#239 AC6, D16): the base reads only `bucket`, so PR 45
+//     refuses on a cancelled run that a newer run of the same check already
+//     superseded, and PR 46 merges a check whose status is still
+//     IN_PROGRESS. Both are assertion reds, in opposite directions.
 //   * case AD: the base leaves `--auto` armed whenever the merge did not
 //     happen at once (#191, #241), so `pr merge 30 --disable-auto` never
 //     appears in its argv log.
@@ -174,7 +184,7 @@ case "\${1:-} \${2:-}" in
         # 37 is the PR gh answers about without a headRefOid at all: readable,
         # but carrying nothing to pin a merge to.
         37) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main",'"$merge_state"'}' ;;
-        1[0-9]|2[0-9]|3[0-9]|4[0-4]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
+        1[0-9]|2[0-9]|3[0-9]|4[0-6]) echo '{'"$state"',"labels":'"$label"',"reviewDecision":'"$decision"',"baseRefName":"main","headRefOid":"'"$head"'",'"$merge_state"'}' ;;
         *) echo "fake-gh: unknown pr $pr" >&2; exit 1 ;;
       esac
     fi
@@ -191,6 +201,8 @@ case "\${1:-} \${2:-}" in
       29|33) bucket="pending" ;;
       31) bucket="none" ;;
       34) bucket="unreadable" ;;
+      45) bucket="superseded" ;;
+      46) bucket="bucketed-early" ;;
       *) bucket="pass" ;;
     esac
     if [ "$json" = "no" ]; then
@@ -204,11 +216,18 @@ case "\${1:-} \${2:-}" in
     # Real gh prints the JSON *and* exits non-zero when anything is not
     # green (1 red, 8 pending), so the bucket read must not gate on status.
     case "$bucket" in
-      pass) echo '[{"name":"test","bucket":"pass"},{"name":"scope","bucket":"pass"}]' ;;
-      fail) echo '[{"name":"test","bucket":"fail"},{"name":"scope","bucket":"pass"}]'; exit 1 ;;
-      pending) echo '[{"name":"test","bucket":"pending"},{"name":"scope","bucket":"pass"}]'; exit 8 ;;
+      pass) echo '[{"name":"test","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]' ;;
+      fail) echo '[{"name":"test","bucket":"fail","state":"FAILURE"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'; exit 1 ;;
+      pending) echo '[{"name":"test","bucket":"pending","state":"IN_PROGRESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'; exit 8 ;;
       none) echo '[]'; exit 1 ;;
       unreadable) echo "fake-gh: could not read the checks" >&2; exit 1 ;;
+      # D16: 'test' carries a cancelled run and the run that replaced it,
+      # both surfaced by gh -- its dedupe keys on the name *and* the
+      # workflow. The cancelled one reports on the label edit, not the check.
+      superseded) echo '[{"name":"test","bucket":"cancel","state":"CANCELLED"},{"name":"test","bucket":"pass","state":"SUCCESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]'; exit 1 ;;
+      # D16's other half: a run bucketed from a snapshot taken before it
+      # finished -- only its state says it has not completed.
+      bucketed-early) echo '[{"name":"test","bucket":"pass","state":"IN_PROGRESS"},{"name":"scope","bucket":"pass","state":"SUCCESS"}]' ;;
     esac
     ;;
   "pr merge")
@@ -529,13 +548,24 @@ check('unreadable checks never invoked gh pr merge', !/pr merge/.test(ab.log), a
 // --- AC: a CONFLICTING pull request is refused instead of having --auto
 // armed on it (#241: a docs-mode land armed auto-merge on a PR that could
 // not merge, so the conflict resolution commit would have merged itself) --
+// and it is refused as its own outcome, `pr:conflict`, because a conflict has
+// a remedy nothing else here has: the implementer merges origin/<base> on the
+// branch, and the new head is reviewed again (#239, D15/D20). A conflicting
+// head also carries no check runs at all, so a reader that only classifies
+// checks reads it as "still running" and waits for what never arrives.
 const ac = land(32, { FAKE_GH_RULES: 'required' });
 check('conflicting PR refuses (exit 1)', ac.status === 1, `${ac.stdout}\n${ac.stderr}`);
 const acOut = parse(ac.stdout);
-check('conflicting PR names merge:not-mergeable and never merges', JSON.stringify(acOut?.missing) === JSON.stringify(['merge:not-mergeable']) && !/pr merge/.test(ac.log), `${ac.stdout}\n${ac.log}`);
+check('conflicting PR names pr:conflict and never merges', JSON.stringify(acOut?.missing) === JSON.stringify(['pr:conflict']) && !/pr merge/.test(ac.log), `${ac.stdout}\n${ac.log}`);
+check('the conflict refusal names the base to merge back in, and its mode', /origin\/main/.test(String(acOut?.refused)) && acOut?.mode === 'agent', ac.stdout);
 
+// UNKNOWN is not a conflict: GitHub answers it while it is still computing
+// mergeability, routinely on a freshly pushed head. It stays
+// `merge:not-mergeable` — land.mts fails closed (CLAUDE.md invariant 3), so a
+// mergeability GitHub has not computed is still not one this script assumes;
+// what changes is only that it is no longer confused with a conflict.
 const ac2 = land(35, { FAKE_GH_RULES: 'required' });
-check('UNKNOWN mergeability refuses too (fail closed)', ac2.status === 1 && JSON.stringify(parse(ac2.stdout)?.missing) === JSON.stringify(['merge:not-mergeable']), ac2.stdout);
+check('UNKNOWN mergeability refuses too (fail closed), and not as a conflict', ac2.status === 1 && JSON.stringify(parse(ac2.stdout)?.missing) === JSON.stringify(['merge:not-mergeable']), ac2.stdout);
 
 // --- AD: in agent mode land never leaves an auto-merge armed: if the PR is
 // not MERGED when the state is read back, the queue is disabled again and
@@ -678,5 +708,17 @@ check('a failed retry reports { error } with the retry\'s own message', typeof a
 check('a failed retry names its pr, gate and mode alongside the error', avOut?.pr === 44 && avOut?.gate === 'ruleset' && avOut?.mode === 'agent', av.stdout);
 const avMerges = av.log.trim().split('\n').filter((l) => l.startsWith('pr merge'));
 check('a failed retry made exactly the two merge calls and stopped', avMerges.length === 2, av.log);
+
+// --- AW/AX (#239 AC6, D16): the required-check read judges a run by its
+// `state`, never by a bucket a timestamp decided. A cancelled run another run
+// of the same check supersedes is the noise a re-triggered workflow leaves
+// behind, so it must not hold the merge; a run whose status is not completed
+// is pending however it was bucketed, so it must hold it. --------------------
+const aw = land(45, { FAKE_GH_RULES: 'required' });
+check('a cancelled run superseded by a newer run of the same check does not refuse', aw.status === 0 && parse(aw.stdout)?.merged === 45, `${aw.stdout}\n${aw.stderr}`);
+check('the required-check read asks for the run state, not the bucket alone', /pr checks 45 --required --json name,bucket,state/.test(aw.log), aw.log);
+const ax = land(46, { FAKE_GH_RULES: 'required' });
+check('a run whose status is not completed refuses, whatever its bucket says', ax.status === 1 && JSON.stringify(parse(ax.stdout)?.missing) === JSON.stringify(['checks:required']), ax.stdout);
+check('a run that has not completed never reached gh pr merge', !/pr merge/.test(ax.log), ax.log);
 
 finish();

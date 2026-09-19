@@ -34,9 +34,15 @@ Two roles:
    round N+1 from origin/<branch>, no re-claim (`resumable`), except an entry with
    `foreignLock: true` — the other route's `codex/task-<n>` branch, which stays in
    `inProgress` and is neither resumed nor reviewed nor landed here
-   in-review, checks read per PR via `gh pr checks <pr> --json name,bucket` (green when
-   every bucket is pass/skipping, red on any fail/cancel, else pending), and an approved
-   review → merge (`inReview`), again except an entry with `foreignLock: true` — the
+   in-review, checks read per PR via `gh pr checks <pr> --json name,bucket,state` (green
+   when every bucket is pass/skipping, red on any fail/cancel, else pending — a run whose
+   `state` says it has not completed is pending whatever its bucket, and a cancelled run
+   another run of the same check supersedes is dropped), and an approved review → merge
+   (`inReview`). The fourth value is `conflict`, from the list call's own `mergeable`,
+   and it takes precedence over every bucket: a head that conflicts with its base carries
+   no check runs, so `pending` there means "waiting for checks that never arrive" — take
+   the conflict branch of step 5 instead. `UNKNOWN` is not a conflict. Again except an
+   entry with `foreignLock: true` — the
    Codex route labels its own tasks `state:in-review`, so that pull request is theirs to
    review and merge
    local worktree with no remote branch → delete (`orphanWorktrees`)
@@ -69,7 +75,9 @@ Two roles:
    opened only: an `inReview` entry with `foreignLock: true` is the other route's, so it is
    neither labelled nor reviewed nor landed here. The reviewer returns the JSON
    verdict; it no longer comments on the PR or touches its labels (that moved here, to the
-   orchestrator, in step 5) — read `agents/reviewer.md`. Check CI with `gh pr checks <n>`
+   orchestrator, in step 5) — read `agents/reviewer.md`. Check CI with `gh pr checks <n>`,
+   and read `reconcile`'s `checks` for that entry before waiting on it: `conflict` is not
+   a state that resolves by waiting, it is step 5's conflict line
 5. on the verdict: comment it on the PR and apply the labels yourself — `approved` →
    `review:approved` + `state:in-review` (+ remove `state:qa-failed`, restoring
    `state:in-review` when a prior rejection removed it); `rejected` → `state:qa-failed`; a
@@ -108,13 +116,24 @@ Two roles:
    the head is not the commit the marker records, or no marker records one, or in mode
    `approved` it is not the commit the approving review was cast against —
    `gh-pr-comments`, `gh-pr-reviews` (mode `approved` only: the reviews read could not
-   answer), `merge:not-mergeable`, `checks:required`, `merge:not-clean`,
+   answer), `pr:conflict` (the head conflicts with its base — see the conflict line
+   below), `merge:not-mergeable` (anything else GitHub does not call `MERGEABLE`,
+   `UNKNOWN` included: a mergeability it has not computed yet, which is routine on a
+   freshly pushed head and answered by running `land` again, not by a merge),
+   `checks:required`, `merge:not-clean`,
    `gh-rules` or `gh-pr-view`) → read it and decide between waiting and sending the PR
    back; never a retry with `--admin`, which the session denies anyway
    rejected (CI or reviewer), first time → back to the implementer with the summary
    (round 2), then back to 4
-   main moved and conflicts → implementer runs `git merge origin/main` (never rebase
-   a published branch)
+   main moved and conflicts → a state to read, never a timeout to wait for: `reconcile`
+   reports that entry's `checks` as `conflict` (not `pending`) and `land` refuses it as
+   `pr:conflict` before any merge call, so take this branch on the first pass. The
+   implementer runs `git merge origin/main` on its published branch (never rebase a
+   published branch — `skills/safe-worktree` §D), resolves, and pushes; that is a new
+   head, so it goes back to 4 for a fresh review and a fresh
+   `<!-- agentic-reviewed-sha: <oid> -->` marker before `land` runs again. Waiting
+   instead reads as checks that never arrive: a conflicting head carries no check runs,
+   so `gh pr checks` answers an empty array
 6. milestone's last issue merged → open a `docs: closeout M<n>` issue in that milestone
    from `docs/closeout/TEMPLATE.md` (`type:docs`/`scope:docs`), carrying the decision
    log's lines; the docs-writer lands it as a `type:docs` PR — that PR merges before the
