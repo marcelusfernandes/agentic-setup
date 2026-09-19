@@ -245,10 +245,20 @@ const blocks = (output: string): string[][] =>
  * The strings that stand for `paths` in a runner's output: the repository
  * path itself and the file's basename, because a runner that spawns one
  * process per test file prints the basename (`land.test.mts: 61 passed, 14
- * failed`) while a stack frame prints the whole path. Matching the basename
- * can only ever credit the overlay with a red that named a same-named file
- * elsewhere in the tree; the path form alone missed nearly every honest red
- * this repository has produced, which would have been the worse failure.
+ * failed`) while a stack frame prints the whole path. The path form alone
+ * missed nearly every honest red this repository has produced.
+ *
+ * What the widening costs, stated in full because a narrower claim was made
+ * here first and was wrong: this is a substring match, so a same-named file
+ * elsewhere in the tree is one way it can credit the overlay wrongly, and a
+ * *prose mention* of an overlaid file — a test case whose own name quotes a
+ * path, of which this repository has nineteen — is another. Both are
+ * answered by ranking the evidence in `attributeFailures` rather than by
+ * narrowing the match: a mention alone never outvotes a failure that says
+ * which file it belongs to. The same widened list is shared with
+ * `structuralInOverlay`, which is a behaviour change there and not a
+ * neutral one: a block naming only a basename beside `Cannot find module`
+ * now reads `structural` where it read `pass`. That direction fails closed.
  */
 const overlayNames = (paths: string[]): string[] => {
   const named = paths.map((p) => p.trim()).filter(Boolean);
@@ -289,39 +299,63 @@ const locatesOverlay = (line: string, names: string[]): boolean =>
  */
 const FILE_VERDICT = /[\w.-]+\.[A-Za-z0-9]{1,6}\b[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
 
-type Attribution = { attributed: boolean; failures: string[]; elsewhere: string[] };
+/**
+ * Whether `line` names one of `names` as the *owner* of a non-zero failure
+ * count — the name, then a count on the same line after it. That is a runner
+ * reporting a file's own result (`land.test.mts: 61 passed, 14 failed`), and
+ * with a source location it is one of the two shapes that say which file a
+ * failure belongs to rather than merely mentioning one.
+ */
+const ownsFailure = (line: string, names: string[]): boolean =>
+  names.some((name) => {
+    const at = line.indexOf(name);
+    if (at < 0) return false;
+    return /^[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/.test(line.slice(at + name.length));
+  });
+
+type Attribution = { owned: boolean; mentioned: boolean; failures: string[]; elsewhere: string[] };
 
 /**
- * Which of the overlaid run's failures the overlay accounts for.
+ * Which of the overlaid run's failures the overlay accounts for, ranked by
+ * how much the evidence actually says.
  *
- * A failure line is the overlay's when it names an overlaid file itself, or
- * when its block locates an overlaid file as a source location. `failures`
- * is everything else that reported a failure, in the order the run printed
- * it, for a verdict that has to say what it did see; `elsewhere` is the
- * subset that names another file as the owner of a non-zero count, which is
- * the only shape that can honestly be called someone else's red. An empty
- * `failures` beside `attributed: false` means the command failed without
- * reporting any failure at all, which cannot be attributed either — there is
- * nothing to read.
+ * `owned` is a failure that says which file it belongs to and names an
+ * overlaid one: a source location, or a name carrying its own non-zero
+ * count. `mentioned` is the weaker thing — a failure line that contains an
+ * overlaid path anywhere, which a test case whose *name* quotes a path also
+ * does. `failures` is everything that reported a failure and named no
+ * overlaid file, in the order the run printed it, for a verdict that has to
+ * say what it did see; `elsewhere` is the subset of those that names another
+ * file as the owner of a non-zero count.
+ *
+ * An empty `failures` beside neither `owned` nor `mentioned` means the
+ * command failed without reporting any failure at all, which cannot be
+ * attributed either — there is nothing to read.
  */
 function attributeFailures(output: string, paths: string[]): Attribution {
   const named = overlayNames(paths);
-  let attributed = false;
+  let owned = false;
+  let mentioned = false;
   const failures: string[] = [];
   const elsewhere: string[] = [];
   for (const lines of blocks(output)) {
     const located = named.length > 0 && lines.some((line) => locatesOverlay(line, named));
     for (const line of lines) {
       if (!FAILURE_SIGNATURE.test(line)) continue;
-      if (located || (named.length > 0 && namesOverlay(line, named))) {
-        attributed = true;
+      if (named.length > 0 && namesOverlay(line, named)) {
+        mentioned = true;
+        if (located || ownsFailure(line, named)) owned = true;
+        continue;
+      }
+      if (located) {
+        owned = true;
         continue;
       }
       failures.push(line.trim());
       if (FILE_VERDICT.test(line)) elsewhere.push(line.trim());
     }
   }
-  return { attributed, failures, elsewhere };
+  return { owned, mentioned, failures, elsewhere };
 }
 
 /** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
@@ -649,14 +683,26 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     // A structural red already proved its point: `structuralInOverlay` only
     // says `true` when the diagnostic named an overlaid path, so the overlay
     // is what could not run. Every other red has to show its own evidence.
-    const { attributed, failures, elsewhere } = attributeFailures(overlaid.output, testFiles);
-    if (!structural && !attributed) {
-      const saw = failures.length > 0
-        ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(failures)}\nFix or quarantine those and run it again`
-        : 'That run reported no failure of its own — it failed without saying what failed, so there is nothing to attribute. Make the command report its failures (a thrown error names the file in its stack; safe-worktree §B7) and run it again';
+    const { owned, mentioned, failures, elsewhere } = attributeFailures(overlaid.output, testFiles);
+    // A mention is evidence until something better contradicts it. `FAIL  the
+    // overlaid file is listed in the pin table` is a *case name* quoting a
+    // path, not that file failing, and this repository writes nineteen of
+    // them; on its own it still has to be believed, because a runner that
+    // prints `FAIL <path>` and nothing else says no more than that. What it
+    // may not do is outvote a failure that states its own owner. When the
+    // only overlaid evidence is a mention and some other file is reported as
+    // owning a red, the run has said `pass` and `this red is not yours` in
+    // the same breath, and the honest reading of that is neither.
+    const contradicted = mentioned && !owned && elsewhere.length > 0;
+    if (!structural && (contradicted || (!owned && !mentioned))) {
+      const saw = contradicted
+        ? `The only lines naming an overlaid file mention it in passing — a case name quoting a path does that too. The failures that say which file they belong to name another one:\n${listFailures(elsewhere)}\nFix or quarantine those and run it again`
+        : failures.length > 0
+          ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(failures)}\nFix or quarantine those and run it again`
+          : 'That run reported no failure of its own — it failed without saying what failed, so there is nothing to attribute. Make the command report its failures (a thrown error names the file in its stack; safe-worktree §B7) and run it again';
       return {
         outcome: 'unattributed',
-        detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), but no failure in that run names any of them: ${named}. A red the overlay did not cause is not this control's red — reading any red as "the tests bite" reports \`pass\` on a change nothing depends on, which is the one thing this check exists to prevent (#354). This is not \`vacuous\`: the tests may well bite, but something else was already broken and the run could not tell. ${saw}. By hand: \`node ci/negative-control.mts --base ${base} --head ${head}${branchRef ? ` --branch ${branchRef}` : ''}\`.\n${tail(overlaid.output)}`,
+        detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), but no failure in that run is attributable to any of them: ${named}. A red the overlay did not cause is not this control's red — reading any red as "the tests bite" reports \`pass\` on a change nothing depends on, which is the one thing this check exists to prevent (#354). This is not \`vacuous\`: the tests may well bite, but something else was already broken and the run could not tell. ${saw}. By hand: \`node ci/negative-control.mts --base ${base} --head ${head}${branchRef ? ` --branch ${branchRef}` : ''}\`.\n${tail(overlaid.output)}`,
       };
     }
     // The overlay's red is there and so is someone else's. The verdict stands,
