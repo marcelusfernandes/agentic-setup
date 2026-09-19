@@ -83,6 +83,18 @@ file in this directory and fails when:
 - a report is half-filled: rows in a document that still carries a `<...>`
   placeholder, or a dated report left as the empty template.
 
+What it does **not** check is the `finding` column's prose. The pin holds a
+finding row to its shape — that it has a description at all, an `origin` and an
+outcome that does not park it — and holds the description itself to nothing. So
+the finding column is not held to the standard the numbers are: every number in
+a report is checkable against the thing it measures, and a description is
+checkable only by resolving the `origin` and the outcome it names and reading
+them. That is a writer's obligation and a reader's, not a check's. A writer of
+the next report should expect the column to be swept end to end before the
+report lands, with the count written into the pull request — sampling it is how
+`docs/dogfood/2026-09-17.md` reached its eighth review round with every number
+verified and seven of its hundred and two descriptions still false (#332).
+
 The test states the grammar itself rather than importing a parser, the way
 [`tests/proof-declarations.test.mts`](../../tests/proof-declarations.test.mts)
 does: a pin that reuses the parser it pins cannot catch that parser drifting.
