@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
 import { fileGrowth, findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
+import type { FileLinesEntry } from '../ci/lib/scope.mts';
 // #177's `decisionNudge` comes in through the namespace, not the named
 // import above: a named import of an export the base checkout does not have
 // kills this whole file at load time, which reads as a structural red
@@ -524,6 +525,20 @@ check(
   rGrowthEdited.status === 0 && !/### File growth/.test(rGrowthEdited.out),
   rGrowthEdited.out,
 );
+// #310: the same run *reports* that file — over the limit at the base, not
+// lengthened here — in a section of its own, and still exits 0. The two
+// sentences read differently on purpose: "took ... past" blames this diff,
+// "was already over at the base" does not.
+check(
+  'scope reports an inherited over-limit file in a section of its own, without failing and without blaming this diff',
+  rGrowthEdited.status === 0
+    && /### Already over the line limit/.test(rGrowthEdited.out)
+    && /`src\/big\.ts` was already over at the base: 900 line\(s\) there, 900 at the head/.test(rGrowthEdited.out)
+    && /brings the file back under 800 lines/.test(rGrowthEdited.out)
+    && !/took \d+ file\(s\) past 800 lines/.test(rGrowthEdited.out)
+    && JSON.stringify(scopeJson(rGrowthEdited.out).inherited) === JSON.stringify([{ path: 'src/big.ts', baseLines: 900, headLines: 900 }]),
+  rGrowthEdited.out,
+);
 
 // A new file over 800 lines marked `@generated` on its first line is exempt.
 git(['checkout', '-q', '-b', 'feat/134-generated', growthBase], growthRepo);
@@ -571,6 +586,20 @@ check(
   'fileGrowth: @generated on the first line exempts a file that would otherwise violate',
   fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: true }]).length === 0,
 );
+
+// #310: every length relation answers with a name of its own, so a change to
+// either half of the old two-part condition moves a case rather than widening
+// the exemption in silence. The names are written out here, not read back from
+// the classifier they pin (invariant 10). Equal-to-base and shorter-than-base
+// both answer `inherited-over`: neither is length this pull request added.
+const lengthOutcome = scopeLib.lengthOutcome as ((entry: FileLinesEntry) => string) | undefined;
+check('ci/lib/scope.mts exports lengthOutcome', typeof lengthOutcome === 'function');
+const outcome = (baseLines: number | null, headLines: number): string =>
+  lengthOutcome ? lengthOutcome({ path: 'a.ts', baseLines, headLines, generated: false }) : 'not exported';
+check('lengthOutcome: over the limit and longer than the base is pushed-over', outcome(798, 808) === 'pushed-over', outcome(798, 808));
+check('lengthOutcome: over the limit and equal to the base is inherited-over', outcome(808, 808) === 'inherited-over', outcome(808, 808));
+check('lengthOutcome: over the limit and shorter than the base is inherited-over', outcome(900, 850) === 'inherited-over', outcome(900, 850));
+check('lengthOutcome: under the limit is under-limit', outcome(500, 700) === 'under-limit', outcome(500, 700));
 
 // #177: the decision nudge. A PR that changes a mechanism file (a hook, a
 // CI check, a script, a skill card, a workflow) without recording a
