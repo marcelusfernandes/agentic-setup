@@ -390,7 +390,7 @@ check(
     remedies.some((text) => /workflow/.test(text)),
   checkboxes.join('\n'),
 );
-check('the plan issue was the only mutation: one issue create, one label create, nothing else', eCreates.length === 1 && (e.log.match(/^label create /gm) ?? []).length === 1, e.log);
+check('the plan issue and its two labels were the only mutation: one issue create, two label creates, nothing else', eCreates.length === 1 && (e.log.match(/^label create /gm) ?? []).length === 2, e.log);
 
 // --- F: a second run never opens a second issue ------------------------------
 const f = adopt(['--plan-issue'], planned, {}, planState);
