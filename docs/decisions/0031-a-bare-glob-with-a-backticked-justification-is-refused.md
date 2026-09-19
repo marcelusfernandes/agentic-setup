@@ -3,7 +3,8 @@
 Status: proposed
 Date: 2026-09-19
 
-Landed with #357, which implements the rule below in the same diff. It is written here
+Landed with #394, which implements the rule below in the same diff and closes #357. It is
+written here
 rather than left in that pull request's body because it changes **what makes a required
 check pass or fail**: an issue that `ci/issue-lint.mts` reports `ok: true` for today is
 reported `ok: false` for, and a grant `scope` honours today grants nothing. The register's
@@ -60,16 +61,26 @@ authorised: src/a.ts (see `src/lib/b.ts`)
 ```
 
 Measured on the branch that lands this item, against the parser as it stood at `2f87354`
-and as it stands here — the body is the line above under a `## Files` heading:
+and as it stands here. Each line below is put under a `## Files` heading as a grant bullet
+and read by both parsers; run from the root of a checkout of this branch:
 
 ```
+$ git show 2f87354:ci/lib/scope.mts > /tmp/scope-2f87354.mts
+$ git show 2f87354:ci/lib/globs.mts > /tmp/globs.mts     # the relative import the above needs
 $ node --input-type=module -e "
-import { parseIssueAuthorisedGlobs as base } from '<2f87354:ci/lib/scope.mts>';
+import { parseIssueAuthorisedGlobs as base } from '/tmp/scope-2f87354.mts';
 import { parseIssueAuthorisedGlobs as head } from './ci/lib/scope.mts';
-… print both over the same body …"
-base grants: ["src/lib/b.ts"]
-head grants: []
+const shape = (g) => '## Files\n- \`src/x.ts\`\n- authorised: ' + g + '\n';
+for (const line of ['src/a.ts (see \`src/lib/b.ts\`)', 'see \`src/a.ts\`', 'src/a.ts (see \`b.ts\` and \`c.ts\`)'])
+  console.log(JSON.stringify(line), 'base:', JSON.stringify(base(shape(line))), 'head:', JSON.stringify(head(shape(line))));
+"
+"src/a.ts (see `src/lib/b.ts`)" base: ["src/lib/b.ts"] head: []
+"see `src/a.ts`" base: ["src/a.ts"] head: []
+"src/a.ts (see `b.ts` and `c.ts`)" base: [] head: []
 ```
+
+The first line is the shape this item is about. The second and third are the two edges the
+rule also settles, and they are read again under **Cost accepted** below.
 
 `src/lib/b.ts` is the path the author was *pointing at*. It entered the audited scope in
 silence, and `scope` then passed on a file nobody meant to grant — an over-grant, which
@@ -118,11 +129,26 @@ and closed, run on this branch with the parser this branch lands:
 ```
 $ gh issue list -R marcelusfernandes/agentic-setup --state all --limit 1000 \
     --json number,body > issues.json
-$ node measure-357.mts issues.json     # imports the two finders from this branch's ci/lib/scope.mts
+$ node --input-type=module -e "
+import { readFileSync } from 'node:fs';
+import { findBareGlobBacktickedJustificationLines as bare, findMultiGlobGrantLines as multi } from './ci/lib/scope.mts';
+const issues = JSON.parse(readFileSync('issues.json', 'utf8'));
+let b = 0, m = 0;
+for (const { number, body } of issues) {
+  for (const h of bare(String(body ?? ''))) { b++; console.log('#' + number, 'bare=' + h.bare, 'spans=' + JSON.stringify(h.spans), h.line); }
+  for (const h of multi(String(body ?? ''))) { m++; console.log('#' + number, 'spans=' + JSON.stringify(h.spans), h.line); }
+}
+console.log('issues read:', issues.length);
+console.log('bare glob with a backticked justification (newly refused):', b);
+console.log('more than one backticked span (already refused):', m);
+"
 issues read: 236
-bare glob with a backticked justification (#357, newly refused): 0
-more than one backticked span (#316, already refused): 0
+bare glob with a backticked justification (newly refused): 0
+more than one backticked span (already refused): 0
 ```
+
+Every hit would print its issue number, its line and its spans before the three totals;
+the three totals with nothing above them are what zero looks like.
 
 236 issues, not the 208 the issue quotes — the count grew while the issue waited, and the
 answer did not. `--limit 1000` is well above 236, so nothing was truncated. Zero means no
@@ -132,25 +158,25 @@ stop writing it.
 
 **The refusal is deliberately wider than the shape the issue names.** `grantRefusal` asks
 whether the line *opens* with its span, not whether a bare path precedes it, so any prose
-in front of a backticked glob is refused as well. Measured the same way as above:
-
-```
-prose-first  base: ["src/a.ts"]  head: []      # authorised: see `src/a.ts`
-bare+2 spans base: []            head: []      # authorised: src/a.ts (see `b.ts` and `c.ts`)
-```
-
-The first line granted `src/a.ts` before and grants nothing now. That is a second
-under-grant introduced on
+in front of a backticked glob is refused as well: the second line of the run under
+**Reason** above, `authorised: see` with a backticked `src/a.ts` after it, granted
+`src/a.ts` before and grants nothing now. That is a second under-grant introduced on
 purpose: "the glob stands at the head of the line" is one rule a writer can hold in their
 head and a parser can check, where "a *path-shaped* token in front of the span" is a
 judgement about what looks like a path. The cost lands on the writer of an unusual line,
 who is told exactly which line and why.
 
 **Precedence resolves one ambiguity by fiat.** A line with a bare token and *two* spans is
-reported as `multi-span`, because that reason is checked first — over the second body
-above, `findMultiGlobGrantLines` returns the line with both spans and
-`findBareGlobBacktickedJustificationLines` returns `[]`. The author is told about
-the spans and not about the bare token; fixing the spans leaves a line that is then
+reported as `multi-span`, because that reason is checked first. Over the third line of the
+run under **Reason** above, swapping the two parsers for the two finders:
+
+```
+multi: [{"line":"authorised: src/a.ts (see `b.ts` and `c.ts`)","spans":["b.ts","c.ts"]}]
+bare : []
+```
+
+The author is told about the spans and not about the bare token; fixing the spans leaves a
+line that is then
 refused for the other reason, on the next run. Two rounds for one line, in exchange for
 never printing two refusals for one line — which is what the "different mistakes" rule
 above is worth.
