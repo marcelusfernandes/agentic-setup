@@ -5,8 +5,13 @@ Date: 2026-09-19
 
 Landed with #310, which implements the rule below in the same diff. It is written here
 rather than left in that pull request's body because it changes **what a required check
-reports**, and "a check, or what makes one pass or fail" is one of the five categories
-[`README.md`](README.md) lists. The orchestrator granted this path and
+reports** — `scope` gains a section, a JSON key and a rewritten failing sentence — and
+that obliged the update to `docs/workflow.md` in the same diff. The clause that makes
+this a numbered item is [`README.md`](README.md)'s own: "If a change obliges that doc
+update, it is a decision, and the decision is part of the same PR." The register's check
+category is named for what makes a check pass or fail, and this item deliberately leaves
+that half alone; what it changes is what the check **says**. The orchestrator granted
+this path and
 [`README.md`](README.md) on #310 (`## Files`, 2026-09-19), one glob per grant line.
 
 This item lands `proposed`, like every dated item since 0021. That grant is a grant of
