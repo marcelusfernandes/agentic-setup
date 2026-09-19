@@ -107,9 +107,19 @@ left by the last one, for an offline check against the last fetch. Fields:
   issues. `foreignLock: true` means the pull request belongs to the Codex route, which
   labels its own tasks `state:in-review` too: report it, do not review it, do not `land`
   it, and do not wait on it.
-  `checks` is `'green'`, `'red'` or `'pending'`, from one `gh pr checks <pr> --json
-  name,bucket` call per PR (green when every surviving check's bucket is pass/skipping,
-  red on any fail/cancel, else pending) — no rollup dedupe of its own.
+  `checks` is `'green'`, `'red'`, `'pending'` or `'conflict'`. The first three come from
+  one `gh pr checks <pr> --json name,bucket,state` call per PR (green when every
+  surviving check's bucket is pass/skipping, red on any fail/cancel, else pending) — no
+  rollup dedupe of its own, but two rules of its own on top of gh's: a run whose `state`
+  says it has not completed is pending whatever its bucket, and a cancelled run another
+  run of the same check supersedes is dropped as the noise a re-triggered workflow leaves
+  behind. `'conflict'` is the fourth, and it comes from the open-PR list's own
+  `mergeable` rather than from any bucket: it takes precedence, because a head that
+  conflicts with its base carries no check runs at all, so `'pending'` there would mean
+  waiting for checks that never arrive. `UNKNOWN` is not a conflict — GitHub answers it
+  while it is still computing mergeability, routinely on a freshly pushed head — and
+  keeps whatever its checks say. On `'conflict'` do not wait: take step 5's
+  `main moved and conflicts` branch on this pass.
   `reviewApproved` is the `review:approved` label or an `APPROVED` review. Checks green
   and `reviewApproved` → merge (step 5).
 - `stale` — `{ number, reason }`: in-progress issues with no open PR **and** no remote
@@ -457,9 +467,12 @@ Then act on the verdict:
   `gh-pr-comments` (the comments read could not answer, so the reviewed head is unknown and
   nothing is merged), `gh-pr-reviews` (mode `approved` only: the reviews read could not
   answer, so the commit the approving review was cast against is unknown — the same failing
-  closed), `merge:not-mergeable` (GitHub does not report the head as
-  `MERGEABLE` — a conflict to send back, or a mergeability it has not computed yet, which
-  simply means running `land` again in a moment), `checks:required` (a required check
+  closed), `pr:conflict` (the head conflicts with its base — send it back: the implementer
+  merges `origin/<base>` on the published branch, and the new head is reviewed again and
+  gets a fresh marker. Refused before any merge call, and named apart from the next one
+  because it is the one state here with a remedy), `merge:not-mergeable` (anything else
+  GitHub does not report as `MERGEABLE`, `UNKNOWN` included — a mergeability it has not
+  computed yet, which simply means running `land` again in a moment), `checks:required` (a required check
   outside bucket `pass`, or no required check at all), `merge:not-clean` (mode `agent`
   only: GitHub queued the merge instead of performing it, so `land` disarmed the queue —
   see below), `gh-rules` (the base branch's effective rules could not be read, so no mode
@@ -473,9 +486,12 @@ Then act on the verdict:
   repos/{owner}/{repo}/rules/branches/<base>`) before anything else, because the mode and
   the gate both live there: `gate: 'ruleset'` when they include a `required_status_checks`
   rule, `gate: 'client-checks'` otherwise. **Both gates read the checks themselves** — `gh
-  pr checks <pr> --required --json name,bucket` — and refuse (`{ refused, pr, missing:
-  ['checks:required'], gate }`) unless that list is non-empty and every bucket is `pass`; a
-  `pending` check is not a green one, and an empty list means nothing held the line at all.
+  pr checks <pr> --required --json name,bucket,state` — and refuse (`{ refused, pr,
+  missing: ['checks:required'], gate }`) unless that list, once the cancellations a newer
+  run of the same check superseded are dropped, is non-empty and holds nothing but runs
+  whose effective bucket is `pass`; a run whose `state` says it has not completed is
+  `pending` whatever its bucket, a `pending` check is not a green one, and an empty list
+  means nothing held the line at all.
   The `gate` field says who *else* is holding it, not whether it was read.
 
   On success it runs `gh pr merge <pr> --squash --auto --match-head-commit <headRefOid>`
