@@ -22,10 +22,18 @@
 // red — on the base of #233 the file exported six names nothing outside it
 // read, and on the base of #326 `PROOF_DIR`'s docstring names neither of the
 // two modules that import it.
+//
+// #339 is the one change here with no red on its base: it fixed how M and N
+// read the tree — a mention counted as a caller, a `/*` inside a glob opened
+// a comment — and touched nothing outside this file, so the fixed sections
+// read the base's own tree and are green there. Their red is the `test(red):`
+// commits', run against the mechanism this file carried before them; an
+// overlay onto that identical base cannot see it, and the negative control
+// reads the diff as `test-only` (#384).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { check, cleanup, commit, finish, git, tempRepo, RUNTIME, ROOT } from './lib/harness.mts';
 
 /** The record's name, as `docs/adopt.md` and `docs/decisions.md` item 15 name it. */
@@ -423,13 +431,29 @@ if (IS_ROOT) {
   check('a failed write leaves the record as it found it', readRaw(locked) === before, readRaw(locked));
 }
 
-// --- M: every export of record.mts has a caller (#233) ----------------------
+// --- M: every export of record.mts has a caller (#233, #339) ----------------
 // An export nothing calls reads as part of the record's contract without
 // being one: `LABELS_SOURCE` and five others were placeholders for steps that
 // had not landed, and a reviewer of #193 read them as the shape the record
-// promises. The pin is the cheapest thing that makes the next speculative
-// export fail the suite instead of shipping — a name that is genuinely
-// needed gets exported together with the call that needs it.
+// promises. The pin makes the next speculative export fail the suite instead
+// of shipping — a name that is needed is exported with the call that needs it.
+//
+// **A caller is an importer, not a mention (#339).** The case used to look
+// for `\bNAME\b` in the walked files, so any spelling satisfied it. Measured
+// before the change, `\bRECORD_FILE\b` matched 9 files against 5 real
+// importers and `\bGENERATED_BY\b` 4 against 2, this file among the matches
+// for both — so either name would have passed with zero importers anywhere.
+// The test tree is out of the walk for the same reason, and the same way
+// section N leaves it out of both its sides: this file re-declares both names
+// as literals by design (see the header) and spells `PROOF_DIR` throughout
+// section N, and a case that names a constant to assert something about it is
+// not the call that justifies the export.
+//
+// **M and N do not restate one another.** M pins *existence*, over every
+// export: each has an importer outside `record.mts` and outside the test
+// tree. N pins *the prose* of one of them, `PROOF_DIR`'s docstring, in both
+// directions. Neither implies the other, so both are kept and read the tree
+// through the one walk and the one import reader below.
 //
 // The source files are walked rather than listed with `git ls-files`: the
 // negative control copies the test files onto a checkout of the base, and
@@ -437,13 +461,159 @@ if (IS_ROOT) {
 const RECORD_REL = join('scripts', 'lib', 'adopt', 'record.mts');
 const RECORD_SRC = readFileSync(join(ROOT, RECORD_REL), 'utf8');
 
+/** The fixture #339 names for the comment-stripper: its line 81 builds a glob. */
+const PR_REL = join('scripts', 'lib', 'adopt', 'pr.mts');
+const PR_SRC = readFileSync(join(ROOT, PR_REL), 'utf8');
+
+const QUOTES = new Set(["'", '"']);
+
+/** The characters after which a `/` opens a regex literal rather than dividing. */
+const BEFORE_REGEX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '^', '~', '<', '>', '\n']);
+
+/** The keywords after which it opens one too. */
+const KEYWORD_BEFORE_REGEX = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await']);
+
+/** Whether the `/` that follows this much code opens a regex literal. */
+const opensRegex = (previous: string, out: string): boolean =>
+  BEFORE_REGEX.has(previous) || KEYWORD_BEFORE_REGEX.has(out.match(/([A-Za-z_$][\w$]*)\s*$/)?.[1] ?? '');
+
 /**
- * A file's code, with its block and line comments removed. A prose mention
- * is not a caller — this very case names `LABELS_SOURCE` in the paragraph
- * above, and counting that would let the pin pass on the defect it exists
- * to catch.
+ * A file's code, with its comments removed and its strings left standing: a
+ * mention is not a caller (this case names `LABELS_SOURCE` above), but code
+ * inside a string is still code (#339). A `/*` inside a string or a template
+ * literal opens no comment — `scripts/lib/adopt/pr.mts:81` builds
+ * `` `${WORKFLOW_DIR}/**` ``, which used to swallow 238 characters over lines
+ * 81-87, one of that file's two `PROOF_DIR` occurrences with them — and a
+ * quote inside a regex literal (`hooks/protect-main.mts:83`,
+ * `ci/lib/scope.mts:38`) or a template literal nested in a `${…}`
+ * (`ci/negative-control.mts:233`) no longer opens a string running to the
+ * next matching quote, which left every comment in that span standing as
+ * code. That direction is the silent one: a commented-out import counting as
+ * a caller.
+ *
+ * This is a scanner, not a parser, and it decides a `/` by the character
+ * before it. Both misreadings are possible. A division read as a regex stops
+ * at its line end. A regex read as a division — one that follows `)`, `]` or
+ * an identifier — is not bounded: a quote inside it opens a string that runs
+ * to the next matching quote, and a commented-out import in that span stands
+ * as code, which is the false-caller class this section exists to close. No
+ * such construct is in the walked tree; the tree-wide case below is what says
+ * so, and it fails on any full-line comment left standing.
  */
-const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+function code(text: string): string {
+  let out = '';
+  let i = 0;
+  let previous = '';
+  /** Copies the next `n` characters through, comments excepted: they never reach here. */
+  const take = (n = 1): void => {
+    out += text.slice(i, i + n);
+    i += n;
+  };
+  const string = (quote: string): void => {
+    take();
+    while (i < text.length) {
+      const ch = text[i] ?? '';
+      if (ch === '\\') { take(2); continue; }
+      take();
+      if (ch === quote) return;
+    }
+  };
+  /** A template literal, substitutions included: `${…}` is code, and may hold another one. */
+  const template = (): void => {
+    take();
+    while (i < text.length) {
+      const ch = text[i] ?? '';
+      if (ch === '\\') { take(2); continue; }
+      if (ch === '$' && text[i + 1] === '{') {
+        take(2);
+        scan(true);
+        continue;
+      }
+      take();
+      if (ch === '`') return;
+    }
+  };
+  const regex = (): void => {
+    take();
+    let inClass = false;
+    while (i < text.length) {
+      const ch = text[i] ?? '';
+      if (ch === '\\') { take(2); continue; }
+      take();
+      if (ch === '[') inClass = true;
+      else if (ch === ']') inClass = false;
+      else if (ch === '\n' || (ch === '/' && !inClass)) return;
+    }
+  };
+  function scan(untilBrace: boolean): void {
+    let depth = 0;
+    while (i < text.length) {
+      const ch = text[i] ?? '';
+      const next = text[i + 1] ?? '';
+      if (ch === '/' && next === '/') {
+        while (i < text.length && text[i] !== '\n') i++;
+        continue;
+      }
+      if (ch === '/' && next === '*') {
+        const end = text.indexOf('*/', i + 2);
+        i = end < 0 ? text.length : end + 2;
+        continue;
+      }
+      if (QUOTES.has(ch) || ch === '`') {
+        if (ch === '`') template();
+        else string(ch);
+        previous = ch;
+        continue;
+      }
+      if (ch === '/' && opensRegex(previous, out)) {
+        regex();
+        previous = '/';
+        continue;
+      }
+      if (untilBrace && ch === '}' && depth === 0) {
+        take();
+        return;
+      }
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      take();
+      if (ch.trim().length > 0 || ch === '\n') previous = ch;
+    }
+  }
+  scan(false);
+  return out;
+}
+
+/** How many times one name appears as a whole word in a text. */
+const occurrences = (text: string, name: string): number => (text.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length;
+
+/** A file's text as one line, so an import list that wraps still reads as one statement. */
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ');
+
+/**
+ * The names one file imports from any `record.mts`, `type` prefixes and
+ * aliases removed. Both quote styles count, `import type { … }` counts, and a
+ * namespace import contributes every name the file then reads off it
+ * (`import * as record from …` plus `record.PROOF_DIR`). Reading only
+ * single-quoted brace imports missed a real caller and reported it as none,
+ * which is a false pass on the side that matters (#339).
+ *
+ * The text is read through `code()` first: a commented-out import is not an
+ * import.
+ */
+function importsFromRecord(raw: string): string[] {
+  const text = oneLine(code(raw));
+  const named = [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"][^'"]*record\.mts['"]/g)]
+    .flatMap((m) => (m[1] ?? '').split(','))
+    .map((name) => name.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0]?.trim() ?? '');
+  const namespaces = [...text.matchAll(/import\s+(?:type\s+)?\*\s+as\s+(\w+)\s+from\s+['"][^'"]*record\.mts['"]/g)].map(
+    (m) => m[1] ?? '',
+  );
+  const read = namespaces.flatMap((alias) =>
+    [...text.matchAll(new RegExp(`\\b${alias}\\.(\\w+)`, 'g'))].map((m) => m[1] ?? ''),
+  );
+  return [...named, ...read].filter((name) => name.length > 0);
+}
 
 /** Every name `record.mts` exports: a const, a function, a class or a type. */
 const EXPORTED = [...RECORD_SRC.matchAll(/^export (?:const|function|class|type|interface) (\w+)/gm)].map((m) => m[1] ?? '');
@@ -463,18 +633,86 @@ function sources(dir: string): string[] {
   });
 }
 
-const CALLERS = ['hooks', 'ci', 'scripts', 'tests', join('.agents', 'skills')]
-  .flatMap((dir) => sources(join(ROOT, dir)))
-  .filter((path) => path !== join(ROOT, RECORD_REL))
-  .map((path) => code(readFileSync(path, 'utf8')));
+/** Whether one file's text counts as a caller of one export of `record.mts`. */
+const isCaller = (text: string, name: string): boolean => importsFromRecord(text).includes(name);
 
-const orphans = EXPORTED.filter((name) => !CALLERS.some((text) => new RegExp(`\\b${name}\\b`).test(text)));
+/** The directories the caller side walks. `tests` is deliberately not one of them. */
+const CALLER_DIRS = ['hooks', 'ci', 'scripts', join('.agents', 'skills')];
+
+/** Every file the caller side walks, with the path its text came from. */
+const CALLER_FILES = CALLER_DIRS.flatMap((dir) => sources(join(ROOT, dir)))
+  .filter((path) => path !== join(ROOT, RECORD_REL))
+  .map((path) => ({ rel: path.slice(ROOT.length + 1), text: readFileSync(path, 'utf8') }));
+
+/** The files that count as callers of one export, by path relative to the root. */
+const callersOf = (name: string): string[] => CALLER_FILES.filter((file) => isCaller(file.text, name)).map((file) => file.rel);
+
+const orphans = EXPORTED.filter((name) => callersOf(name).length === 0);
 check('record.mts exports something at all (the walk found the file)', EXPORTED.length > 0, RECORD_REL);
-check('the caller walk found the rest of the tree', CALLERS.length > 10, `${CALLERS.length} source files read`);
+check('the caller walk found the rest of the tree', CALLER_FILES.length > 10, `${CALLER_FILES.length} source files read`);
+check('every export of record.mts is imported outside it', orphans.length === 0, `exported and never imported: ${orphans.join(', ')}`);
+
+// The pin says "has a caller", so it must be able to tell a caller from a
+// mention (#339). A name spelled in a string, a comment or a re-declaration
+// is not a call, and the test tree is not the caller side at all: this file
+// re-declares `RECORD_FILE` and `GENERATED_BY` as literals by design (see
+// the header), so counting it would let either name pass with zero importers
+// anywhere in the tree.
+const REDECLARED = "const RECORD_FILE = 'agentic.config.json';";
+check('a re-declaration of an export is not a caller', !isCaller(REDECLARED, 'RECORD_FILE'), 'a re-declaration counts as a caller');
+check('an import of an export is a caller', isCaller("import { RECORD_FILE } from './record.mts';", 'RECORD_FILE'), 'an import does not');
+const fromTests = EXPORTED.flatMap((name) =>
+  callersOf(name)
+    .filter((rel) => rel.startsWith(`tests${sep}`))
+    .map((rel) => `${name} <- ${rel}`),
+);
+check('no file under tests/ stands in as a caller of an export', fromTests.length === 0, `counted as callers: ${fromTests.join(', ')} (the walk reads ${CALLER_DIRS.join(', ')})`);
+
+// And it must read code as code (#339). The fixtures below are miniatures of
+// real cases that each used to swallow the code, or the comments, after
+// them: the glob of `scripts/lib/adopt/pr.mts:81`, the quote in the regex of
+// `hooks/protect-main.mts:83` and the backtick in `ci/lib/scope.mts:38`, and
+// the template literal `ci/negative-control.mts:233` nests in a substitution.
 check(
-  'every export of record.mts is named somewhere outside it',
-  orphans.length === 0,
-  `exported and never read: ${orphans.join(', ')}`,
+  'the stripper leaves a glob inside a template literal alone',
+  occurrences(code(PR_SRC), 'PROOF_DIR') === occurrences(PR_SRC, 'PROOF_DIR'),
+  `${PR_REL}: ${occurrences(PR_SRC, 'PROOF_DIR')} PROOF_DIR occurrences, ${occurrences(code(PR_SRC), 'PROOF_DIR')} survive the stripper`,
+);
+const HIDDEN_IMPORT = "// import { PROOF_DIR } from './record.mts';";
+const NESTED = 'const line = `note: ${globs.map((g) => `\\`${g}\\``).join(\', \')} — the gate\'s own code`;';
+
+/** One fixture each, with the `PROOF_DIR` occurrences its code must still have. */
+const STRIPPER_CASES: Array<[string, string, number]> = [
+  ['a /* inside a template literal does not open a comment', 'const glob = `${DIR}/**`;\nconst kept = PROOF_DIR;\n/** a docstring */', 1],
+  ['a real block comment is still stripped', '/* PROOF_DIR */ const kept = 1;', 0],
+  ['a real line comment is still stripped', '// PROOF_DIR\nconst kept = 1;', 0],
+  ['a quote inside a regex literal does not open a string', `const quoted = /^(['"])(.*)\\1$/;\n${HIDDEN_IMPORT}\nconst kept = PROOF_DIR;`, 1],
+  ['a backtick inside a regex literal does not open a template literal', 'const backticked = /`([^`]+)`/g;\n// PROOF_DIR\nconst kept = 1;', 0],
+  ['a template literal inside a substitution does not end the one around it', `${NESTED}\n${HIDDEN_IMPORT}\nconst kept = PROOF_DIR;`, 1],
+];
+for (const [name, fixture, left] of STRIPPER_CASES) {
+  check(name, occurrences(code(fixture), 'PROOF_DIR') === left, `${occurrences(code(fixture), 'PROOF_DIR')} occurrences left, not ${left}`);
+}
+check('a commented-out import is not an import', !isCaller(HIDDEN_IMPORT, 'PROOF_DIR'), 'a commented-out import counts as a caller');
+
+// Those fixtures are miniatures; this is the result they stand for, and the
+// evidence the stripper reads code as code — both regex defects were found
+// by running it over the whole tree, not over one file. What a comment line
+// looks like, and that none may survive, are written out here rather than
+// read off the scanner (invariant 10); the raw count is asserted first, so a
+// detector that matched nothing could not pass by finding nothing.
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*(?:\s|\/|$))/;
+const WALKED = [...CALLER_FILES, { rel: RECORD_REL, text: RECORD_SRC }];
+const commentLines = (text: string): number => text.split('\n').filter((line) => COMMENT_LINE.test(line)).length;
+const RAW_COMMENTS = WALKED.reduce((total, file) => total + commentLines(file.text), 0);
+const SURVIVING = WALKED.flatMap((file) =>
+  code(file.text).split('\n').flatMap((line, i) => (COMMENT_LINE.test(line) ? [`${file.rel}:${i + 1}`] : [])),
+);
+check('the walked tree has comments for the stripper to remove', RAW_COMMENTS > 100, `${RAW_COMMENTS} comment lines in ${WALKED.length} files`);
+check(
+  'no comment line survives the stripper in any walked file',
+  SURVIVING.length === 0,
+  `left standing (of ${RAW_COMMENTS} in ${WALKED.length} files): ${SURVIVING.slice(0, 5).join(', ')}`,
 );
 
 // --- N: the one export #233 could not withdraw says why it stays (#326) -----
@@ -485,15 +723,18 @@ check(
 // re-reading the closed criterion against the file read the export as an
 // unfixed leftover and #326 was filed on that reading.
 //
-// Section M answers "does this export have a caller" for the suite. This one
-// answers it for a person and holds the answer to the tree, in both
-// directions: every module the docstring names must really import the constant
-// from this file, and every module in the tree that imports it must be named.
-// One direction alone would let the paragraph go stale silently — a third
-// caller added without a line here is exactly the kind of drift that left #233
-// half met. The docstring is read as the block immediately above the export,
-// not by a search of the whole file, and every file is read with its line
-// breaks collapsed first: a wrapped import list is one statement.
+// Section M answers "does this export have a caller" for the suite, over
+// every export. This one answers it for a person, about one name, and holds
+// the answer to the tree in both directions: every module the docstring names
+// must import the constant from this file, and every module that imports it
+// must be named. One direction alone would let the paragraph go stale — a
+// third caller added without a line here is the drift that left #233 half
+// met. Neither section implies the other, so #339 kept both and gave them one
+// mechanism instead of two: section M's walk and `importsFromRecord` above
+// are the only reader either side has.
+//
+// The docstring is read as the block immediately above the export, not by a
+// search of the whole file.
 const PROOF_DIR_AT = RECORD_SRC.indexOf('\nexport const PROOF_DIR');
 const PROOF_DIR_BLOCKS = PROOF_DIR_AT < 0 ? [] : [...RECORD_SRC.slice(0, PROOF_DIR_AT).matchAll(/\/\*\*([\s\S]*?)\*\//g)];
 const PROOF_DIR_DOC = PROOF_DIR_BLOCKS.at(-1)?.[1] ?? '';
@@ -508,28 +749,29 @@ const NAMED_CALLERS = [...PROOF_DIR_DOC.matchAll(/`([\w./-]+\.mts)`/g)]
   .map((m) => m[1] ?? '')
   .filter((rel) => !rel.startsWith('tests/'));
 
-/** A file's text as one line, so an import list that wraps still reads as one statement. */
-const oneLine = (text: string): string => text.replace(/\s+/g, ' ');
-
-/** The names one file imports from any `record.mts`, `type` prefixes and aliases removed. */
-function importedFromRecord(text: string): string[] {
-  return [...oneLine(text).matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'[^']*record\.mts'/g)]
-    .flatMap((m) => (m[1] ?? '').split(','))
-    .map((name) => name.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0]?.trim() ?? '')
-    .filter((name) => name.length > 0);
-}
+// The same defect class as section M's, on the side that matters here: a
+// real caller this reader misses is a false pass, not a false orphan (#339).
+// Only a brace import with a single-quoted specifier was read, so an
+// `import * as` or a double-quoted specifier reported a caller as none.
+check(
+  'a double-quoted specifier is read as an import of record.mts',
+  importsFromRecord('import { PROOF_DIR } from "./record.mts";').includes('PROOF_DIR'),
+  `read: ${importsFromRecord('import { PROOF_DIR } from "./record.mts";').join(', ') || 'nothing'}`,
+);
+check(
+  'a namespace import of record.mts is read as an import of what it reads',
+  importsFromRecord("import * as record from './record.mts';\nconst dir = record.PROOF_DIR;").includes('PROOF_DIR'),
+  `read: ${importsFromRecord("import * as record from './record.mts';\nconst dir = record.PROOF_DIR;").join(', ') || 'nothing'}`,
+);
 
 /**
  * Every module of the tree that imports `PROOF_DIR` from a `record.mts`, by
- * path relative to the root. The test tree is left out of both sides of the
- * comparison: a case that imported the constant to assert something about it
- * would otherwise have to be listed in the docstring as a caller.
+ * path relative to the root: section M's walk, not a second copy of its
+ * directory list. The test tree is out of both sides of the comparison here
+ * too — a case that imported the constant to assert something about it would
+ * otherwise have to be listed in the docstring as a caller.
  */
-const REAL_CALLERS = ['hooks', 'ci', 'scripts', join('.agents', 'skills')]
-  .flatMap((dir) => sources(join(ROOT, dir)))
-  .filter((path) => path !== join(ROOT, RECORD_REL))
-  .filter((path) => importedFromRecord(readFileSync(path, 'utf8')).includes('PROOF_DIR'))
-  .map((path) => path.slice(ROOT.length + 1));
+const REAL_CALLERS = CALLER_FILES.filter((file) => isCaller(file.text, 'PROOF_DIR')).map((file) => file.rel);
 
 check('record.mts still exports PROOF_DIR (this case reads the docstring above it)', PROOF_DIR_AT >= 0, RECORD_REL);
 check(
@@ -540,7 +782,7 @@ check(
 for (const rel of NAMED_CALLERS) {
   const path = join(ROOT, rel);
   const present = existsSync(path);
-  const imported = present ? importedFromRecord(readFileSync(path, 'utf8')) : [];
+  const imported = present ? importsFromRecord(readFileSync(path, 'utf8')) : [];
   check(
     `${rel}, which PROOF_DIR's docstring names, imports PROOF_DIR from record.mts`,
     imported.includes('PROOF_DIR'),

@@ -4,10 +4,12 @@
 // content starts `authorised:` is a grant rather than one of them (#231);
 // only `authorised:` lines grant anything, and only in the **issue** body
 // (#155 — the implementer writes the PR body, so a grant there would be a
-// self-grant); only backtick-quoted spans are globs when any are present,
-// otherwise the first whitespace-delimited token is. A grant line carrying
-// more than one backticked span grants nothing at all and is reported by
-// `findMultiGlobGrantLines` instead (#316).
+// self-grant); a grant's glob is the line's one backticked span when it has
+// one, and otherwise its first whitespace-delimited token. Two shapes grant
+// nothing at all and are reported instead of read: more than one backticked
+// span (`findMultiGlobGrantLines`, #316), and a bare glob on a line that
+// also carries a span — a justification written in backticks
+// (`findBareGlobBacktickedJustificationLines`, #357).
 import { matchesAny } from './globs.mts';
 
 /**
@@ -78,40 +80,75 @@ export function parseIssueGlobs(issueBody: string): string[] {
   return globs;
 }
 
-type GrantLine = { line: string; spans: string[]; remainder: string };
+type GrantLine = { line: string; spans: string[]; remainder: string; bare: string };
 
 /**
  * One `authorised:` line, read once: the line itself (trimmed, bullet marker
- * removed, the form `findMisplacedAuthorisedLines` already reports) and every
- * backticked span on it. `null` when the line is not a grant, or grants
- * nothing.
+ * removed, the form `findMisplacedAuthorisedLines` already reports), every
+ * backticked span on it, and its first whitespace-delimited token with a
+ * trailing `,`/`;` stripped — the `bare` glob, which is what the line grants
+ * when it carries no span and what names the refusal when it carries one
+ * behind that token. `null` when the line is not a grant, or grants nothing.
  *
  * The single reader of a grant's *content*, the way `grantRemainder` is the
  * single reader of whether a line is one (#231). What `authorisedGlobsIn`
- * refuses and what `findMultiGlobGrantLines` reports are therefore the same
- * decision taken once, rather than two span counts that have to agree.
+ * refuses and what the two finders report are therefore the same decision
+ * taken once, rather than span counts in three places that have to agree.
  */
 function readGrantLine(rawLine: string): GrantLine | null {
   const remainder = grantRemainder(rawLine);
   if (remainder === null || !remainder.trim()) return null;
-  return { line: rawLine.trim().replace(/^[-*]\s+/, ''), spans: backticked(remainder), remainder };
+  return {
+    line: rawLine.trim().replace(/^[-*]\s+/, ''),
+    spans: backticked(remainder),
+    remainder,
+    bare: remainder.trim().split(/\s+/)[0].replace(/[,;]+$/, ''),
+  };
+}
+
+/** The two shapes a grant line takes that grant nothing at all. */
+export type GrantRefusal = 'multi-span' | 'bare-glob-backticked-justification';
+
+/**
+ * Why a grant line grants nothing, or `null` when it grants normally. One
+ * line draws at most one refusal, and the order below is what keeps the two
+ * apart: a line with several spans is `multi-span` whatever precedes them, so
+ * an author fixing one mistake is never handed the other one's remedy (#357
+ * AC3).
+ *
+ * - `multi-span` — more than one backticked span, so which one is the glob
+ *   cannot be told from the line (#316).
+ * - `bare-glob-backticked-justification` — exactly one span, but the line
+ *   does not open with it: the glob is the bare token in front, and the span
+ *   is a justification. Reading the span granted the path the author was
+ *   *pointing at* and lost the glob they wrote — both halves wrong from one
+ *   line, the granting half failing open, exactly as #316's shape did (#357).
+ *
+ * Both are refused rather than narrowed to the glob that is probably meant:
+ * narrowing would trade a silent over-grant for a silent under-grant,
+ * discarding what the author wrote without saying so. A line of either shape
+ * is a line whose author meant something this format cannot express, so it is
+ * named and left to a person to rewrite.
+ */
+function grantRefusal(grant: GrantLine): GrantRefusal | null {
+  if (grant.spans.length > 1) return 'multi-span';
+  if (grant.spans.length === 1 && !grant.remainder.trimStart().startsWith('`')) return 'bare-glob-backticked-justification';
+  return null;
 }
 
 /**
  * The globs granted by `authorised:` lines (bullet or bare) in a body's
  * `## Files` section; every other line there is prose. One glob per line
- * (invariant 5), and since #316 that is enforced rather than conventional:
- * a line carrying more than one backticked span grants **nothing** — see
- * `findMultiGlobGrantLines`, which names it. Exactly one span grants that
- * span; no span at all falls back to the first whitespace-delimited token,
+ * (invariant 5), and since #316 that is enforced rather than conventional.
+ * A line `grantRefusal` names grants **nothing**; otherwise its one span is
+ * the glob, and with no span at all the first whitespace-delimited token is,
  * trailing `,`/`;` stripped, so a bare comma list grants its first entry and
  * nothing else.
  *
- * Refusing rather than taking the first span is the point: narrowing would
- * trade a silent over-grant for a silent under-grant, and a line with two
- * spans is a line whose author meant something this format cannot express.
- * The direction matters — an over-grant fails open, quietly widening the
- * audited scope, while a refusal fails closed, as something a person reads.
+ * The glob therefore always stands at the head of the line, backticked or
+ * bare, which is what `docs/workflow.md` has said since #316 and what #357
+ * makes true of the parser: reading a span from behind a bare token granted
+ * a path the author had only quoted.
  *
  * Shared by the issue and PR parsers below so the two read a grant
  * identically — what differs is only whose body is allowed to carry one.
@@ -123,42 +160,69 @@ function authorisedGlobsIn(body: string): string[] {
   for (const raw of section.split(/\r?\n/)) {
     const grant = readGrantLine(raw);
     if (grant === null) continue;
-    if (grant.spans.length > 1) continue; // refused, not narrowed (#316)
+    if (grantRefusal(grant) !== null) continue; // refused, not narrowed (#316, #357)
     if (grant.spans.length === 1) {
       globs.push(grant.spans[0]);
       continue;
     }
-    const bare = grant.remainder.trim().split(/\s+/)[0]?.replace(/[,;]+$/, '');
-    if (bare) globs.push(bare);
+    if (grant.bare) globs.push(grant.bare);
   }
   return globs;
+}
+
+/**
+ * The grant lines of a body's `## Files` section that `grantRefusal` gives
+ * the named reason — the lines `authorisedGlobsIn` refuses. The two exported
+ * finders below are this function under two reasons, so a line can never be
+ * reported by both and no span count is written down twice.
+ */
+function refusedGrantLines(body: string, reason: GrantRefusal): GrantLine[] {
+  const section = extractSection(body, 'Files');
+  if (section === null) return [];
+  const refused: GrantLine[] = [];
+  for (const raw of section.split(/\r?\n/)) {
+    const grant = readGrantLine(raw);
+    if (grant !== null && grantRefusal(grant) === reason) refused.push(grant);
+  }
+  return refused;
 }
 
 export type MultiGlobGrant = { line: string; spans: string[] };
 
 /**
  * The `authorised:` lines of a body's `## Files` section that carry more than
- * one backticked span — the lines `authorisedGlobsIn` refuses. Each entry
- * carries the line as written (trimmed, bullet marker removed) and every span
- * on it, so the caller can name both halves of what was refused instead of
- * reporting a count.
+ * one backticked span. Each entry carries the line as written (trimmed,
+ * bullet marker removed) and every span on it, so the caller can name both
+ * halves of what was refused instead of reporting a count.
  *
  * Read by `ci/issue-lint.mts`, which turns each entry into a failure: the
  * refusal has to reach the orchestrator at dispatch, where the line is
  * written, rather than at the `scope` check on somebody else's pull request
  * (#316). A justification belongs on the next line, indented and not a
- * bullet; a bare (unbackticked) justification on the same line is fine, since
- * it adds no span.
+ * bullet; an unbackticked justification on the same line is fine, since it
+ * adds no span.
  */
 export function findMultiGlobGrantLines(body: string): MultiGlobGrant[] {
-  const section = extractSection(body, 'Files');
-  if (section === null) return [];
-  const refused: MultiGlobGrant[] = [];
-  for (const raw of section.split(/\r?\n/)) {
-    const grant = readGrantLine(raw);
-    if (grant !== null && grant.spans.length > 1) refused.push({ line: grant.line, spans: grant.spans });
-  }
-  return refused;
+  return refusedGrantLines(body, 'multi-span').map(({ line, spans }) => ({ line, spans }));
+}
+
+export type BareGlobGrant = { line: string; bare: string; spans: string[] };
+
+/**
+ * The `authorised:` lines of a body's `## Files` section whose glob is bare
+ * and whose justification is backticked — `authorised: src/a.ts (see
+ * \`src/lib/b.ts\`)`. Each entry carries the line as written, the bare token
+ * that was meant to be the glob and the span that was not, because both
+ * halves went wrong at once: the span was granted and the bare glob was lost,
+ * so naming either alone leaves the author guessing at the other (#357).
+ *
+ * Read by `ci/issue-lint.mts` beside `findMultiGlobGrantLines`, and reported
+ * in wording of its own: "more than one backticked span" and "a bare glob
+ * with a backticked justification" are different mistakes with different
+ * remedies, and an author fixing one must not be told the other.
+ */
+export function findBareGlobBacktickedJustificationLines(body: string): BareGlobGrant[] {
+  return refusedGrantLines(body, 'bare-glob-backticked-justification').map(({ line, bare, spans }) => ({ line, bare, spans }));
 }
 
 /**
@@ -207,23 +271,62 @@ export const FILE_LINE_LIMIT = 800;
 export type FileLinesEntry = { path: string; baseLines: number | null; headLines: number; generated: boolean };
 export type FileGrowth = { path: string; baseLines: number | null; headLines: number };
 
+export type LengthOutcome = 'exempt-generated' | 'under-limit' | 'pushed-over' | 'inherited-over';
+
 /**
- * A file that is new or grew past FILE_LINE_LIMIT, unless its first line
- * marks it `@generated`. `baseLines` is null for a file that did not exist
- * at the base (new at head) — that always counts as "grew" when it lands
- * over the limit. A file already over the limit that shrinks or holds
- * steady is not a violation: only crossing further, or landing over it for
- * the first time, is.
+ * What one file's length relation is called. Four relations, four names,
+ * decided in one place so the two halves of the old condition cannot drift
+ * apart (#310):
+ *
+ * - `exempt-generated` — `@generated` on the first line, whatever the length;
+ * - `under-limit` — at or below FILE_LINE_LIMIT at the head, whatever it was
+ *   at the base;
+ * - `pushed-over` — over the limit at the head *and* longer than at the base,
+ *   or new at head (`baseLines` null) and landing over it. This diff added
+ *   the length, so this diff is answerable for it: it fails the check;
+ * - `inherited-over` — over the limit at the head, and the base was at least
+ *   as long. The length came from somewhere else, so the check reports it and
+ *   does not fail on it. A file that shrinks while staying over the limit is
+ *   `inherited-over` too: it is still over, and it is still not this diff's
+ *   doing.
+ *
+ * Before #310 the last name did not exist and the case produced nothing at
+ * all, so a file that had crossed the limit was exempt from then on and the
+ * rule stopped applying to exactly the files that had already broken it.
+ * Naming the case does not change what fails — `pushed-over` is the old
+ * condition, unchanged — it changes what is visible.
+ */
+export function lengthOutcome({ baseLines, headLines, generated }: FileLinesEntry): LengthOutcome {
+  if (generated) return 'exempt-generated';
+  if (headLines <= FILE_LINE_LIMIT) return 'under-limit';
+  if (baseLines !== null && headLines <= baseLines) return 'inherited-over';
+  return 'pushed-over';
+}
+
+const withOutcome = (entries: FileLinesEntry[], wanted: LengthOutcome): FileGrowth[] =>
+  entries
+    .filter((entry) => lengthOutcome(entry) === wanted)
+    .map(({ path, baseLines, headLines }) => ({ path, baseLines, headLines }));
+
+/**
+ * The files this diff is answerable for: new at head over FILE_LINE_LIMIT, or
+ * grown past it against the base. The failing half of the rule, and the one
+ * the caller folds into its exit status.
  */
 export function fileGrowth(entries: FileLinesEntry[]): FileGrowth[] {
-  const out: FileGrowth[] = [];
-  for (const { path, baseLines, headLines, generated } of entries) {
-    if (generated) continue;
-    if (headLines <= FILE_LINE_LIMIT) continue;
-    if (baseLines !== null && headLines <= baseLines) continue;
-    out.push({ path, baseLines, headLines });
-  }
-  return out;
+  return withOutcome(entries, 'pushed-over');
+}
+
+/**
+ * The files that were already over FILE_LINE_LIMIT at the base and that this
+ * diff did not lengthen. Reported, never failed on: a pull request is not
+ * blamed for length it did not add (#310). The caller says so in words, and
+ * says what closes it — a pull request that brings the file back under the
+ * limit — because nothing else will: until one does, every pull request that
+ * touches the file gets the same message, the ones that shorten it included.
+ */
+export function inheritedOverLimit(entries: FileLinesEntry[]): FileGrowth[] {
+  return withOutcome(entries, 'inherited-over');
 }
 
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {

@@ -17,10 +17,18 @@
 // the default branch's effective rules, `label list`). It reads one more
 // thing from disk than the inventory does — the adoption record, below.
 //
-// `--plan-issue` is the one mutation, and it is a question rather than a
+// `--plan-issue` is the first mutation, and it is a question rather than a
 // change: it opens a single `human:pending` issue whose body renders the
 // inventory and lists, as checkboxes, exactly the gaps found and what
-// adoption would do about each. The pattern is this repository's own —
+// adoption would do about each. It creates **both** labels of that question
+// first — `human:pending`, which the issue carries, and `human:decided`,
+// which the plan's own last line asks the reader to move it to and which
+// `--pr` refuses without (#366). Creating only the first left the label that
+// records the decision behind the decision: on a repository nobody prepared,
+// which is the only kind this script exists for, answering the plan meant
+// creating a label by hand before it could be answered. So a run writes at
+// most two labels besides the issue, and exactly the ones the inventory read
+// did not see. The pattern is this repository's own —
 // `.github/workflows/guard-main.yml` opens exactly such an issue,
 // deduplicated by title — and the three readers that honour the label
 // (`scripts/reconcile.mts`, `scripts/claim.mts` and the Codex route's
@@ -173,6 +181,18 @@ const DECIDED_LABEL = 'human:decided';
 const PENDING_LABEL = 'human:pending';
 const PENDING_COLOR = 'f9d0c4';
 const PENDING_DESCRIPTION = 'A human decision is required; affected work is paused';
+
+/**
+ * The two labels the question needs, in the order they are created: the one
+ * the issue is opened under, then the one its last line asks the reader to
+ * move it to. Both carry the colour and description `labels.json` seeds, so
+ * a repository adopting the loop ends up with the vocabulary's own pair
+ * rather than two `gh`-chosen random colours.
+ */
+const PLAN_ISSUE_LABELS: Array<{ name: string; color: string; description: string }> = [
+  { name: PENDING_LABEL, color: PENDING_COLOR, description: PENDING_DESCRIPTION },
+  { name: DECIDED_LABEL, color: 'c2e0c6', description: 'A human decision was recorded; kept as the audit trail' },
+];
 
 /**
  * The one way out on a failure: a *named* reason in `error`, so a caller can
@@ -549,9 +569,20 @@ const REMEDIES: Record<Gap, (report: Report) => string> = {
   'ruleset:review-not-required': () =>
     "raise the ruleset's `required_approving_review_count` to 1, so an approval is what merges a pull request " +
     'rather than a label anyone can apply',
+  // The two labels of the question are created by this very run, before the
+  // issue is opened, so by the time anyone reads the checklist they exist:
+  // counting them among the labels adoption *would* create would ask for work
+  // already done (#366). The gap itself is unchanged — `inventory.mts`
+  // computes it from a read taken before the write, and that read was
+  // accurate when it was taken — so a repository whose only missing labels
+  // were these two still shows the box, and it says so instead of naming
+  // none.
   'labels:missing': (r) => {
-    const missing = SEEDED_LABELS.filter((name) => !r.labels.includes(name));
-    return `create the ${missing.length} missing label(s) of the loop's vocabulary (\`${missing.join('`, `')}\`)`;
+    const created = PLAN_ISSUE_LABELS.map((label) => label.name);
+    const missing = SEEDED_LABELS.filter((name) => !r.labels.includes(name) && !created.includes(name));
+    return missing.length === 0
+      ? `nothing left here: the only labels missing were \`${created.join('`, `')}\`, and opening this issue created both`
+      : `create the ${missing.length} missing label(s) of the loop's vocabulary (\`${missing.join('`, `')}\`)`;
   },
   'hooks:not-installed': () =>
     `install the \`pre-push\` hook that keeps commits off the default branch (\`node scripts/init.mts\`)`,
@@ -667,12 +698,26 @@ if (already) {
   process.exit(1);
 }
 
-// --- 9. --plan-issue: the one mutation --------------------------------------
-// The label has to exist before it can be applied; the inventory already
-// says whether it does, so this costs no extra read.
-if (!inventory.labels.includes(PENDING_LABEL)) {
-  const label = gh(['label', 'create', PENDING_LABEL, '--color', PENDING_COLOR, '--description', PENDING_DESCRIPTION, '--force']);
-  if (label.status !== 0) fail(`label:${PENDING_LABEL}:not-created`);
+// --- 9. --plan-issue: the labels, then the issue -----------------------------
+// `human:pending` has to exist before the issue can carry it, and
+// `human:decided` before the issue's last line can ask for it; the inventory
+// already says whether either does, so this costs no extra read. Both are
+// written before the issue, so a person who opens the plan has nothing to
+// create — that is the whole of #366.
+//
+// The guard, not `--force`, is what leaves a label alone: a label the
+// inventory read saw is never passed to `gh label create` at all, so a colour
+// or a description a person chose stays theirs. `--force` acts only in the
+// window that read missed — `labelsTruncated`, where the label exists off the
+// page, or a label created between the read and this write — and there it
+// does rewrite colour and description to the values above. It stays, because
+// without it that window ends the run with `label:<name>:not-created` over a
+// label that exists, and telling "already exists" apart from a real failure
+// would mean reading `gh`'s wording, which `fail` above exists to avoid.
+for (const label of PLAN_ISSUE_LABELS) {
+  if (inventory.labels.includes(label.name)) continue;
+  const write = gh(['label', 'create', label.name, '--color', label.color, '--description', label.description, '--force']);
+  if (write.status !== 0) fail(`label:${label.name}:not-created`);
 }
 
 const created = gh(['issue', 'create', '--title', PLAN_ISSUE_TITLE, '--label', PENDING_LABEL, '--body', renderPlan(report)]);

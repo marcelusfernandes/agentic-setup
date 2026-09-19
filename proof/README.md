@@ -32,14 +32,38 @@ Lowercase letters, digits and dashes only.
 |---|---|---|
 | `tests` | yes | the files `negative-control` copies onto the base checkout, in addition to the declaration itself. They **replace** the diff's test files; they do not widen them. No test glob is consulted at all once a declaration is read, which is both how a file no glob matches is overlaid — the point of declaring it — and how a file every glob matches is left out. Each entry is relative to the repository root and must be in the head commit: an absolute path, a path that escapes the root once normalised (`..`), or a path the head does not have is `cannot-run` naming that path, before any file is written or removed, and never a deletion replayed on the base. The runner does not overlay anything, but it refuses a declaration naming a file the repository does not have (`proof:missing-test-file`) — #136 is the consumer of `tests[]`, and a declaration that points at nothing is broken wherever it is read. |
 | `command` | no | replaces the detected test command, for **both** the baseline run on the pristine base and the overlaid run, and it is the command `scripts/proof.mts` runs. Both of those runs happen in the base worktree: **`negative-control` never executes the declared command at head.** A `proof/*.json` diff therefore proves that the command is red on the base with the declared files overlaid, and nothing at all about what it does at head — that is the repository's own test workflow's job, and the `SubagentStop` gate's. Omitting it is not an error: the runner then falls back to the record and to detection, and says so in `source`. |
-| `describes` | no | one sentence naming what the declaration proves, for a person. Nothing executes it, and `ci/negative-control.mts` does not read it at all — a `describes` that is present and empty passes the negative control. It is validated by the proof runner (`scripts/lib/proof.mts`, which refuses it as `proof:wrong-type`) and, for the declarations this repository ships, by the pin test `tests/proof-declarations.test.mts`. |
+| `describes` | no | one sentence naming what the declaration proves, for a person. Nothing executes it, and neither reader acts on its content. Both **validate** it: since #297 the two readers share one parser (`ci/lib/proof.mts`), so a `describes` that is present and blank is `proof:wrong-type` for the runner and `cannot-run` for the negative control, where it used to pass. For the declarations this repository ships, the pin test `tests/proof-declarations.test.mts` checks it as well. |
 
 Any other key is a typo: `tests/proof-declarations.test.mts` fails on it, and on a
 declaration that does not parse, names a file that does not exist, or names a file no
 test glob matches. `scripts/proof.mts` refuses the same declarations with a named
-`reason` (`proof:unknown-key`, `proof:empty-command`, …), and the pin test also requires
+`reason` (`proof:unknown-key`, `proof:empty-command`, …), and so does
+`ci/negative-control.mts` — the two read the file with the same parser, `ci/lib/proof.mts`
+(#297). The pin test also requires
 every `tests` entry of a declaration *this repository ships* to match a test glob —
 a rule for the files here, not part of the format.
+
+## One parser, two readers
+
+The format is parsed in exactly one place, `ci/lib/proof.mts`, which
+`scripts/lib/proof.mts` and `ci/negative-control.mts` both import. Until #297 there were
+two parsers: the runner refused an unknown key and a blank `describes`, the negative
+control accepted both. A branch could therefore declare a proof one reader honoured and
+the other rejected — and the reader that accepts more is the one deciding what CI
+overlays, so the looser half won by default.
+
+It lives under `ci/` and not under `scripts/` because `scripts/init.mts` copies `ci/`
+into an adopting repository as `.github/scripts/agentic` and does not copy `scripts/`: a
+parser under `scripts/lib/` would not exist where `negative-control` runs. The import
+direction is the one already in the tree — `scripts/lib/proof.mts` imports
+`ci/lib/detect.mts`.
+
+**What the two still do differently, on purpose: where the file is.** The runner reads
+the working tree, under the directory the adoption record names (`proof.dir`, default
+`proof`). The negative control reads the head *commit*, under a hardcoded `proof/`,
+because the record's reader is `scripts/lib/adopt/record.mts` and `init` does not copy
+it. Honouring `proof.dir` in the check means moving that reader under `ci/` first. The
+two agree on what a declaration *means*; they do not yet agree on where it lives.
 
 ## How the negative control reads it
 
@@ -69,6 +93,8 @@ negative control exists to prevent. The causes, each naming the path it rejected
 | unparsable | the text is not JSON, or not a JSON object |
 | no `tests` | `"tests"` is absent, empty, or not an array of non-empty strings |
 | bad `command` | `"command"` is present and is not a non-empty string |
+| unknown key | it carries a key outside `tests`/`command`/`describes`; the cause names it (#297) |
+| bad `describes` | `"describes"` is present and is not a non-empty sentence (#297) |
 | path outside the checkout | a `tests` entry is absolute, or escapes the repository root once normalised (`..`) |
 | path absent at head | a `tests` entry names a file the head commit does not have |
 
@@ -115,6 +141,23 @@ repository root** and prints one JSON object on stdout:
 argument, anything beginning with `-` — prints `{ "error": "usage: …" }` and exits 1
 before anything is read.
 
+### The two limits on a run
+
+Both readers run a command, and both bound it in two dimensions (#297). `spawnSync`
+defaults to a 1 MiB buffer and to no timeout at all, so a suite that printed more than a
+megabyte came back as a command that could not be executed, and a command that hung hung
+whatever was waiting on it with no verdict ever.
+
+| limit | default | override | what it is |
+|---|---|---|---|
+| buffer | 64 MiB | `AGENTIC_RUN_MAX_BUFFER` (bytes) | how much of the run's output is held in memory |
+| timeout | 30 minutes | `AGENTIC_RUN_TIMEOUT_MS` (milliseconds) | how long the run may take before it is killed |
+
+A run killed by either is reported as that and not as `proof:command-not-runnable`: the
+command *did* run, and these two are the only causes an operator clears by raising a
+number. The overrides are detection-style defaults, never a contract (invariant 4) — and
+an override can raise a limit until it stops limiting, which is the operator's to decide.
+
 ### The three sources, in order
 
 1. **`declaration`** — `proof/<slug>.json`, under the directory the adoption record names
@@ -146,6 +189,8 @@ alternative is a runner that quietly proves something other than what the branch
 | `proof:missing-test-file` | a `tests` entry names no file in the repository; `field` is that path |
 | `proof:no-command` | no declaration, no record and nothing detected |
 | `proof:command-not-runnable` | the command could not be executed at all (exit 127, or the spawn never started) — not the same as a proof that failed |
+| `proof:output-too-large` | the command ran and printed more than the buffer holds; raise `AGENTIC_RUN_MAX_BUFFER` |
+| `proof:command-timed-out` | the command ran and was killed for outliving the timeout; raise `AGENTIC_RUN_TIMEOUT_MS` |
 | `record:…` | the adoption record is not the shape; `scripts/lib/adopt/record.mts` names the reason and the field |
 
 ### Where each reader reads from

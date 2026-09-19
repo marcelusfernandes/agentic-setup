@@ -3,6 +3,17 @@
 // of it into something a script can run, and this module is the reader both
 // consumers go through — `scripts/proof.mts` today, `doctor` (#168) next.
 //
+// **The format itself lives in `ci/lib/proof.mts`.** The declaration's shape,
+// its named reasons and the error that carries them are parsed there and
+// re-exported here, because `ci/negative-control.mts` reads the same file and
+// two parsers meant a branch could declare a proof one reader honoured and the
+// other rejected (#297). `scripts/init.mts` copies `ci/` into an adopting
+// repository and does not copy `scripts/`, so the shared half has to sit under
+// `ci/` — the direction `ci/lib/detect.mts` is already imported in.
+//
+// What stays here is *resolution*: where the declaration lives in a working
+// tree, and what runs when it names no command.
+//
 // **Three sources, in this order, and no fourth.**
 //   1. `proof/<slug>.json` — the declaration at the repository root, under
 //      the directory the adoption record names (`proof.dir`, default `proof`).
@@ -33,64 +44,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectCommands } from '../../ci/lib/detect.mts';
+import { KNOWN_KEYS, parseDeclaration, ProofError, SLUG_PATTERN } from '../../ci/lib/proof.mts';
+import type { Declaration, ProofReason, ProofSource } from '../../ci/lib/proof.mts';
 import { PROOF_DIR, readRecord, type AdoptionRecord } from './adopt/record.mts';
 
-/** A slug is a slug: lowercase letters, digits and dashes, and nothing else. */
-export const SLUG_PATTERN = /^[a-z0-9-]+$/;
-
-/** The keys `proof/README.md` documents. Anything else is a typo. */
-export const KNOWN_KEYS = ['tests', 'command', 'describes'];
-
-/** Where the command that ran came from; a closed set. */
-export type ProofSource = 'declaration' | 'record' | 'detection';
-
-/** Every named reason this module can refuse to resolve a proof for. */
-export type ProofReason =
-  | 'proof:slug-invalid'
-  | 'proof:unreadable'
-  | 'proof:unparsable'
-  | 'proof:unknown-key'
-  | 'proof:wrong-type'
-  | 'proof:empty-command'
-  | 'proof:missing-tests'
-  | 'proof:missing-test-file'
-  | 'proof:no-command'
-  /** Raised by `scripts/proof.mts`, not here: the command resolved and then
-   *  could not be executed at all (exit 127, or a spawn that never started).
-   *  It lives in this union so the two files name the reason once. */
-  | 'proof:command-not-runnable';
-
-/**
- * The one way out on a proof this module refuses: a named `reason` a caller
- * can branch on, the `field` it rejected when there is one, and the `source`
- * resolution had reached — so the report says where it stopped as well as
- * why. The message is for a person; the reason is the contract.
- */
-export class ProofError extends Error {
-  readonly reason: ProofReason;
-  readonly field: string | null;
-  readonly source: ProofSource;
-
-  constructor(reason: ProofReason, message: string, field: string | null = null, source: ProofSource = 'declaration') {
-    super(message);
-    this.name = 'ProofError';
-    this.reason = reason;
-    this.field = field;
-    this.source = source;
-  }
-}
-
-/** A declaration as it is written on disk, after validation. */
-export type Declaration = {
-  /** The declaration's path, relative to the repository root. */
-  path: string;
-  /** The files `negative-control` overlays on the base (#136 is their consumer). */
-  tests: string[];
-  /** The command to run; `null` when the declaration names none. */
-  command: string | null;
-  /** One sentence naming what this proves; carried, never executed. */
-  describes: string | null;
-};
+// The format, re-exported so this module stays the runner's one import.
+export { KNOWN_KEYS, parseDeclaration, ProofError, SLUG_PATTERN };
+export type { Declaration, ProofReason, ProofSource };
 
 /** What `resolveProof` answers with. `command` is `null` only when it throws. */
 export type ResolvedProof = {
@@ -114,56 +74,6 @@ export function declarationPath(root: string, slug: string, dir: string = PROOF_
     throw new ProofError('proof:slug-invalid', `\`${slug}\` is not a branch slug (${String(SLUG_PATTERN)})`, 'slug');
   }
   return join(root, dir, `${slug}.json`);
-}
-
-/** True for a plain object; an array is not one, and neither is `null`. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
-
-/**
- * Parses and validates a declaration's text. Pure: it checks the shape and
- * nothing about the filesystem, so the "does this file exist" question stays
- * with the caller that knows the repository root.
- */
-export function parseDeclaration(text: string, path: string): Declaration {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new ProofError('proof:unparsable', `${path} is not JSON: ${(err as Error).message}`);
-  }
-  if (!isPlainObject(parsed)) throw new ProofError('proof:wrong-type', `${path} must hold one JSON object`);
-
-  const unknown = Object.keys(parsed).find((key) => !KNOWN_KEYS.includes(key));
-  if (unknown !== undefined) {
-    throw new ProofError('proof:unknown-key', `${path}: \`${unknown}\` is not part of a proof declaration (${KNOWN_KEYS.join(', ')})`, unknown);
-  }
-
-  if (!Object.prototype.hasOwnProperty.call(parsed, 'tests')) {
-    throw new ProofError('proof:missing-tests', `${path} names no \`tests\`; a declaration says which files prove the branch`, 'tests');
-  }
-  const tests = parsed.tests;
-  if (!Array.isArray(tests)) throw new ProofError('proof:wrong-type', `${path}: \`tests\` must be an array of paths`, 'tests');
-  if (tests.length === 0) throw new ProofError('proof:missing-tests', `${path}: \`tests\` is empty; a declaration that names no file proves nothing`, 'tests');
-  if (!tests.every(isText)) throw new ProofError('proof:wrong-type', `${path}: every \`tests\` entry must be a non-empty string`, 'tests');
-
-  let command: string | null = null;
-  if (Object.prototype.hasOwnProperty.call(parsed, 'command')) {
-    if (typeof parsed.command !== 'string') throw new ProofError('proof:wrong-type', `${path}: \`command\` must be a string`, 'command');
-    if (parsed.command.trim() === '') throw new ProofError('proof:empty-command', `${path}: \`command\` is empty; omit the key to fall back to the record or to detection`, 'command');
-    command = parsed.command.trim();
-  }
-
-  let describes: string | null = null;
-  if (Object.prototype.hasOwnProperty.call(parsed, 'describes')) {
-    if (!isText(parsed.describes)) throw new ProofError('proof:wrong-type', `${path}: \`describes\` must be a non-empty sentence`, 'describes');
-    describes = parsed.describes.trim();
-  }
-
-  return { path, tests: tests.map((entry) => entry.trim()), command, describes };
 }
 
 /**

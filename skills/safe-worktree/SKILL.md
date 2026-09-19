@@ -44,6 +44,11 @@ of it. What is left is below.
    `base..head` touching one of those overlaid test files — that commit is the vouch for
    a structural red. Without one the check fails as `structural`, and the fix is either
    the stub above (turn the red into a runtime red) or the missing `test(red):` commit.
+   A red is not enough on its own either: the check reads *which file* failed, and a
+   run whose failures name no overlaid file is `unattributed`, not a pass — something
+   else was already broken, and the fix is that, not this branch (#354). Which is the
+   other reason to write the throwing stub: a thrown error prints the file in its
+   stack, so the red says whose it is.
 8. **Check with the exact gate command**, not a partial one. A type-check on one package
    gives a false green; so does running a single test file when the gate runs the suite.
    Run it yourself before opening or updating the PR. The `SubagentStop` gate

@@ -36,11 +36,11 @@ const { AGENTIC_TEST_CMD: _t, AGENTIC_CHECK_CMD: _c, ...BASE_ENV } = process.env
 
 type Run = { status: number | null; stdout: string; stderr: string };
 
-function proof(args: string[], cwd: string): Run {
+function proof(args: string[], cwd: string, env: Record<string, string> = {}): Run {
   const r = spawnSync(RUNTIME, [join(ROOT, 'scripts', 'proof.mts'), ...args], {
     cwd,
     encoding: 'utf8',
-    env: BASE_ENV as NodeJS.ProcessEnv,
+    env: { ...BASE_ENV, ...env } as NodeJS.ProcessEnv,
   });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
@@ -228,6 +228,60 @@ const h = proof(['runner-absent'], unrunnable);
 const hOut = parse(h.stdout);
 check('a command that is not on PATH reports cannot-run, never fail', h.status !== 0 && hOut?.outcome === 'cannot-run', `${h.stdout}\n${h.stderr}`);
 check('a command that is not on PATH still reports the command it tried', hOut?.command === 'agentic-no-such-binary-4d9f', h.stdout);
+
+// --- H2: a run that overran its buffer or its clock ------------------------
+// `spawnSync`'s defaults are a 1 MiB buffer and no timeout at all, so a suite
+// that printed more than that came back as a command that could not be
+// executed, and a command that hung hung the job with no verdict ever. Both
+// limits are explicit named constants now, each with an env override — which
+// is also the only way a case can reach either path without printing tens of
+// megabytes or waiting out half an hour.
+//
+// Neither is `proof:command-not-runnable`: that reason says the command never
+// ran at all (exit 127, or a spawn that never started), and a command killed
+// for printing too much or for taking too long is one that ran. Reporting
+// them alike would hide the only two causes an operator can act on by raising
+// a limit.
+const noisy = fixture({
+  'tests/proof-fixture.test.mts': '// overlaid by the negative control\n',
+  'proof/runner-noisy.json': declaration({
+    tests: ['tests/proof-fixture.test.mts'],
+    // Twenty thousand characters: past the 1024-byte override below and well
+    // short of `spawnSync`'s own 1 MiB default, so the only thing that makes
+    // this run overrun is the constant the fix introduces. Printed as lines
+    // so the report's 40-line tail stays a few kilobytes.
+    command: `${RUNTIME} -e "for (let i = 0; i < 200; i++) console.log('x'.repeat(100))"`,
+  }),
+});
+const noisyRun = proof(['runner-noisy'], noisy, { AGENTIC_RUN_MAX_BUFFER: '1024' });
+const noisyOut = parse(noisyRun.stdout);
+checkShape('a run that printed more than the buffer holds', noisyOut, `${noisyRun.stdout}\n${noisyRun.stderr}`);
+check(
+  'a run that printed more than the buffer holds reports cannot-run, never pass',
+  noisyRun.status !== 0 && noisyOut?.outcome === 'cannot-run',
+  `${noisyRun.status} — ${noisyRun.stdout}${noisyRun.stderr}`,
+);
+check('a run that printed more than the buffer holds names the exceeded buffer', noisyOut?.reason === 'proof:output-too-large', noisyRun.stdout);
+check('a run that printed more than the buffer holds still reports the command it ran', String(noisyOut?.command ?? '').includes("'x'.repeat(100)"), noisyOut?.command ?? noisyRun.stdout);
+
+const hanging = fixture({
+  'tests/proof-fixture.test.mts': '// overlaid by the negative control\n',
+  'proof/runner-hang.json': declaration({ tests: ['tests/proof-fixture.test.mts'], command: 'sleep 5' }),
+});
+const hangingRun = proof(['runner-hang'], hanging, { AGENTIC_RUN_TIMEOUT_MS: '300' });
+const hangingOut = parse(hangingRun.stdout);
+checkShape('a run that outran the timeout', hangingOut, `${hangingRun.stdout}\n${hangingRun.stderr}`);
+check(
+  'a run that outran the timeout reports cannot-run, never pass',
+  hangingRun.status !== 0 && hangingOut?.outcome === 'cannot-run',
+  `${hangingRun.status} — ${hangingRun.stdout}${hangingRun.stderr}`,
+);
+check('a run that outran the timeout names the timeout', hangingOut?.reason === 'proof:command-timed-out', hangingRun.stdout);
+check(
+  'a run that outran the timeout is not reported as a command that never started',
+  hangingOut?.reason !== 'proof:command-not-runnable',
+  hangingRun.stdout,
+);
 
 // --- I: the runner never takes a command from anywhere but the three sources -
 // An issue body and a pull request body are data, not authority (invariant 9):

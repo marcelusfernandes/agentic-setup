@@ -21,14 +21,56 @@ export function cleanup(fn: () => void): void {
   cleanups.push(fn);
 }
 
-/** Records one case's outcome; prints a FAIL line (with trimmed detail) when it fails. */
+/** How many lines of a failure's detail the FAIL line carries. */
+const DETAIL_TAIL = 6;
+
+/**
+ * The header a runtime prints first for a thrown error: the error's name,
+ * optionally its code in brackets, then the first line of its message —
+ * `Error: Cannot find module '…'`, `Error [ERR_MODULE_NOT_FOUND]: …`,
+ * `SyntaxError: Unexpected token`.
+ */
+const ERROR_HEADER = /^\s*(?:[A-Z][A-Za-z]*Error|Error)(?:\s*\[[^\]\n]+\])?:\s/;
+
+/**
+ * The first error header in `lines`, or `null` when there is none.
+ *
+ * Node prints that header about ten lines above the end of a diagnostic — the
+ * stack frames, the `code` property and the runtime's own version line all
+ * come after it — so the tail alone loses it. What the tail keeps of a missing
+ * module is `code: 'MODULE_NOT_FOUND'`, which is the CommonJS loader's
+ * property name and not one `ci/negative-control.mts` treats as structural.
+ * The consequence was measured in the review of PR #236: an overlaid run that
+ * failed with `MODULE_NOT_FOUND` 79 times was read as an ordinary red, so the
+ * structural-versus-runtime distinction #135 introduced never operated on this
+ * repository's own output at all (#297).
+ */
+function errorHeader(lines: string[]): string | null {
+  return lines.find((line) => ERROR_HEADER.test(line)) ?? null;
+}
+
+/**
+ * Records one case's outcome; prints a FAIL line (with trimmed detail) when it
+ * fails. The detail stays truncated to its last `DETAIL_TAIL` lines — a suite's
+ * FAIL lines have to stay readable — but the error header is printed ahead of
+ * that tail when the tail does not already carry it, so a diagnostic whose
+ * header sits above the cut survives it.
+ */
 export function check(name: string, ok: boolean, detail = ''): void {
   if (ok) {
     passed++;
     return;
   }
   failed++;
-  console.error(`FAIL  ${name}${detail ? `\n      ${detail.trim().split('\n').slice(-6).join('\n      ')}` : ''}`);
+  console.error(`FAIL  ${name}${detail ? `\n      ${shownDetail(detail)}` : ''}`);
+}
+
+/** A failure's detail as the FAIL line carries it: the error header, then the tail. */
+function shownDetail(detail: string): string {
+  const lines = detail.trim().split('\n');
+  const tail = lines.slice(-DETAIL_TAIL);
+  const header = errorHeader(lines);
+  return (header !== null && !tail.includes(header) ? [header, ...tail] : tail).join('\n      ');
 }
 
 /** Runs a git command against a throwaway repository; throws on failure. */

@@ -12,7 +12,20 @@
 //                control. One path is carved out of every class,
 //                AGENTIC_SKIP_GLOBS included: NEVER_SKIP_GLOBS, the gate's
 //                own code in an adopting repository
-//   pass         the baseline was green and the overlaid run failed — the tests bite
+//   pass         the baseline was green, the overlaid run failed, and at
+//                least one failure in that run names a file the overlay
+//                placed — the tests bite. When the same run also carries a
+//                failure naming nothing overlaid, the outcome stays `pass`
+//                and a `warning:` line names that unrelated red
+//   unattributed the baseline was green and the overlaid run failed, but no
+//                failure in it names any overlaid file. Something else was
+//                already broken — a flake, a regression on the base's own
+//                suite, a rate limit — and crediting it to the overlay is a
+//                `pass` on a change nothing depends on (#354). Its detail
+//                names the failures the run did report, so the reader can act
+//                on the unrelated red instead of re-running and hoping. It is
+//                deliberately not `vacuous`: "nothing depended on the change"
+//                and "something else was already broken" are different facts
 //   structural   the overlaid run failed only structurally (a missing module,
 //                a missing export, a syntax error) and no `test(red):` commit
 //                in base..head touches any of the overlaid test files
@@ -24,19 +37,38 @@
 //                point is overlaid only when a test glob matches its path or
 //                a declaration's `tests` names it — the same two routes that
 //                let the fix prove itself in the PR that makes it
+//   test-only    the baseline was green, the overlaid run also passed, and the
+//                overlay withheld nothing the diff changed: every changed file
+//                is a test file by TEST_FILE_GLOBS *as written below* and every
+//                one of them was overlaid, so the second run is the pull
+//                request's own suite with no part of its change absent for a
+//                test to bite on. No red was available, and none ever will
+//                be. Deliberately not
+//                `vacuous`: that says nothing *depended* on the change and is
+//                cleared by writing a test that bites, while this says nothing
+//                *could have* depended on it and no test clears it. It passes
+//                the check (#355); see the note below for what carries the
+//                weight instead
 //   no-tests     the diff adds or changes no test files
-//   cannot-run   the test command could not be found or detected, or the
-//                branch's `proof/<slug>.json` could not be read as written.
+//   cannot-run   the test command could not be found or detected, it ran and
+//                outran one of the two limits below, or the branch's
+//                `proof/<slug>.json` could not be read as written.
 //                When nothing was detected, the detail names the escape a
 //                repository has whatever its stack: a `Makefile` with a
 //                `test:` target, which ci/lib/detect.mts reads first. The
 //                declaration's causes, each naming the path it rejected:
 //                it does not parse, it is not a JSON object, it has no
 //                `"tests"` array, its `"command"` is not a non-empty string,
+//                it carries a key the format does not define, its
+//                `"describes"` is not a non-empty sentence,
 //                a declared path is absolute or escapes the repository root
 //                once normalised, a declared path is absent from the head
 //                commit, or the declaration exists at head and its blob
-//                cannot be read
+//                cannot be read. A run that printed more than
+//                AGENTIC_RUN_MAX_BUFFER holds, or that outlived
+//                AGENTIC_RUN_TIMEOUT_MS, is named as that rather than as a
+//                command that could not be executed: only those two are
+//                cleared by raising a limit (#297)
 //   inconclusive the baseline itself failed, before the overlay — a base that
 //                cannot run its own tests makes the negative control unable
 //                to discriminate anything
@@ -58,6 +90,20 @@
 // logging `Cannot find module` and carrying on, printed in a block of its
 // own) flip an honest assertion red to `structural` (#214).
 //
+// Deciding a `pass` asks the same question of the failures: at least one of
+// them must name a file the overlay placed. It reuses the naming predicate
+// the structural read uses (`namesOverlay`, extended to the file's basename
+// because runners print one), but reads it per *failure line* rather than per
+// block, with the block kept for the one shape where a failure and the file
+// it happened in are on different lines: a stack trace, where the overlaid
+// file appears as a source location (`<path>:<line>` or a `file://` URL).
+// A second granularity is needed because a block cannot discriminate here:
+// this repository's own runner prints one `<file>: N passed, M failed` line
+// per test file, consecutively and with no blank line between them, so the
+// whole listing is a single block in which every overlaid name sits beside
+// every unrelated red — which is exactly the run that produced the false
+// pass this rule exists for (#354, run `35405433899`).
+//
 // The skip is by path class, not by the PR's own labels: the implementer
 // applies its own PR's labels, so a `type:` label could buy its own
 // exemption. `type:docs`/`deps`/`infra`/`refactor`/`spec` are still read —
@@ -72,6 +118,15 @@
 // an adopting repository's `.github/scripts/agentic/`, so the `.github/**`
 // class would otherwise let a PR rewrite the gate's own code under the gate's
 // own exemption.
+//
+// `--base`/`--head` are a supported interface, not an implementation detail:
+// being able to re-run this check by hand, against CI's own base, is what let
+// an implementer compare a local `vacuous` with a CI `pass`, eliminate the
+// stale-base and merge-ref explanations by measurement, and find the false
+// pass #354 is about. A stricter verdict nobody can reproduce by hand would
+// be worth less than the defect it removes, so the verdict that change added,
+// `unattributed`, prints the two-argument invocation that reproduces it —
+// base and head filled in, and `--branch` when one was passed.
 //
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
 // the event or --labels a,b, and --branch <ref> (or the event's head ref)
@@ -89,21 +144,45 @@
 // command for both runs. It is read from the head *commit*, never from an
 // issue or PR body (invariant 9): the slug comes from the branch, and the
 // only thing an issue carries is a `Declaration:` line that `issue-lint`
-// checks the shape of.
+// checks the shape of. The declaration is read and validated by
+// `ci/lib/proof.mts`, the module `scripts/lib/proof.mts` reads it with too,
+// so the runner and this check cannot accept one file and reject it: two
+// parsers meant a branch could declare a proof one honoured and the other
+// refused, and the looser of the two is the one that decides what is
+// overlaid (#297).
 //
-// The declaration fails closed. Presence is decided from the head *tree*
-// (`git ls-tree`), never from the exit status of `git show`: only "absent
-// from the head commit" means "this branch declares nothing", and every
-// other failure — a corrupt object, an unreadable head, a `git` that cannot
-// run — is `cannot-run`. A declaration that does not parse, names no test,
-// carries a `command` that is not a non-empty string, or names a path that
-// is absolute, escapes the repository root once normalised, or is absent at
-// head, is `cannot-run` too, named path and all, before any worktree is
-// made. A broken declaration must not silently narrow the control: a fall
-// back to the detected globs would report "we could not verify this" as
-// "this passed", which is the one thing this check exists to prevent.
-// Without a declaration nothing changes, including the path-class skip,
-// which is decided before the declaration is read.
+// The declaration fails closed, and why each refusal is the shape it is
+// belongs with the reader: `ci/lib/proof.mts` states it, including why
+// presence comes from the head *tree* and never from the exit status of
+// `git show`. What this file owes the reader is the consequence. Every
+// refusal is `cannot-run`, named path and all, before any worktree is made,
+// because a fall back to the detected globs would report "we could not
+// verify this" as "this passed" — the one thing this check exists to
+// prevent. Without a declaration nothing changes, including the path-class
+// skip, which is decided before the declaration is read.
+//
+// `test-only` is the one verdict that passes without any red at all, so what
+// it rests on is written out here (#355). The overlay is a comparison: head's
+// test files on a base that lacks the rest of the change. What makes a red
+// available is the part of the diff it *withholds*. When it withholds
+// nothing, the second run is the pull request's own suite on the pull
+// request's own tree — green exactly when the `test` check is green — and
+// requiring it to fail is requiring the pull request's own tests to fail. No
+// test-only pull request could ever land, and none has: 150 commits of this
+// repository's `main` were read and not one is confined to the test globs.
+// The class is two facts, both read off `git diff` and neither claimable by a
+// pull request: the overlay carried every changed file, and every changed
+// file is a test file by TEST_FILE_GLOBS as written in this file.
+// AGENTIC_TEST_GLOBS and a declaration's `tests` decide what is *overlaid*
+// and deliberately do not decide the *class*: letting either in would let a
+// repository variable, or the implementer's own declaration, call a
+// production file a test and buy the verdict for it. What carries the weight
+// instead: nothing outside the test globs changed, so there is no unproved
+// production change to carry; the overlaid run is the pull request's own
+// suite, which is the `test` check's business; `scope` holds those test paths
+// to the linked issue's globs; and whether a test-only change strengthens or
+// weakens the suite is the reviewer's, because the overlay carries the change
+// either way and so could never have told the two apart.
 //
 // Both runs — the baseline and the overlaid one — happen in the base
 // worktree, so a declared `command` is only ever executed against the base;
@@ -115,6 +194,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { parseArgs } from './lib/args.mts';
 import { detectCommands } from './lib/detect.mts';
+import { branchSlug, headDeclarationPath, KNOWN_KEYS, ProofError, readDeclarationAtHead, validateDeclaredPaths } from './lib/proof.mts';
+import type { Declaration } from './lib/proof.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
 
@@ -141,11 +222,41 @@ const TEST_FILE_GLOBS = [
   '**/tests/**', '**/test/**', '**/__tests__/**', 'e2e/**', 'spec/**',
 ];
 const TAIL = 40;
+// How much of the overlaid run's own failure report a verdict repeats back.
+const FAILURES_SHOWN = 10;
+const FAILURE_WIDTH = 200;
+
+/** A positive integer from `value`, or `fallback` when it is absent or is not one. */
+const limit = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * How much of each run's output this check holds in memory. `spawnSync`
+ * defaults to 1 MiB, and a command that prints more is killed with ENOBUFS,
+ * which arrives here as "the command could not be executed" — so a suite that
+ * was merely noisy was reported as a broken one, on a check whose whole job is
+ * to read that output. 64 MiB is past anything this repository's own suite has
+ * printed and still far below a runner's memory. AGENTIC_RUN_MAX_BUFFER
+ * (bytes) raises or lowers it; an override can raise it until it stops
+ * limiting, which is the operator's to decide (invariant 4).
+ */
+const RUN_MAX_BUFFER = limit(process.env.AGENTIC_RUN_MAX_BUFFER, 64 * 1024 * 1024);
+
+/**
+ * How long either run may take. `spawnSync` has no timeout by default, so a
+ * test command that hangs on the base hangs the job until the workflow's own
+ * limit — hours later, with no verdict and nothing to read. 30 minutes is well
+ * past this repository's own suite and well short of a job timeout.
+ * AGENTIC_RUN_TIMEOUT_MS raises or lowers it.
+ */
+const RUN_TIMEOUT_MS = limit(process.env.AGENTIC_RUN_TIMEOUT_MS, 30 * 60 * 1000);
 
 const args = parseArgs(process.argv.slice(2));
 const root = process.cwd();
 
-type Outcome = 'skipped' | 'pass' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
+type Outcome = 'skipped' | 'pass' | 'test-only' | 'unattributed' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
 
 /** A comma-separated env list, trimmed, empty entries dropped. */
 const csv = (value: string | undefined): string[] =>
@@ -178,19 +289,158 @@ const STRUCTURAL_WARNING =
  * `structural` (#214).
  */
 function structuralInOverlay(output: string, paths: string[]): boolean {
-  const named = paths.map((p) => p.trim()).filter(Boolean);
+  const named = overlayNames(paths);
   if (named.length === 0) return false;
-  return output
-    .split(/\n[ \t]*\n/)
-    .some((block) => {
-      const lines = block.split('\n');
-      return lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
-        && lines.some((line) => named.some((path) => line.includes(path)));
-    });
+  return blocks(output).some((lines) =>
+    lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
+      && lines.some((line) => namesOverlay(line, named)));
 }
 
+// --- did anything the overlay placed actually fail? (#354) ----------------
+
+/**
+ * A line that reports a failure. Deliberately narrow, and deliberately not
+ * the structural signature: `Cannot find module` on a line of its own is a
+ * dependency logging and carrying on, which is the noise #214 taught this
+ * file to ignore. `[1-9]\d* failed` rather than `failed`, because a per-file
+ * summary line saying `0 failed` is a *green* file reporting itself, and
+ * reading it as a failure is how any red becomes every file's red.
+ */
+const FAILURE_SIGNATURE =
+  /\bFAIL(?:ED|URE|URES)?\b|\bCRASHED\b|\bnot ok\b|[✕✗✘×⨯]|Error:|Error \[|\bpanic:|\bTraceback\b|\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
+
+/** The overlaid run's output as diagnostic blocks of lines. */
+const blocks = (output: string): string[][] =>
+  output.split(/\n[ \t]*\n/).map((block) => block.split('\n'));
+
+/**
+ * The strings that stand for `paths` in a runner's output: the repository
+ * path itself and the file's basename, because a runner that spawns one
+ * process per test file prints the basename (`land.test.mts: 61 passed, 14
+ * failed`) while a stack frame prints the whole path. The path form alone
+ * missed nearly every honest red this repository has produced.
+ *
+ * What the widening costs, stated in full because a narrower claim was made
+ * here first and was wrong: this is a substring match, so a same-named file
+ * elsewhere in the tree is one way it can credit the overlay wrongly, and a
+ * *prose mention* of an overlaid file — a test case whose own name quotes a
+ * path, of which this repository has nineteen — is another. Both are
+ * answered by ranking the evidence in `attributeFailures` rather than by
+ * narrowing the match: a mention alone never outvotes a failure that says
+ * which file it belongs to. The same widened list is shared with
+ * `structuralInOverlay`, which is a behaviour change there and not a
+ * neutral one: a block naming only a basename beside `Cannot find module`
+ * now reads `structural` where it read `pass`. That direction fails closed.
+ */
+const overlayNames = (paths: string[]): string[] => {
+  const named = paths.map((p) => p.trim()).filter(Boolean);
+  return [...new Set([...named, ...named.map((p) => p.split('/').pop() ?? p)])];
+};
+
+/** Whether `line` mentions one of `names` at all. */
+const namesOverlay = (line: string, names: string[]): boolean =>
+  names.some((name) => line.includes(name));
+
+/**
+ * Whether `line` names one of `names` as a *source location* — `<name>:12`
+ * or a `file://` URL — which is the shape a stack frame and a Node error
+ * header use to say where a failure happened. It is the one way a failure
+ * and the file it happened in may be on different lines and still belong
+ * together.
+ */
+const locatesOverlay = (line: string, names: string[]): boolean =>
+  names.some((name) => {
+    const at = line.indexOf(name);
+    if (at < 0) return false;
+    return /^:\d/.test(line.slice(at + name.length)) || line.slice(0, at).includes('file://');
+  });
+
+/**
+ * A failure line that says *whose* failure it is: a file-shaped token
+ * carrying a non-zero failure count on the same line, which is what a runner
+ * that spawns one process per test file prints
+ * (`negative-control.test.mts: 34 passed, 1 failed`).
+ *
+ * Only this shape may be called someone else's red. A bare `FAIL <case
+ * name>` names no file at all — a runner prints those under the file it is
+ * reporting, several lines from the name — and an aggregate
+ * (`2397 passed, 1 failed (node)`) is the whole suite, not a file. Counting
+ * either as another file's failure would put a warning on nearly every
+ * honest `pass`, naming the overlay's own failures as unrelated, which is
+ * worse than no warning at all.
+ */
+const FILE_VERDICT = /[\w.-]+\.[A-Za-z0-9]{1,6}\b[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
+
+/**
+ * Whether `line` names one of `names` as the *owner* of a non-zero failure
+ * count — the name, then a count on the same line after it. That is a runner
+ * reporting a file's own result (`land.test.mts: 61 passed, 14 failed`), and
+ * with a source location it is one of the two shapes that say which file a
+ * failure belongs to rather than merely mentioning one.
+ */
+const ownsFailure = (line: string, names: string[]): boolean =>
+  names.some((name) => {
+    const at = line.indexOf(name);
+    if (at < 0) return false;
+    return /^[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/.test(line.slice(at + name.length));
+  });
+
+type Attribution = { owned: boolean; mentioned: boolean; failures: string[]; elsewhere: string[] };
+
+/**
+ * Which of the overlaid run's failures the overlay accounts for, ranked by
+ * how much the evidence actually says.
+ *
+ * `owned` is a failure that says which file it belongs to and names an
+ * overlaid one: a source location, or a name carrying its own non-zero
+ * count. `mentioned` is the weaker thing — a failure line that contains an
+ * overlaid path anywhere, which a test case whose *name* quotes a path also
+ * does. `failures` is everything that reported a failure and named no
+ * overlaid file, in the order the run printed it, for a verdict that has to
+ * say what it did see; `elsewhere` is the subset of those that names another
+ * file as the owner of a non-zero count.
+ *
+ * An empty `failures` beside neither `owned` nor `mentioned` means the
+ * command failed without reporting any failure at all, which cannot be
+ * attributed either — there is nothing to read.
+ */
+function attributeFailures(output: string, paths: string[]): Attribution {
+  const named = overlayNames(paths);
+  let owned = false;
+  let mentioned = false;
+  const failures: string[] = [];
+  const elsewhere: string[] = [];
+  for (const lines of blocks(output)) {
+    const located = named.length > 0 && lines.some((line) => locatesOverlay(line, named));
+    for (const line of lines) {
+      if (!FAILURE_SIGNATURE.test(line)) continue;
+      if (named.length > 0 && namesOverlay(line, named)) {
+        mentioned = true;
+        if (located || ownsFailure(line, named)) owned = true;
+        continue;
+      }
+      if (located) {
+        owned = true;
+        continue;
+      }
+      failures.push(line.trim());
+      if (FILE_VERDICT.test(line)) elsewhere.push(line.trim());
+    }
+  }
+  return { owned, mentioned, failures, elsewhere };
+}
+
+/** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
+const listFailures = (failures: string[]): string => {
+  const shown = failures.slice(0, FAILURES_SHOWN).map((line) => `  - ${line.slice(0, FAILURE_WIDTH)}`);
+  const rest = failures.length - shown.length;
+  return [...shown, ...(rest > 0 ? [`  - … and ${rest} more`] : [])].join('\n');
+};
+
 function finish(outcome: Outcome, detail: string, warning?: string): never {
-  const ok = outcome === 'skipped' || outcome === 'pass';
+  // `test-only` passes: the control could not put a question to this diff at
+  // all, and a gate that refuses what it cannot judge refuses forever (#355).
+  const ok = outcome === 'skipped' || outcome === 'pass' || outcome === 'test-only';
   const summaryWarning = warning ? `\n\n> warning: ${warning}` : '';
   appendSummary(`## negative-control\n\n${ok ? '' : '**FAILED** — '}\`${outcome}\` — ${detail}${summaryWarning}`);
   console.log(`negative-control: ${outcome} — ${detail}`);
@@ -245,121 +495,32 @@ if (legacyLabel) {
 
 // --- the proof a branch declares, when it declares one (#136) -------------
 
-type Declaration = { path: string; tests: string[]; command?: string };
-
-/** The `<slug>` of a `<type>/<n>-<slug>` ref, or `null` for any other shape. */
-function branchSlug(ref: string): string | null {
-  const m = ref.replace(/^refs\/heads\//, '').trim().match(/^[^/]+\/\d+-([a-z0-9-]+)$/);
-  return m ? m[1] : null;
-}
-
-type Presence = 'present' | 'absent' | 'unresolvable';
-
 /**
- * Whether `path` is in the head *commit*, answered from the tree rather than
- * from the exit status of `git show`.
- *
- * `git show <head>:<path>` fails identically for a path the commit does not
- * have, for a blob whose object is missing or corrupt, and for a `git` that
- * cannot run at all, so its status alone cannot tell "this branch declares
- * nothing" from "we could not read what it declares" — and reading the
- * second as the first is the silent fallback this check exists to prevent.
- * `git ls-tree` answers from the tree: exit 0 with the path on stdout when
- * the commit has it, exit 0 and empty stdout when it does not, and non-zero
- * only when the question itself could not be asked — a path outside the
- * repository, or a head that will not resolve.
+ * The check's own sentence for a declaration `ci/lib/proof.mts` refused. The
+ * reason is the contract and the phrasing is this file's: an operator reads
+ * these in a job summary, where "has no `"tests"` array of file paths" says
+ * more than a reason name does. `detail` is the underlying cause — what
+ * `JSON.parse` or `git` said — which the reason alone cannot carry.
  */
-function pathAtHead(path: string): { presence: Presence; error: string } {
-  const r = spawnSync('git', ['ls-tree', '--name-only', head, '--', path], { cwd: root, encoding: 'utf8' });
-  if (r.status !== 0) {
-    return { presence: 'unresolvable', error: (r.stderr ?? '').trim() || r.error?.message || `git ls-tree exited ${r.status}` };
+function declarationWhy(error: ProofError): string {
+  const because = error.detail ? ` (${error.detail})` : '';
+  switch (error.reason) {
+    case 'proof:unparsable':
+      return `does not parse as JSON${because}`;
+    case 'proof:unknown-key':
+      return `carries \`"${error.field}"\`, which is not part of a proof declaration (${KNOWN_KEYS.join(', ')})`;
+    case 'proof:missing-tests':
+      return 'has no `"tests"` array of file paths';
+    case 'proof:empty-command':
+      return 'has a `"command"` that is not a non-empty string';
+    case 'proof:wrong-type':
+      if (error.field === 'tests') return 'has no `"tests"` array of file paths';
+      if (error.field === 'command') return 'has a `"command"` that is not a non-empty string';
+      if (error.field === 'describes') return 'has a `"describes"` that is not a non-empty sentence';
+      return 'is not a JSON object';
+    default:
+      return `${error.message}${because}`;
   }
-  return { presence: (r.stdout ?? '').trim() === '' ? 'absent' : 'present', error: '' };
-}
-
-/** The sentence every rejected declaration ends with. */
-const brokenDeclaration = (path: string, why: string): never =>
-  finish('cannot-run', `\`${path}\` ${why}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`);
-
-/**
- * `proof/<slug>.json` as it stands at head, or `null` when the branch
- * declares nothing. Never reads the working tree: the file is taken from the
- * head commit, so the check does not depend on what is checked out. Only
- * "absent from the head tree" is "declares nothing"; a declaration that is
- * present and unusable — unreadable, unparsable, or not the shape — exits
- * `cannot-run` rather than falling back to the globs, because a declaration
- * that is present is the contract.
- */
-function readDeclaration(slug: string): Declaration | null {
-  const path = `proof/${slug}.json`;
-  const bad = (why: string): never => brokenDeclaration(path, why);
-
-  const at = pathAtHead(path);
-  if (at.presence === 'absent') return null; // this branch declares nothing
-  if (at.presence === 'unresolvable') bad(`could not be looked up in the head commit (${at.error})`);
-
-  const show = spawnSync('git', ['show', `${head}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  if (show.status !== 0) {
-    bad(`is in the head commit and could not be read (${(show.stderr ?? '').trim() || show.error?.message || `git show exited ${show.status}`})`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(show.stdout);
-  } catch (error) {
-    bad(`does not parse as JSON (${error instanceof Error ? error.message : String(error)})`);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) bad('is not a JSON object');
-  const decl = parsed as Record<string, unknown>;
-
-  const tests = decl.tests;
-  if (!Array.isArray(tests) || tests.length === 0 || !tests.every((t) => typeof t === 'string' && t.trim() !== '')) {
-    bad('has no `"tests"` array of file paths');
-  }
-  const command = decl.command;
-  if (command !== undefined && (typeof command !== 'string' || command.trim() === '')) {
-    bad('has a `"command"` that is not a non-empty string');
-  }
-  return {
-    path,
-    tests: (tests as string[]).map((t) => t.trim()),
-    command: typeof command === 'string' ? command.trim() : undefined,
-  };
-}
-
-/**
- * A copy of `decl` whose `tests` are normalised POSIX paths, or `cannot-run`
- * naming the first path that is not one.
- *
- * The declaration is written by the implementer and the overlay follows it
- * literally: `join(tmp, file)` with an absolute or `..` path reads and
- * removes outside the temporary worktree, and a path the head does not have
- * used to be replayed as "deleted in the PR — delete it on the base too",
- * which turns a typo into an unrelated base file removed and a control run on
- * a tree nobody described. Both are refused here, before the worktree exists
- * and therefore before anything can be written or removed.
- */
-function validateDeclaredPaths(decl: Declaration): Declaration {
-  const bad = (why: string): never => brokenDeclaration(decl.path, why);
-  const tests = decl.tests.map((file) => {
-    const slashed = file.replace(/\\/g, '/');
-    if (slashed.startsWith('/') || /^[A-Za-z]:/.test(slashed)) {
-      bad(`names the absolute path \`${file}\`; a declared test path is relative to the repository root`);
-    }
-    const normalised = posix.normalize(slashed);
-    if (normalised === '..' || normalised.startsWith('../')) {
-      bad(`names \`${file}\`, which escapes the repository root once normalised (\`${normalised}\`)`);
-    }
-    const at = pathAtHead(normalised);
-    if (at.presence === 'unresolvable') {
-      bad(`names \`${file}\`, which could not be looked up in the head commit (${at.error})`);
-    }
-    if (at.presence === 'absent') {
-      bad(`names \`${file}\`, which the head commit does not have; a declared path that is missing at head is a typo, not a file the pull request deletes`);
-    }
-    return normalised;
-  });
-  return { ...decl, tests };
 }
 
 const branchRef = typeof args.branch === 'string' ? args.branch.trim() : String(event?.pull_request?.head?.ref ?? '').trim();
@@ -367,8 +528,19 @@ const slug = branchRef ? branchSlug(branchRef) : null;
 if (branchRef && !slug) {
   console.log(`note: \`${branchRef}\` is not a \`<type>/<n>-<slug>\` branch, so no proof declaration is looked up for it.`);
 }
-const declared = slug ? readDeclaration(slug) : null;
-const declaration = declared ? validateDeclaredPaths(declared) : null;
+let declaration: Declaration | null = null;
+if (slug) {
+  try {
+    const declared = readDeclarationAtHead(root, head, slug);
+    declaration = declared ? validateDeclaredPaths(root, head, declared) : null;
+  } catch (error) {
+    if (!(error instanceof ProofError)) throw error;
+    finish(
+      'cannot-run',
+      `\`${headDeclarationPath(slug)}\` ${declarationWhy(error)}. A proof declaration decides what is overlaid; a broken one must not narrow the control silently.`,
+    );
+  }
+}
 if (declaration) {
   console.log(`note: \`${declaration.path}\` declares this branch's proof; the overlay is the ${declaration.tests.length} file(s) it names${declaration.command ? ` and its command \`${declaration.command}\`` : ''}.`);
 }
@@ -382,13 +554,45 @@ const testFiles = declaration
 // was proved to be at head above, so the same failure there means the content
 // could not be read — two different facts that must not share a branch.
 const declaredPaths = new Set(declaration ? [...declaration.tests, declaration.path] : []);
+// The two facts that make the overlay incapable of a red, read off `git diff`
+// alone (#355). `withheld` is the part of the change the second run did not
+// see — the only thing a test there could bite on. `notATestFile` is what
+// keeps the class from being claimable: TEST_FILE_GLOBS without the env
+// extension and without the declaration's `tests`, plus the declaration's own
+// path, since a branch that declares its proof has still changed nothing but
+// tests. Both empty is `test-only`; either non-empty and the diff is judged
+// as it always was. `changed` is three-dot, so a base that moved on since the
+// branch is a tree the overlay does not reconstruct — and a red there is a
+// real red, decided by the branches above. This verdict is only ever reached
+// after the overlaid run came back green, so it reports what was measured.
+const overlaidPaths = new Set(testFiles);
+const withheld = changed.filter((f) => !overlaidPaths.has(f));
+const notATestFile = changed.filter((f) => !matchesAny(f, TEST_FILE_GLOBS) && f !== declaration?.path);
+/** The files that keep this diff inside the control, for a `vacuous` to name. */
+const keptInTheControl = [...new Set([...withheld, ...notATestFile])].map((f) => `\`${f}\``).join(', ');
+/**
+ * How a `vacuous` verdict tells the reader to get the entry point into the
+ * overlay — and only by a route that is open to this diff (#297, AC5).
+ *
+ * A declaration replaces the diff's test files outright: no test glob is
+ * consulted once one is read, so half of the sentence this used to print —
+ * the globs, and the variable that extends them — was advice a branch with a
+ * declaration could act on and see nothing change. Naming both routes when
+ * only one is live is the same defect in prose that the check spends its
+ * verdicts on in code.
+ */
+const overlayRoute = declaration
+  ? `The entry point is overlaid only when \`${declaration.path}\` names it in its \`tests\`, which here is ${declaration.tests.map((f) => `\`${f}\``).join(', ')}: this branch declares its proof, so no test glob is consulted at all and extending one would change nothing here. So make the entry point discover its tests rather than list them, and either add it to that \`tests\` list, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`${declaration.path}\`, which replaces the detected command for both runs.`
+  : 'The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path `proof/<slug>.json` names in its `tests`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the `command` of `proof/<slug>.json`, which replaces the detected command for both runs.';
 if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), declare the proof in `proof/<slug>.json`, or add the path class to AGENTIC_SKIP_GLOBS.');
 
 const commands = detectCommands(root);
 const testCommand = declaration?.command ?? commands.test;
 if (!testCommand) finish('cannot-run', 'no test command detected; set AGENTIC_TEST_CMD in the workflow, name the command in `proof/<slug>.json`, or give the repository a `Makefile` with a `test:` target — `ci/lib/detect.mts` reads a Makefile before every other stack marker, so that target is the written escape for a stack it cannot detect.');
 
-type RunResult = { status: number | null; crashed: boolean; output: string };
+/** `buffer` and `timeout` are runs that started and were killed; `null` covers the rest. */
+type Overrun = 'buffer' | 'timeout' | null;
+type RunResult = { status: number | null; crashed: boolean; overran: Overrun; output: string };
 
 /**
  * Runs the detected test command in `cwd`; never throws. The two streams are
@@ -399,9 +603,41 @@ type RunResult = { status: number | null; crashed: boolean; output: string };
  * name out of the stack header that follows it.
  */
 function runTests(cwd: string): RunResult {
-  const r = spawnSync(String(testCommand), [], { cwd, shell: true, encoding: 'utf8', env: { ...process.env, CI: '1' } });
-  return { status: r.status, crashed: r.status === 127 || Boolean(r.error), output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim() };
+  const r = spawnSync(String(testCommand), [], {
+    cwd,
+    shell: true,
+    encoding: 'utf8',
+    env: { ...process.env, CI: '1' },
+    maxBuffer: RUN_MAX_BUFFER,
+    timeout: RUN_TIMEOUT_MS,
+  });
+  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  const overran: Overrun = code === 'ENOBUFS' ? 'buffer' : code === 'ETIMEDOUT' ? 'timeout' : null;
+  return {
+    status: r.status,
+    crashed: r.status === 127 || Boolean(r.error),
+    overran,
+    output: `${r.stdout ?? ''}\n\n${r.stderr ?? ''}`.trim(),
+  };
 }
+
+/**
+ * The `cannot-run` detail for a run that produced no usable verdict. Three
+ * different facts, kept apart because only two of them are cleared by raising
+ * a limit: the command never started, it printed more than this check can
+ * hold, or it was still running when the clock ran out. Reporting all three as
+ * "could not be executed" sent an operator looking for a missing binary that
+ * was never missing.
+ */
+const unrunnable = (run: RunResult, which: string): string => {
+  if (run.overran === 'buffer') {
+    return `\`${testCommand}\` printed more than the ${RUN_MAX_BUFFER}-byte buffer this check holds, while running ${which}, so its output could not be read and no verdict can rest on it. Raise AGENTIC_RUN_MAX_BUFFER, or make the command print less.`;
+  }
+  if (run.overran === 'timeout') {
+    return `\`${testCommand}\` was still running after the ${RUN_TIMEOUT_MS} ms this check allows it and timed out, while running ${which}. Raise AGENTIC_RUN_TIMEOUT_MS, or find what the command is waiting on.`;
+  }
+  return `\`${testCommand}\` could not be executed on the base checkout (${which}).`;
+};
 
 const tail = (output: string): string => output.split('\n').slice(-TAIL).join('\n');
 
@@ -472,9 +708,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
 
     const baseline = runTests(tmp);
     console.log(`--- \`${testCommand}\` on pristine base ${base.slice(0, 7)} ---\n${tail(baseline.output)}\n---`);
-    if (baseline.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
-    }
+    if (baseline.crashed) return { outcome: 'cannot-run', detail: unrunnable(baseline, 'the baseline') };
     if (baseline.status !== 0) {
       return {
         outcome: 'inconclusive',
@@ -487,13 +721,17 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     const overlaid = runTests(tmp);
     console.log(`--- \`${testCommand}\` on base ${base.slice(0, 7)} with ${testFiles.length} test file(s) from head ---\n${tail(overlaid.output)}\n---`);
 
-    if (overlaid.crashed) {
-      return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
+    if (overlaid.crashed) return { outcome: 'cannot-run', detail: unrunnable(overlaid, 'the overlaid run') };
+    if (overlaid.status === 0 && withheld.length === 0 && notATestFile.length === 0) {
+      return {
+        outcome: 'test-only',
+        detail: `\`${testCommand}\` passed on the base with the ${testFiles.length} test file(s) from head overlaid — and it could not have done anything else. The overlay withheld nothing this diff changes: every changed file is a test file by TEST_FILE_GLOBS and every one of them was overlaid, so the run that had to fail is this pull request's own suite with no part of its change absent for a test to bite on. That is not \`vacuous\`, which says nothing *depended* on the change and is cleared by writing a test that bites; here nothing could have depended on it and no test clears it. **This verdict passes the check**: the control could put no question to this diff, and a gate that refuses what it cannot judge refuses forever (#355). It would go back to being judged the moment the diff touched one file outside the test globs — that file is the difference the overlay withholds, and this diff has none. What carries the weight instead: nothing outside the test globs changed, so there is no unproved production change; this very run is the pull request's own suite, which is the \`test\` check's business; \`scope\` holds these test paths to the linked issue's globs; and whether the change strengthens or weakens the suite is the reviewer's, because the overlay carries it either way and so could never have told the two apart. The class is not claimable: AGENTIC_TEST_GLOBS and a \`proof/<slug>.json\` \`tests\` list decide what is overlaid and deliberately do not decide this.`,
+      };
     }
     if (overlaid.status === 0) {
       return {
         outcome: 'vacuous',
-        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs.`,
+        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. ${overlayRoute} This diff is not \`test-only\` (#355), and here is why, because that is what a reader asks next: ${keptInTheControl} — the overlay withheld it, or it is outside TEST_FILE_GLOBS as written in this file — so a test could have bitten here and did not.`,
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
@@ -504,10 +742,41 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
         detail: `\`${testCommand}\` failed on the base only structurally (missing module or export, or a syntax error) with ${testFiles.length} test file(s): ${named} — the file could not run there at all, which is not an assertion catching the change. Either write a throwing stub so the red is a runtime red (safe-worktree §B7), or commit the failing test first with a subject starting \`test(red):\` that touches one of those files.\n${tail(overlaid.output)}`,
       };
     }
+    // A structural red already proved its point: `structuralInOverlay` only
+    // says `true` when the diagnostic named an overlaid path, so the overlay
+    // is what could not run. Every other red has to show its own evidence.
+    const { owned, mentioned, failures, elsewhere } = attributeFailures(overlaid.output, testFiles);
+    // A mention is evidence until something better contradicts it. `FAIL  the
+    // overlaid file is listed in the pin table` is a *case name* quoting a
+    // path, not that file failing, and this repository writes nineteen of
+    // them; on its own it still has to be believed, because a runner that
+    // prints `FAIL <path>` and nothing else says no more than that. What it
+    // may not do is outvote a failure that states its own owner. When the
+    // only overlaid evidence is a mention and some other file is reported as
+    // owning a red, the run has said `pass` and `this red is not yours` in
+    // the same breath, and the honest reading of that is neither.
+    const contradicted = mentioned && !owned && elsewhere.length > 0;
+    if (!structural && (contradicted || (!owned && !mentioned))) {
+      const saw = contradicted
+        ? `The only lines naming an overlaid file mention it in passing — a case name quoting a path does that too. The failures that say which file they belong to name another one:\n${listFailures(elsewhere)}\nFix or quarantine those and run it again`
+        : failures.length > 0
+          ? `The failures that run did report, none of them in an overlaid file:\n${listFailures(failures)}\nFix or quarantine those and run it again`
+          : 'That run reported no failure of its own — it failed without saying what failed, so there is nothing to attribute. Make the command report its failures (a thrown error names the file in its stack; safe-worktree §B7) and run it again';
+      return {
+        outcome: 'unattributed',
+        detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), but no failure in that run is attributable to any of them: ${named}. A red the overlay did not cause is not this control's red — reading any red as "the tests bite" reports \`pass\` on a change nothing depends on, which is the one thing this check exists to prevent (#354). This is not \`vacuous\`: the tests may well bite, but something else was already broken and the run could not tell. ${saw}. By hand: \`node ci/negative-control.mts --base ${base} --head ${head}${branchRef ? ` --branch ${branchRef}` : ''}\`.\n${tail(overlaid.output)}`,
+      };
+    }
+    // The overlay's red is there and so is someone else's. The verdict stands,
+    // but the unrelated red is real and the operator is told rather than left
+    // to find it in the log.
+    const collateral = elsewhere.length > 0
+      ? `${elsewhere.length} failure(s) in that run name a file the overlay did not place, so they are not this change's — act on them separately:\n${listFailures(elsewhere)}`
+      : undefined;
     return {
       outcome: 'pass',
-      detail: `\`${testCommand}\` failed on the base (exit ${overlaid.status}) with ${testFiles.length} test file(s): ${named}.`,
-      warning: structural ? STRUCTURAL_WARNING : undefined,
+      detail: `\`${testCommand}\` failed on the base with the ${testFiles.length} test file(s) from head overlaid (exit ${overlaid.status}), and a failure in that run names one of them: ${named}.`,
+      warning: structural ? STRUCTURAL_WARNING : collateral,
     };
   } finally {
     spawnSync('git', ['worktree', 'remove', '--force', tmp], { cwd: root, encoding: 'utf8' });

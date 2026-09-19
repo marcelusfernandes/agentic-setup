@@ -187,34 +187,51 @@ layer three and an indirect form walks past it — `gh api -X PATCH` on the issu
 contain the words `issue edit` — so it saves a round trip and does not replace the reading
 of the diff. The line may be a bullet
 or bare, and the word is matched in any case. What follows it is read once, like this:
-**exactly one backticked span on the line is the granted glob**; **more than one grants
-nothing at all**, and `issue-lint` fails the issue over it, naming the line and every
-span on it (#316). Where there is no backticked span, **the first whitespace-delimited
-token** is the glob, with a trailing `,` or `;` stripped and the rest of the line
-ignored. There is no comma split: `authorised: a.ts, b.ts` grants `a.ts` alone — an
-under-grant a person reads, which is why that shape is left as it is. One glob per line;
-a second grant gets a second line.
+**the glob stands at the head of the line.** Backticked, it is **the line's one backticked
+span**; bare, it is **the first whitespace-delimited token**, with a trailing `,` or `;`
+stripped and the rest of the line ignored. There is no comma split:
+`authorised: a.ts, b.ts` grants `a.ts` alone — an under-grant a person reads, which is why
+that shape is left as it is. One glob per line; a second grant gets a second line.
 
-A line with two spans is **refused, not narrowed to the first one.** Every span used to
-be granted, so a justification that quoted a path on the same line granted that path too
-— and an over-grant fails *open*: the path enters the audited scope in silence and
-`scope` passes on a file nobody meant to grant. Taking only the first span would trade
-that for a silent under-grant, discarding what the writer wrote without saying so; a line
-carrying two spans is a line whose author meant something this format cannot express, so
-the check says which line and leaves the rewriting to a person. Fixing one means writing
-the grant again, not deleting a backtick until the check goes quiet.
+Two shapes grant **nothing at all**, and `issue-lint` fails the issue over either, naming
+the line:
+
+```
+- authorised: `a.ts` (needed alongside `b.ts`)   ← two spans: refused (#316)
+- authorised: a.ts (see `b.ts`)                  ← bare glob, backticked justification: refused (#357)
+```
+
+The first failure names the line and every span on it; the second names the line, the bare
+token and the span.
+
+Both are **refused, not narrowed to the glob that was probably meant.** Every span used to
+be granted, so a justification that quoted a path on the same line granted that path too —
+and an over-grant fails *open*: the path enters the audited scope in silence and `scope`
+passes on a file nobody meant to grant. The bare shape was worse in one respect: it granted
+the quoted path *and* dropped the glob actually written, so the path the author meant went
+unaudited as well — both halves wrong from one line. Taking the leading token, or the first
+span, would trade the silent over-grant for a silent under-grant, discarding what the
+writer wrote without saying so; a line of either shape is a line whose author meant
+something this format cannot express, so the check says which line and leaves the rewriting
+to a person. Fixing one means writing the grant again, not deleting a backtick until the
+check goes quiet.
+
+The two are different mistakes with different remedies, so they are reported in different
+words and one line draws at most one of them: an author fixing a bare glob is never told
+about a second span, and the reverse.
 
 The refusal lands at dispatch, where the line is written: `claim.mts` runs the lint before
 it pushes the lock branch, and the `issue-lint` workflow runs it again on every edit of
 the issue, so a grant added after dispatch is refused too.
 
 The justification goes on the next line, indented and **not** a bullet, which the parser
-skips. Give it no backticks of its own. On the line itself that is the rule — a same-line
-justification is allowed only unbackticked, since it must add no span. On the
-continuation line it is a habit rather than a rule: an indented non-bullet line is read
-by no parser, so backticks there grant nothing, but the habit is what keeps them off the
-grant line. A *bulleted* continuation line is a different hazard — bullets are globs, so
-its backticks become declared scope rather than prose.
+skips. Give it no backticks of its own. On the line itself that is **enforced** — a
+same-line justification is allowed only unbackticked, since it must add no span, and since
+#357 a backticked one is refused rather than read as the grant. On the continuation line
+it is a habit rather than a rule: an indented non-bullet line is read by no parser, so
+backticks there grant nothing, but the habit is what keeps them off the grant line. A
+*bulleted* continuation line is a different hazard — bullets are globs, so its backticks
+become declared scope rather than prose.
 
 ```
 - authorised: `src/api/admin-create-user.ts`
@@ -259,6 +276,27 @@ work — nothing enforces it mechanically. Separately, `scope` enforces a per-fi
 CI: a PR fails if it adds a file over 800 lines or grows an existing one past 800 lines,
 counted against the base; a file already over 800 that shrinks or holds steady is not a
 violation, and a file whose first line reads `@generated` is exempt.
+
+**"Under 800 lines" and "not failing `scope`" are two different questions, and a reader
+planning a change needs both answers** (#310). The limit is 800 lines per file, full
+stop — that is the first question, and a file over it is over it whatever any check says.
+What `scope` *fails* on is narrower: only the length **this** pull request added. So a
+file already over 800 at the base does not fail a pull request that leaves it there, and
+a pull request touching it has a budget for new lines of **zero**, not of "800 minus its
+current length". Since #310 `scope` says so out loud rather than staying silent: such a
+file is named under `### Already over the line limit` in the job summary and carried in
+the check's JSON as `inherited`, with the exit code unchanged. The failing half is named
+under `### File growth`, and the two sentences are deliberately different — "this pull
+request added or lengthened them" blames this diff, "was already over at the base" does
+not. (The summary's *headline* is composed separately and still reads "N file(s) new or
+grown past 800 lines" on a failing run, and on a passing run it reads "all inside the
+linked issues' globs" whether or not an inherited file was reported: the report lives in
+the section, not in the first line.) What
+closes the reported case is a pull request that brings the file back under 800; until one
+does, the message repeats on every pull request that touches the file, including ones
+that shorten it. Before #310 nothing was reported at all, so a file that crossed the
+limit stayed across it and the rule stopped applying to exactly the files that had
+already broken it.
 
 Sub-issues are created and linked by one script — the three-line snippet that used to
 stand here (create, resolve the issue **id**, POST it to the parent) is no longer the
@@ -323,30 +361,50 @@ and grants nothing from either: the closing keywords that name those issues, and
 (`findMisplacedAuthorisedLines`, #83). Two things do read labels, and both read the
 **PR's**, never the issue's: `negative-control` reads the `type:` labels — only to print a `note:` line, since
 #135, because the skip is by path class (below) — and `land.mts` reads two, `type:docs`
-(`scripts/land.mts:230`, the exemption from the *review*, never from the checks) and
-`review:approved` (`:255`, the marker label an agent review leaves behind in both modes;
-mode `approved` requires the server's own `APPROVED` on top of it, cast against this very
-head, and never falls back to the label alone).
+(the exemption from the *review*, never from the checks, and **never on its own**: see
+below) and `review:approved` (the marker label an agent review leaves behind in both
+modes; mode `approved` requires the server's own `APPROVED` on top of it, cast against
+this very head, and never falls back to the label alone).
+
+**`type:docs` no longer decides the review exemption. The changed paths do** (#308, item
+26). `land.mts` reads the pull request's diff — `gh api repos/{owner}/{repo}/pulls/<pr>/files
+--paginate` — and enters mode `docs` only when every changed path sits in a documentation
+path class and none sits in the carve-out. The classes are the ones the negative control
+skips by (`SKIP_PATH_GLOBS`), mirrored in `land.mts` as `DOCS_PATH_GLOBS`. The carve-out,
+`NEVER_DOCS_GLOBS`, is the negative control's `NEVER_SKIP_GLOBS` — `.github/scripts/agentic/**`,
+the gate's own installed code — **narrowed** by `.github/workflows/**` and
+`templates/.github/workflows/**`, because those declare the required checks `land.mts`
+itself gates on and `.github/**` would otherwise exempt a change to them from the review
+(#308, item 26). The two lists answer different questions, so one is narrower; both are
+pinned against each other by `tests/land.test.mts`, so the divergence cannot read as drift;
+`AGENTIC_SKIP_GLOBS` extends the negative control's list and is deliberately **not** read
+by `land.mts`, because an environment variable that widened a *review* exemption would be a
+hole openable from outside the repository. The label stays necessary as well: a docs-only
+diff carrying no `type:docs` is mode `agent` and still owes its marker, so #308 took an
+override away without handing a new exemption to anyone. A file list that cannot be read is
+not a docs-only diff — it refuses `gh-pr-files` — and neither is an empty one.
 
 One flow has no `claim.mts` to write those labels: the **docs-writer** is launched
 directly after a merge, not dispatched from `state:ready`, so the orchestrator applies
 `type:docs`/`scope:docs` to its issue when it opens it and copies both onto its PR itself
-(`agents/docs-writer.md` step 4). Without them `land.mts` reads `isDocs` false and demands
-the review this flow exists to skip.
+(`agents/docs-writer.md` step 4). Without them `land.mts` is in mode `agent` and demands
+the review this flow exists to skip — and with them its diff must still be docs-only.
 
-The two readings are of different things, and a PR can sit between them: `type:docs`
-exempts the **review**, the path classes decide the **negative control**. A PR labelled
-`type:docs` whose diff reaches outside those classes — one `tests/**` file added under an
-`authorised:` grant is enough — still owes a failing test, and is no longer docs-only in
-the sense the label claims; relabel it to what the diff is.
+The two readings now ask the same question of the same paths, and the label is what is
+checked against them: `type:docs` on a PR whose diff reaches outside those classes — one
+`tests/**` file added under an `authorised:` grant is enough — refuses with
+`missing: ['docs:label-mismatch']`, naming the paths that put it outside. It owes a failing
+test as it always did, and it is no longer docs-only in the sense the label claims. Relabel
+it to what the diff is; the refusal is named rather than silent because a label that had
+quietly become inert would hide that disagreement exactly as the old override did.
 
 ## Required checks
 
 | check | what it does |
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
-| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files. And a **second warning of the same shape, which also never fails the check**: when the diff changes the mechanism the dogfood loop runs on — anything under `hooks/`, `ci/` or `scripts/`, or a `skills/**/SKILL.md`, deliberately *without* `.github/workflows/**` — and neither the pull-request body nor the diff names a `docs/dogfood/<date>.md` report, the JSON carries `dogfoodTrigger` and `dogfoodWarning` and the job summary a second `> warning:` line, and the check still exits 0. It stays a warning for the same reason: whether a dogfood run was owed is a judgement no file name settles. **The binding half of this one is not the check but the close of the phase**: `scripts/close-milestone.mts` refuses with `missing: ['dogfood']` when a pull request merged into the milestone touched one of those paths and the closeout's `## Dogfood` section names no dated report, so a phase that skipped a run does not close (#182). A phase whose merged pull requests touched nothing sensitive closes with no report |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes and the overlaid run fails = pass; baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the branch's `proof/<slug>.json` could not be read as written = fail (`cannot-run` too, naming the path it rejected — the declaration is unreadable at head, does not parse, is not a JSON object, has no `tests` array, has a `command` that is not a non-empty string, names a path that is absolute or escapes the repository root once normalised, or names a path the head commit does not have); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `.claude/**` (session configuration), and Markdown anywhere in the tree (`**/*.md` as well as the root-level `*.md`, because `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) — and minus `.github/scripts/agentic/**`, which no class covers, because that is where `scripts/init.mts` copies this repository's `ci/` in an adopting repository and a gate that exempts a change to itself is not a gate (#214). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
+| `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails under `### File growth` — that is length this pull request added; one already over 800 at the base that this pull request shrinks or holds steady does **not** fail, and since #310 it is no longer silent either: it is named under `### Already over the line limit` in the job summary and as `inherited` in the JSON, with the exit code unchanged, so "over the limit" and "failing this check" stop being the same sentence. What clears the reported case is a pull request that brings the file back under 800; until one does it is repeated on every pull request that touches the file, the ones that shorten it included. `@generated` on the first line exempts either way (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files. And a **second warning of the same shape, which also never fails the check**: when the diff changes the mechanism the dogfood loop runs on — anything under `hooks/`, `ci/` or `scripts/`, or a `skills/**/SKILL.md`, deliberately *without* `.github/workflows/**` — and neither the pull-request body nor the diff names a `docs/dogfood/<date>.md` report, the JSON carries `dogfoodTrigger` and `dogfoodWarning` and the job summary a second `> warning:` line, and the check still exits 0. It stays a warning for the same reason: whether a dogfood run was owed is a judgement no file name settles. **The binding half of this one is not the check but the close of the phase**: `scripts/close-milestone.mts` refuses with `missing: ['dogfood']` when a pull request merged into the milestone touched one of those paths and the closeout's `## Dogfood` section names no dated report, so a phase that skipped a run does not close (#182). A phase whose merged pull requests touched nothing sensitive closes with no report |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**, *and must fail in a file the overlay placed*. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes, the overlaid run fails, and at least one failure in it names an overlaid file = pass (and when that same run also carries a failure naming another file as its owner, still pass, with a `warning:` naming it); baseline passes and the overlaid run fails but no failure in it is attributable to an overlaid file = fail (`unattributed` — something else was already broken, and crediting it to the overlay reports `pass` on a change nothing depends on; deliberately not `vacuous`, because "nothing depended on the change" and "something else was already broken" are different facts, #354); baseline passes and the overlaid run also passes = fail (`vacuous` — the tests prove nothing), **except** when the overlay withheld nothing the diff changes, which is a pass (`test-only`, below); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the branch's `proof/<slug>.json` could not be read as written = fail (`cannot-run` too, naming the path it rejected — the declaration is unreadable at head, does not parse, is not a JSON object, has no `tests` array, has a `command` that is not a non-empty string, names a path that is absolute or escapes the repository root once normalised, or names a path the head commit does not have); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `.claude/**` (session configuration), and Markdown anywhere in the tree (`**/*.md` as well as the root-level `*.md`, because `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) — and minus `.github/scripts/agentic/**`, which no class covers, because that is where `scripts/init.mts` copies this repository's `ci/` in an adopting repository and a gate that exempts a change to itself is not a gate (#214). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer
 applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
@@ -377,6 +435,51 @@ names one of the overlaid test files or a file the diff touches. Matching the ov
 run's whole output let a structural-looking line from anywhere decide the verdict: a
 dependency that logs `Cannot find module` and carries on prints it in a block of its own,
 and flipped an honest assertion red to `structural` (#214).
+
+### `test-only`: the one diff the overlay cannot judge, and passes
+
+The rule above — baseline green and the overlaid run green is a fail — has exactly one
+carve-out, and it is not an exemption anyone applies (#355). The overlay is a comparison:
+head's test files on a base that lacks **the rest of** the change. What makes a red
+available to it is the part of the diff it *withholds*. When a diff is nothing but test
+files, the overlay withholds nothing: the second run is the pull request's own suite with
+no part of its change absent for a test to bite on. Requiring it to fail is requiring the
+pull request's own tests to fail, so `vacuous` was a required
+check no work could clear — measured, not supposed: **no commit confined to the test
+globs has ever landed on this repository's `main`** (150 read), and PR #348, whose whole
+diff is `tests/adopt-record.test.mts`, was held on `vacuous` rather than on merit.
+
+That diff now reports **`test-only`, and the check passes.** The verdict is deliberately
+distinct from the other two greens: `vacuous` says *nothing depended on the change* and is
+cleared by writing a test that bites; `unattributed` says *something else was already
+broken* and is cleared by fixing that other red; `test-only` says *nothing could have
+depended on the change*, and nothing clears it because there is nothing to clear. It goes
+back to being judged the moment the diff touches one file outside the test globs — that
+file is the difference the overlay withholds.
+
+**The class is two facts read off `git diff`, and a pull request cannot claim either.**
+The overlay carried every file the diff changes, and every one of them is a test file by
+`TEST_FILE_GLOBS` *as written in `ci/negative-control.mts`* — not as extended by
+`AGENTIC_TEST_GLOBS`, and not as replaced by a branch's `proof/<slug>.json` `tests` list.
+Both of those decide what is **overlaid** and deliberately do not decide the **class**:
+either would let a repository variable, or the implementer's own declaration, call a
+production file a test and buy the verdict for it. The declaration's own path is the one
+addition, since a branch that declares its proof has still changed nothing but tests. No
+label, no body flag and no path convention is read.
+
+**What carries the weight instead**, since this control is the only check that asks
+whether a change is proved at all: no file outside the test globs changed, so there is no
+unproved production change for it to hold; the overlaid run *is* the pull request's own
+suite, which is the `test` check's business; `scope` still holds those test paths to the
+linked issue's globs; and whether a test-only change strengthens or **weakens** the suite
+is the reviewer's judgement — the overlay carries the change either way, so this control
+never could have told the two apart, for a test-only diff or any other.
+
+One escape remains available to a **mixed** diff and is not the answer here: a case that
+asserts on a file the overlay does *not* carry gives a real red, which is how
+`tests/provenance.test.mts` earned one in `9be1b1b` and #376 by asserting on
+`docs/closeout/**`. It needs a non-test file in the diff to bite on, and a test-only diff
+has none by definition.
 
 ### The proof a branch declares
 
@@ -421,8 +524,9 @@ practice: issue text points, it never decides what runs.
 
 ## Merge
 
-Once checks are green and the PR carries an approved review (or the `type:docs` label,
-which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto
+Once checks are green and the PR carries an approved review (or is a docs-only diff
+carrying the `type:docs` label, which skips the reviewer), `scripts/land.mts` queues
+`gh pr merge --squash --auto
 --match-head-commit <headRefOid>` — it is the only way the orchestrator merges a PR,
 never `gh pr merge` by hand. The server merges the instant its own rules are satisfied: a
 base-branch ruleset with a `required_status_checks` rule when one exists, else whatever
@@ -454,13 +558,23 @@ condition of that mode is met:
   only login is the one running `land.mts` cannot cast the review it asks for, and freezes
   at its first merge — which is why `agent` is the default and this is opt-in
   (`docs/decisions.md` items 18 and 20).
-- `docs`, the `type:docs` exemption: no review at all, and so no marker to read. It is an
-  exemption from the *review*, never from the checks.
+- `docs`, the documentation exemption: no review at all, and so no marker to read. It is an
+  exemption from the *review*, never from the checks. It is selected by the pull request's
+  **changed paths and** the `type:docs` label, both (#308, item 26): every changed path in
+  a documentation class (`DOCS_PATH_GLOBS`, mirroring the negative control's
+  `SKIP_PATH_GLOBS`), none in the carve-out (`NEVER_DOCS_GLOBS`: the gate's own installed
+  code, plus `.github/workflows/**` and `templates/.github/workflows/**`, which declare the
+  required checks this very script gates on), and the label on the pull request. The label alone used to select it, which let it beat a
+  base ruleset that *requires* a review — an override, not a relaxation. A label on a diff
+  that leaves those classes refuses `docs:label-mismatch` instead; a docs-only diff without
+  the label is mode `agent` and still owes its marker.
 
 The base branch's effective rules are read first, because one selector lives in them and
-because the gate does too; a rules read that cannot answer refuses with
-`missing: ['gh-rules']` and `mode: null` rather than settling for the mode left over when a
-read fails.
+because the gate does too, then the pull request's changed paths, where the other selector
+lives; a rules read that cannot answer refuses with `missing: ['gh-rules']` and a files read
+that cannot answer with `missing: ['gh-pr-files']`, both `mode: null`, rather than settling
+for the mode left over when a read fails. A file list that cannot be read is not a
+docs-only diff.
 
 **Required checks are verified, not assumed.** In both gates `land.mts` reads `gh pr checks
 <pr> --required --json name,bucket,state` and refuses unless that list, once the
@@ -491,9 +605,10 @@ everything `agent` requires, it does not replace it.
 
 `land.mts` names the review mode it applied on every output — `agent` for that
 label-plus-marker path, `approved` when the server's own review is required on top of it,
-`docs` for the `type:docs` exemption, which merges with no review at all and so reads no
-marker, and `null` on the refusals with no mode to name: a PR it could not read at all, and
-a base branch whose rules it could not read. The `{ error }` lines name it too — the usage
+`docs` for the documentation exemption, which merges with no review at all and so reads no
+marker, and `null` on the refusals with no mode to name: a PR it could not read at all, a
+base branch whose rules it could not read, and a diff whose file list it could not read.
+The `{ error }` lines name it too — the usage
 line as `mode: null`, because it is printed before a mode can be read, and the merge
 failure, the clean-status retry failure and the disarm failure as
 `{ error, pr, gate, mode }` — since those are exactly what an operator reads when no merge
@@ -512,7 +627,13 @@ is reviewed again and gets a fresh marker),
 included, which is not a mergeability this script may assume),
 `checks:required` (a required check outside bucket `pass`, an empty list, or a bucket read
 that could not answer), `merge:not-clean` (mode `agent` only, below), `gh-rules` (the base
-branch's effective rules could not be read) or `gh-pr-view` (could not read the PR at all).
+branch's effective rules could not be read), `gh-pr-files` (the changed-path read could not
+answer, so whether the diff stays inside the documentation classes is unknown — a file list
+that cannot be read is not a docs-only diff), `docs:label-mismatch` (the PR carries
+`type:docs` and its diff leaves those classes, or gh reported no changed files at all —
+refused at mode selection, before any other condition, because the label has to come off
+before any verdict about the PR means anything) or `gh-pr-view` (could not read the PR at
+all).
 
 **In mode `agent` nothing is left queued.** `--match-head-commit` is checked by GitHub when
 auto-merge is *enabled*, not when it later fires, so a queue left armed merges whatever the

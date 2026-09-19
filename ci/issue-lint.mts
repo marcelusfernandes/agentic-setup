@@ -77,7 +77,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
 import { globToRegExp, matchesAny } from './lib/globs.mts';
-import { findMultiGlobGrantLines, parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
+import { findBareGlobBacktickedJustificationLines, findMultiGlobGrantLines, parseIssueAuthorisedGlobs, parseIssueGlobs } from './lib/scope.mts';
 import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDeclaration, REQUIRED_SECTIONS, sections } from './lib/issue.mts';
 
 const MARKER = '<!-- agentic-issue-lint -->';
@@ -213,18 +213,32 @@ const issueGrants = parseIssueAuthorisedGlobs(body);
 if (sec['Files'] && issueGlobs.length === 0) {
   failures.push('## Files has no bullet glob');
 }
-// A grant line carrying more than one backticked span grants nothing, and
-// this is where that refusal has to be said (#316). The parser could not take
-// only the first span — that would trade a silent over-grant for a silent
+// Two shapes of grant line grant nothing, and this is where both refusals
+// have to be said (#316, #357). Neither could be narrowed to the glob that is
+// probably meant — that would trade a silent over-grant for a silent
 // under-grant — so the line is refused, and the refusal belongs at dispatch,
 // where the orchestrator wrote it: `scripts/claim.mts` runs this lint before
 // it pushes the lock branch, and the `issue-lint` workflow reruns it on every
 // `edited`, so a grant added after dispatch is refused too. At `scope` time
-// the same line would only surface as a file outside the globs, with no
-// reason given — fail-closed, but to the wrong reader.
+// either line would only surface as a file outside the globs, with no reason
+// given — fail-closed, but to the wrong reader.
+//
+// The two are reported in wording of their own and a line draws at most one
+// of them (`grantRefusal` in `ci/lib/scope.mts`): they are different mistakes
+// with different remedies, and an author fixing one must not be told the
+// other.
 for (const { line, spans } of findMultiGlobGrantLines(body)) {
   failures.push(
     `\`authorised:\` line carries more than one backticked span (${spans.map((s) => `\`${s}\``).join(', ')}), so it grants none of them — one glob per line. Put the justification on the next line, indented and not a bullet, with no backticks of its own. The line: ${line}`,
+  );
+}
+// The mirror shape: a bare glob whose justification is backticked. Reading
+// the span granted the path the author was pointing at and lost the glob they
+// wrote, so the refusal names both — the bare token that was meant to be the
+// grant and the span that was not.
+for (const { line, bare, spans } of findBareGlobBacktickedJustificationLines(body)) {
+  failures.push(
+    `\`authorised:\` line grants a bare glob (\`${bare}\`) and carries a backticked justification (${spans.map((s) => `\`${s}\``).join(', ')}), so it grants neither — the glob stands alone at the head of the line. A justification on the grant line is allowed only unbackticked; otherwise put it on the next line, indented and not a bullet. The line: ${line}`,
   );
 }
 // The `Declaration: proof/<slug>.json` line is optional (#136): only a line

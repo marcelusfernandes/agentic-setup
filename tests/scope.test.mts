@@ -3,11 +3,15 @@
 // `## Files` globs, unless an `authorised:` line in the **linked issue's**
 // `## Files` grants extra files. A grant in the pull-request body is
 // ignored and reported as such (#155): the implementer writes that body.
+//
+// The 800-line rules — `### File growth`, `### Already over the line limit`,
+// `fileGrowth` and `lengthOutcome` — are tests/scope-line-limit.test.mts
+// (#352). Everything else the check does is here.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, ci, cleanup, commit, finish, git, tempRepo } from './lib/harness.mts';
-import { fileGrowth, findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
+import { findMisplacedAuthorisedLines, parseLinkedIssues } from '../ci/lib/scope.mts';
 // #177's `decisionNudge` comes in through the namespace, not the named
 // import above: a named import of an export the base checkout does not have
 // kills this whole file at load time, which reads as a structural red
@@ -466,112 +470,6 @@ const rLockExcluded = ci('scope-check.mts', [
 ]);
 check('scope: a lockfile naming a removed path is excluded from the dangling-reference search', rLockExcluded.status === 0, rLockExcluded.out);
 
-// #134: `scope` fails a PR that adds a file over 800 lines or grows a file
-// past 800 lines, `@generated` first line exempt. Real repos: the growth
-// check runs `git show base:path` / `git show head:path`.
-const linesOf = (n: number, fill = 'line'): string => `${Array.from({ length: n }, (_, i) => `${fill} ${i}`).join('\n')}\n`;
-const issueSrcStar = file('issue-src-star.md', '## Files\n- `src/**`\n');
-const prClosesOnlyGeneric = file('pr-closes-only-generic.md', 'Closes #1\n\n## Files\nGlobs touched.\n');
-const scopeGrowth = (base: string, head: string, root: string) =>
-  ci('scope-check.mts', ['--base', base, '--head', head, '--issue-body-file', issueSrcStar, '--pr-body-file', prClosesOnlyGeneric, '--root', root]);
-
-const growthRepo = tempRepo();
-const growthBase = commit(growthRepo, { 'src/big.ts': linesOf(700) }, 'chore: base at 700 lines');
-git(['checkout', '-q', '-b', 'feat/134-grow'], growthRepo);
-const growthHead = commit(growthRepo, { 'src/big.ts': linesOf(900) }, 'feat: grow src/big.ts to 900 lines');
-const rGrowth = scopeGrowth(growthBase, growthHead, growthRepo);
-check(
-  'scope fails when a file grows from 700 to 900 lines, naming the file',
-  rGrowth.status === 1 && /src\/big\.ts/.test(rGrowth.out) && /### File growth/.test(rGrowth.out),
-  rGrowth.out,
-);
-check(
-  "scope JSON's growth key names the one file that grew past the limit",
-  (() => {
-    const growth = scopeJson(rGrowth.out).growth;
-    return Array.isArray(growth) && growth.length === 1 && growth[0].path === 'src/big.ts';
-  })(),
-  rGrowth.out,
-);
-
-// #134 round 2: `misplacedAuthorised` must stay tied to a glob failure —
-// `result.ok` — and not to the overall `ok`, which also folds in growth
-// and dangling-reference failures. Globs here cover every changed file
-// (issueSrcStar matches src/**), so the glob check passes even though the
-// growth check still fails the run; a stray authorised: line outside
-// ## Files must not be reported as misplacedAuthorised in that case.
-const prGrowthMisplaced = file(
-  'pr-growth-misplaced.md',
-  'Closes #1\n\n- authorised: `src/other.ts`\n  (stray grant outside ## Files; globs already cover everything)\n\n## Files\nGlobs touched.\n',
-);
-const rGrowthMisplaced = ci('scope-check.mts', [
-  '--base', growthBase, '--head', growthHead,
-  '--issue-body-file', issueSrcStar, '--pr-body-file', prGrowthMisplaced,
-  '--root', growthRepo,
-]);
-check(
-  'scope does not report misplacedAuthorised when only the growth check fails and the glob check passes',
-  rGrowthMisplaced.status === 1 && !('misplacedAuthorised' in scopeJson(rGrowthMisplaced.out)),
-  rGrowthMisplaced.out,
-);
-
-// Already over 800 and edited, without growing further, is not a violation.
-git(['checkout', '-q', '-b', 'feat/134-already-900', growthHead], growthRepo);
-const growthEditedHead = commit(growthRepo, { 'src/big.ts': linesOf(900, 'edited') }, 'refactor: edit src/big.ts without changing its line count');
-const rGrowthEdited = scopeGrowth(growthHead, growthEditedHead, growthRepo);
-check(
-  'scope passes editing a file already over 800 lines, when it does not grow further',
-  rGrowthEdited.status === 0 && !/### File growth/.test(rGrowthEdited.out),
-  rGrowthEdited.out,
-);
-
-// A new file over 800 lines marked `@generated` on its first line is exempt.
-git(['checkout', '-q', '-b', 'feat/134-generated', growthBase], growthRepo);
-const generatedHead = commit(growthRepo, { 'src/generated.ts': `// @generated\n${linesOf(900)}` }, 'feat: add generated src/generated.ts');
-const rGenerated = scopeGrowth(growthBase, generatedHead, growthRepo);
-check(
-  'scope passes a new file over 800 lines whose first line marks it @generated',
-  rGenerated.status === 0 && !/### File growth/.test(rGenerated.out),
-  rGenerated.out,
-);
-
-// A --files-file run (no base/head) is unaffected by the growth check.
-const rFilesFileOnly = scope(files, issueSrc, prPlain);
-check(
-  'scope --files-file run without base/head has no File growth section',
-  rFilesFileOnly.status === 0 && !/### File growth/.test(rFilesFileOnly.out),
-  rFilesFileOnly.out,
-);
-
-// Direct unit test of the pure fileGrowth: growth past the limit fails,
-// already-over-the-limit-but-not-growing does not, @generated is exempt.
-check(
-  'fileGrowth: a file growing past 800 lines is a violation',
-  JSON.stringify(fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: false }])) ===
-    JSON.stringify([{ path: 'a.ts', baseLines: 700, headLines: 900 }]),
-);
-check('fileGrowth: a new file over 800 lines is a violation', fileGrowth([{ path: 'a.ts', baseLines: null, headLines: 900, generated: false }]).length === 1);
-check(
-  'fileGrowth: a new file under 800 lines is not a violation',
-  fileGrowth([{ path: 'a.ts', baseLines: null, headLines: 700, generated: false }]).length === 0,
-);
-check(
-  'fileGrowth: already over 800 lines and shrinking is not a violation',
-  fileGrowth([{ path: 'a.ts', baseLines: 900, headLines: 850, generated: false }]).length === 0,
-);
-check(
-  'fileGrowth: already over 800 lines and unchanged is not a violation',
-  fileGrowth([{ path: 'a.ts', baseLines: 900, headLines: 900, generated: false }]).length === 0,
-);
-check(
-  'fileGrowth: a file that grows but stays under 800 lines is not a violation',
-  fileGrowth([{ path: 'a.ts', baseLines: 500, headLines: 700, generated: false }]).length === 0,
-);
-check(
-  'fileGrowth: @generated on the first line exempts a file that would otherwise violate',
-  fileGrowth([{ path: 'a.ts', baseLines: 700, headLines: 900, generated: true }]).length === 0,
-);
-
 // #177: the decision nudge. A PR that changes a mechanism file (a hook, a
 // CI check, a script, a skill card, a workflow) without recording a
 // decision in the same diff is named in a `warning:` line — and the check
@@ -765,5 +663,42 @@ check('the issue and PR grant parsers agree on every one of the four shapes', al
 // both files are violations and neither span is reported as authorised.
 const rTwoSpans = scope(files, file('issue-grant-two-spans.md', twoSpans), prPlain);
 check('scope grants nothing from a two-span grant line: both files are violations and none is named as authorised', rTwoSpans.status === 1 && JSON.stringify(scopeJson(rTwoSpans.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) && !/Authorised by #1:/.test(rTwoSpans.out), rTwoSpans.out);
+
+// #357: the mirror image of the shape above, and the one #316's "more than
+// one backticked span" scopes out. One **bare** token, then a backticked
+// justification: the parser took the span whenever there was one, so
+// `authorised: src/a.ts (see \`src/lib/b.ts\`)` granted `src/lib/b.ts` — the
+// path the author pointed at, not the one they meant — and lost `src/a.ts`,
+// the glob they did write. Both halves wrong from one line, and the granting
+// half fails open exactly as #316's did.
+//
+// The rule that closes it: when a grant line carries a backticked span, the
+// glob is that span and it stands alone on the line, so the remainder must
+// open with it. A span behind a bare token is a justification, and the line
+// is refused rather than narrowed to the bare token — taking it silently
+// would discard what the author wrote, which is #316's reason unchanged.
+// Four shapes below, and the two refusals stay apart: an author fixing one
+// is never told the other.
+const findBare = scopeLib.findBareGlobBacktickedJustificationLines;
+const bareAlone = '## Files\n- `lib/**`\n- authorised: src/a.ts\n';
+const barePlusProse = '## Files\n- `lib/**`\n- authorised: src/a.ts — see the issue comment\n';
+const barePlusSpan = '## Files\n- `lib/**`\n- authorised: src/a.ts (see `src/lib/b.ts`)\n';
+const bareShapes = [bareAlone, barePlusProse, barePlusSpan];
+const refusedBareSpan = [{ line: 'authorised: src/a.ts (see `src/lib/b.ts`)', bare: 'src/a.ts', spans: ['src/lib/b.ts'] }];
+check('shape 5 — a bare glob alone grants that glob', pAG(bareAlone) === '["src/a.ts"]', pAG(bareAlone));
+check('shape 6 — a bare glob plus an unbackticked justification grants the bare glob alone', pAG(barePlusProse) === '["src/a.ts"]', pAG(barePlusProse));
+check('shape 7 — a bare glob plus a backticked justification grants nothing at all, in both grant parsers', pAG(barePlusSpan) === '[]' && pAGpr(barePlusSpan) === '[]', `${pAG(barePlusSpan)} / ${pAGpr(barePlusSpan)}`);
+check('findBareGlobBacktickedJustificationLines names the refused line, the bare token and the span, and refuses neither bare shape above', findBare !== undefined && JSON.stringify(findBare(barePlusSpan)) === JSON.stringify(refusedBareSpan) && findBare(bareAlone).length === 0 && findBare(barePlusProse).length === 0, findBare ? JSON.stringify(bareShapes.map((b) => findBare(b))) : 'findBareGlobBacktickedJustificationLines is not exported');
+// AC3: the two mistakes are different mistakes. Neither finder may claim the
+// other's line, or an author fixing one is handed the other's remedy.
+check('the two refusals stay distinguishable: neither finder reports the other shape', findBare !== undefined && findBare(twoSpans).length === 0 && findMulti(barePlusSpan).length === 0, findBare ? `${JSON.stringify(findBare(twoSpans))} / ${JSON.stringify(findMulti(barePlusSpan))}` : 'findBareGlobBacktickedJustificationLines is not exported');
+// The same #231 pin, over the three bare shapes: the parsers read a grant
+// through one function and must answer the same on each of them.
+check('the issue and PR grant parsers agree on every one of the three bare shapes', bareShapes.every((b) => pAG(b) === pAGpr(b)), JSON.stringify(bareShapes.map((b) => [pAG(b), pAGpr(b)])));
+// End to end through the real script: the refused line widens nothing, so
+// `src/a.ts` is a violation too — it was never granted — and the span the
+// old parser would have taken is not reported as authorised either.
+const rBareSpan = scope(files, file('issue-grant-bare-span.md', barePlusSpan), prPlain);
+check('scope grants nothing from a bare glob with a backticked justification: both files are violations and none is named as authorised', rBareSpan.status === 1 && JSON.stringify(scopeJson(rBareSpan.out).violations) === JSON.stringify(['src/a.ts', 'src/lib/b.ts']) && !/Authorised by #1:/.test(rBareSpan.out), rBareSpan.out);
 
 finish();
