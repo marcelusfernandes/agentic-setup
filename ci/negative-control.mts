@@ -105,8 +105,9 @@
 // an implementer compare a local `vacuous` with a CI `pass`, eliminate the
 // stale-base and merge-ref explanations by measurement, and find the false
 // pass #354 is about. A stricter verdict nobody can reproduce by hand would
-// be worth less than the defect it removes, so every verdict that refuses
-// prints the two-argument invocation that reproduces it.
+// be worth less than the defect it removes, so the verdict that change added,
+// `unattributed`, prints the two-argument invocation that reproduces it —
+// base and head filled in, and `--branch` when one was passed.
 //
 // Inputs: --base <sha> --head <sha> (or the pull_request event), labels from
 // the event or --labels a,b, and --branch <ref> (or the event's head ref)
