@@ -497,71 +497,35 @@ check(
 
 // --- AC1/AC2/AC3 (#46): resumable vs. still-inProgress ----------------------
 const resumable70 = (out?.resumable ?? []).find((i: any) => i.number === 70);
-check(
-  'resumable: remote branch, no PR, no worktree checkout, reports commits ahead of main',
-  resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2,
-  JSON.stringify(resumable70),
-);
+check('resumable: remote branch, no PR, no worktree checkout, reports commits ahead of main', resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2, JSON.stringify(resumable70));
 check('a resumable issue is removed from inProgress (AC1)', (out?.inProgress ?? []).every((i: any) => i.number !== 70), JSON.stringify(out?.inProgress));
 
 const inProgress71 = (out?.inProgress ?? []).find((i: any) => i.number === 71);
-check(
-  'in-progress: remote branch, no PR, but checked out in a local worktree stays inProgress (AC2)',
-  inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null,
-  JSON.stringify(inProgress71),
-);
+check('in-progress: remote branch, no PR, but checked out in a local worktree stays inProgress (AC2)', inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null, JSON.stringify(inProgress71));
 check('a worktree-checked-out issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 71), JSON.stringify(out?.resumable));
 
 // --- AC1/AC2/AC4 (#56): a dead-pid lock does not count as a live agent -----
 const resumable72 = (out?.resumable ?? []).find((i: any) => i.number === 72);
-check(
-  'a worktree locked by a dead pid does not count as checked out: its issue is resumable, with commitsAheadOfMain (AC1/AC2)',
-  resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0,
-  JSON.stringify(resumable72),
-);
+check('a worktree locked by a dead pid does not count as checked out: its issue is resumable, with commitsAheadOfMain (AC1/AC2)', resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0, JSON.stringify(resumable72));
 check('a dead-pid-locked issue is removed from inProgress', (out?.inProgress ?? []).every((i: any) => i.number !== 72), JSON.stringify(out?.inProgress));
 
 const deadWorktrees: any[] = out?.deadWorktrees ?? [];
 const deadWorktree72 = deadWorktrees.find((w) => w.branch === 'feat/72-dead-locked-worktree');
 const deadLockedRealpath = realpathSync(deadLockedWorktreeDir);
-check(
-  'deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)',
-  deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath,
-  JSON.stringify(deadWorktree72),
-);
-check(
-  'a clean dead worktree (no uncommitted changes, nothing unpushed) reports dirty: false, unpushed: 0 (#88 AC1)',
-  deadWorktree72?.dirty === false && deadWorktree72?.unpushed === 0,
-  JSON.stringify(deadWorktree72),
-);
+check('deadWorktrees lists the dead-pid-locked worktree with its path, branch and pid (AC2)', deadWorktree72 !== undefined && deadWorktree72.pid === DEAD_PID && realpathSync(deadWorktree72.path) === deadLockedRealpath, JSON.stringify(deadWorktree72));
+check('a clean dead worktree (no uncommitted changes, nothing unpushed) reports dirty: false, unpushed: 0 (#88 AC1)', deadWorktree72?.dirty === false && deadWorktree72?.unpushed === 0, JSON.stringify(deadWorktree72));
 
 const deadWorktree75 = deadWorktrees.find((w) => w.branch === 'feat/75-dirty-worktree');
-check(
-  'a dead worktree with an uncommitted file reports dirty: true, unpushed: 0 (#88 AC1)',
-  deadWorktree75?.dirty === true && deadWorktree75?.unpushed === 0,
-  JSON.stringify(deadWorktree75),
-);
+check('a dead worktree with an uncommitted file reports dirty: true, unpushed: 0 (#88 AC1)', deadWorktree75?.dirty === true && deadWorktree75?.unpushed === 0, JSON.stringify(deadWorktree75));
 
 const deadWorktree76 = deadWorktrees.find((w) => w.branch === 'feat/76-unpushed-commit');
-check(
-  'a dead worktree with one local commit never pushed reports dirty: false, unpushed: 1 (#88 AC1)',
-  deadWorktree76?.dirty === false && deadWorktree76?.unpushed === 1,
-  JSON.stringify(deadWorktree76),
-);
+check('a dead worktree with one local commit never pushed reports dirty: false, unpushed: 1 (#88 AC1)', deadWorktree76?.dirty === false && deadWorktree76?.unpushed === 1, JSON.stringify(deadWorktree76));
 
 const deadWorktree77 = deadWorktrees.find((w) => w.branch === 'feat/77-no-remote-branch');
-check(
-  'a dead worktree on a branch never pushed to origin reports unpushed: null (#88 AC1)',
-  deadWorktree77?.dirty === false && deadWorktree77?.unpushed === null,
-  JSON.stringify(deadWorktree77),
-);
+check('a dead worktree on a branch never pushed to origin reports unpushed: null (#88 AC1)', deadWorktree77?.dirty === false && deadWorktree77?.unpushed === null, JSON.stringify(deadWorktree77));
 
 const inProgress73 = (out?.inProgress ?? []).find((i: any) => i.number === 73);
-check(
-  'a worktree locked by a live pid still counts as checked out: its issue stays inProgress (AC4, fail safe)',
-  inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null,
-  JSON.stringify(inProgress73),
-);
+check('a worktree locked by a live pid still counts as checked out: its issue stays inProgress (AC4, fail safe)', inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null, JSON.stringify(inProgress73));
 check('a live-pid-locked issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 73), JSON.stringify(out?.resumable));
 check('deadWorktrees does not list a worktree locked by a live pid', !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'), JSON.stringify(deadWorktrees));
 
