@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Cases for ci/issue-lint.mts: it validates an issue's contract (sections,
 // globs, the `authorised:` grants of `## Files` held to the same two rules
-// as those globs, Blocked-by
-// numbers) against
+// as those globs, Blocked-by numbers) against
 // a real temporary git repository, with a fake `gh` on PATH for AC5 (the
 // only check that always shells out, in both modes). Everything else runs
 // through --issue-body-file / --milestone-issues-file, so no other `gh`
