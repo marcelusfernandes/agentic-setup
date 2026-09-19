@@ -743,6 +743,47 @@ check(
   r.out,
 );
 
+// --- a diff the overlay carries whole cannot be proved by it (#355) --------
+// The overlay is a comparison: head's test files on a base that lacks the
+// rest of the change. When the diff *is* nothing but test files the overlay
+// withholds nothing, so the second run is the pull request's own suite on its
+// own tree, green whenever the `test` check is. `vacuous` says "nothing
+// depended on the change" and is cleared by writing a test that bites; here
+// nothing *could have* depended on it and no test clears it, so it is its own
+// verdict and it passes. PR #348, one file, is the case; no commit confined
+// to the test globs has ever landed on this repository's `main` (150 read).
+git(['checkout', '-q', '-b', 'test/42-test-only', base], repo);
+const testOnlyHead = commit(repo, {
+  'tests/check.mts': '// the scanner this file reads the tree with, fixed\nprocess.exit(0);\n',
+}, 'test: machinery only');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = nc(testOnlyHead);
+check('a diff of nothing but test files is `test-only`, not `vacuous`',
+  r.status === 0 && /negative-control: test-only/.test(r.out) && !/vacuous/.test(r.out), r.out);
+check('the `test-only` detail says nothing could have depended on the change',
+  /could have depended/.test(r.out), r.out);
+check('the `test-only` detail names what would put the diff back in the control',
+  /outside the test globs/.test(r.out), r.out);
+
+// The `feat/2-vacuous` head above is the contrast: it changes `lib.mts` too,
+// which the overlay withholds, so the control could have bitten there and did
+// not — that stays `vacuous`, and the class is read off the built-in globs,
+// never off configuration or the branch's own declaration. Either would let a
+// production file be called a test and buy the verdict for it.
+r = nc(vacuous, '', base, { AGENTIC_TEST_GLOBS: 'lib.mts' });
+check('AGENTIC_TEST_GLOBS cannot buy `test-only` for a production file',
+  r.status === 1 && /negative-control: vacuous/.test(r.out), r.out);
+
+git(['checkout', '-q', '-b', 'feat/44-declared-claim', base], repo);
+const declaredClaimHead = commit(repo, {
+  'lib.mts': 'export const v = 4;\n',
+  'proof/declared-claim.json': JSON.stringify({ tests: ['lib.mts'] }),
+}, 'feat: a declaration calling a production file a test');
+git(['checkout', '-q', 'feat/1-x'], repo);
+r = ci('negative-control.mts', ['--base', base, '--head', declaredClaimHead, '--branch', 'feat/44-declared-claim'], { cwd: repo });
+check('a `proof/<slug>.json` naming a production file cannot buy `test-only`',
+  r.status === 1 && /negative-control: vacuous/.test(r.out), r.out);
+
 check(
   'negative-control leaves no worktree behind in the attribution repo',
   !/negative-control-/.test(git(['worktree', 'list'], attrRepo)),
