@@ -475,14 +475,12 @@ check('#266 AC2 it cites the pass that measured it, by report path and finding',
 //
 // Three shapes this block is deliberate about:
 //  - Both spans are bounded on the `## ` heading that opens the section (via `section`),
-//    never on a blank line — but not because the pinned words occur elsewhere in these
-//    files. They do not: in `0000-template.md` each occurs exactly once, and in
-//    `README.md` every occurrence sits inside the new section. The reason is that a
-//    whole-file read cannot tell the right words in the right section from the right
-//    words in the wrong one, and the second is a real defect: an author meets the split
-//    under `## Updates` or not at all. Measured — moving the template's paragraph out of
-//    `## Updates` word for word, into `## Supersedes`, reds exactly the five AC4 cases
-//    below, while every word it pins is still in the file for a whole-file read to find.
+//    never on a blank line, because a whole-file read cannot tell the right words in the
+//    right section from the right words in the wrong one — and the second is a real
+//    defect, since an author meets the split under `## Updates` or not at all. Measured:
+//    moving the template's paragraph out of `## Updates` word for word, into
+//    `## Supersedes`, reds exactly the five AC4 cases below, while every word it pins is
+//    still in the file for a whole-file read to find.
 //  - Both files are read through `readNormalized`, because this prose wraps at ~90
 //    columns and 8 of the 26 phrases pinned below straddle a line break — four in each
 //    document, so the normalizer is load-bearing in both. Without it a pin reaches only
