@@ -1,7 +1,7 @@
 # 0026. The changed paths decide the review exemption; the `type:docs` label no longer does
 
 Status: proposed
-Date: 2026-09-19
+Date: 2026-09-18
 
 Landed with #308 (this pull request), which implements the rule below in the same diff. It
 is written here rather than left in that pull request's body because it changes **what
@@ -11,7 +11,7 @@ two refusal codes, `docs:label-mismatch` and `gh-pr-files`, exist that did not â
 [`README.md`](README.md) lists.
 
 This item lands `proposed`, like every dated item since 0021. The orchestrator granted the
-three documentation files this pull request touches (#308, `## Files`, 2026-09-19) and that
+three documentation files this pull request touches (#308, `## Files`, 2026-09-18) and that
 grant is a grant of scope, not an acceptance: [`README.md`](README.md) ("Silence never
 accepts") reserves `accepted` to an explicit written OK from the person running the loop,
 and no such OK exists for this item. The pull request that flips this line will cite where
