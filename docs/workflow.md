@@ -323,22 +323,37 @@ and grants nothing from either: the closing keywords that name those issues, and
 (`findMisplacedAuthorisedLines`, #83). Two things do read labels, and both read the
 **PR's**, never the issue's: `negative-control` reads the `type:` labels — only to print a `note:` line, since
 #135, because the skip is by path class (below) — and `land.mts` reads two, `type:docs`
-(`scripts/land.mts:230`, the exemption from the *review*, never from the checks) and
-`review:approved` (`:255`, the marker label an agent review leaves behind in both modes;
-mode `approved` requires the server's own `APPROVED` on top of it, cast against this very
-head, and never falls back to the label alone).
+(the exemption from the *review*, never from the checks, and **never on its own**: see
+below) and `review:approved` (the marker label an agent review leaves behind in both
+modes; mode `approved` requires the server's own `APPROVED` on top of it, cast against
+this very head, and never falls back to the label alone).
+
+**`type:docs` no longer decides the review exemption. The changed paths do** (#308, item
+26). `land.mts` reads the pull request's diff — `gh api repos/{owner}/{repo}/pulls/<pr>/files
+--paginate` — and enters mode `docs` only when every changed path sits in a documentation
+path class and none sits in the carve-out, `.github/scripts/agentic/**`. Those are the
+same classes the negative control skips by (`SKIP_PATH_GLOBS`), mirrored in `land.mts` as
+`DOCS_PATH_GLOBS` and `NEVER_DOCS_GLOBS` and pinned against them by `tests/land.test.mts`;
+`AGENTIC_SKIP_GLOBS` extends the negative control's list and is deliberately **not** read
+by `land.mts`, because an environment variable that widened a *review* exemption would be a
+hole openable from outside the repository. The label stays necessary as well: a docs-only
+diff carrying no `type:docs` is mode `agent` and still owes its marker, so #308 took an
+override away without handing a new exemption to anyone. A file list that cannot be read is
+not a docs-only diff — it refuses `gh-pr-files` — and neither is an empty one.
 
 One flow has no `claim.mts` to write those labels: the **docs-writer** is launched
 directly after a merge, not dispatched from `state:ready`, so the orchestrator applies
 `type:docs`/`scope:docs` to its issue when it opens it and copies both onto its PR itself
-(`agents/docs-writer.md` step 4). Without them `land.mts` reads `isDocs` false and demands
-the review this flow exists to skip.
+(`agents/docs-writer.md` step 4). Without them `land.mts` is in mode `agent` and demands
+the review this flow exists to skip — and with them its diff must still be docs-only.
 
-The two readings are of different things, and a PR can sit between them: `type:docs`
-exempts the **review**, the path classes decide the **negative control**. A PR labelled
-`type:docs` whose diff reaches outside those classes — one `tests/**` file added under an
-`authorised:` grant is enough — still owes a failing test, and is no longer docs-only in
-the sense the label claims; relabel it to what the diff is.
+The two readings now ask the same question of the same paths, and the label is what is
+checked against them: `type:docs` on a PR whose diff reaches outside those classes — one
+`tests/**` file added under an `authorised:` grant is enough — refuses with
+`missing: ['docs:label-mismatch']`, naming the paths that put it outside. It owes a failing
+test as it always did, and it is no longer docs-only in the sense the label claims. Relabel
+it to what the diff is; the refusal is named rather than silent because a label that had
+quietly become inert would hide that disagreement exactly as the old override did.
 
 ## Required checks
 
@@ -421,8 +436,9 @@ practice: issue text points, it never decides what runs.
 
 ## Merge
 
-Once checks are green and the PR carries an approved review (or the `type:docs` label,
-which skips the reviewer), `scripts/land.mts` queues `gh pr merge --squash --auto
+Once checks are green and the PR carries an approved review (or is a docs-only diff
+carrying the `type:docs` label, which skips the reviewer), `scripts/land.mts` queues
+`gh pr merge --squash --auto
 --match-head-commit <headRefOid>` — it is the only way the orchestrator merges a PR,
 never `gh pr merge` by hand. The server merges the instant its own rules are satisfied: a
 base-branch ruleset with a `required_status_checks` rule when one exists, else whatever
@@ -454,13 +470,22 @@ condition of that mode is met:
   only login is the one running `land.mts` cannot cast the review it asks for, and freezes
   at its first merge — which is why `agent` is the default and this is opt-in
   (`docs/decisions.md` items 18 and 20).
-- `docs`, the `type:docs` exemption: no review at all, and so no marker to read. It is an
-  exemption from the *review*, never from the checks.
+- `docs`, the documentation exemption: no review at all, and so no marker to read. It is an
+  exemption from the *review*, never from the checks. It is selected by the pull request's
+  **changed paths and** the `type:docs` label, both (#308, item 26): every changed path in
+  a documentation class (`DOCS_PATH_GLOBS`, mirroring the negative control's
+  `SKIP_PATH_GLOBS`), none in the carve-out (`NEVER_DOCS_GLOBS`, `.github/scripts/agentic/**`),
+  and the label on the pull request. The label alone used to select it, which let it beat a
+  base ruleset that *requires* a review — an override, not a relaxation. A label on a diff
+  that leaves those classes refuses `docs:label-mismatch` instead; a docs-only diff without
+  the label is mode `agent` and still owes its marker.
 
 The base branch's effective rules are read first, because one selector lives in them and
-because the gate does too; a rules read that cannot answer refuses with
-`missing: ['gh-rules']` and `mode: null` rather than settling for the mode left over when a
-read fails.
+because the gate does too, then the pull request's changed paths, where the other selector
+lives; a rules read that cannot answer refuses with `missing: ['gh-rules']` and a files read
+that cannot answer with `missing: ['gh-pr-files']`, both `mode: null`, rather than settling
+for the mode left over when a read fails. A file list that cannot be read is not a
+docs-only diff.
 
 **Required checks are verified, not assumed.** In both gates `land.mts` reads `gh pr checks
 <pr> --required --json name,bucket,state` and refuses unless that list, once the
@@ -491,9 +516,10 @@ everything `agent` requires, it does not replace it.
 
 `land.mts` names the review mode it applied on every output — `agent` for that
 label-plus-marker path, `approved` when the server's own review is required on top of it,
-`docs` for the `type:docs` exemption, which merges with no review at all and so reads no
-marker, and `null` on the refusals with no mode to name: a PR it could not read at all, and
-a base branch whose rules it could not read. The `{ error }` lines name it too — the usage
+`docs` for the documentation exemption, which merges with no review at all and so reads no
+marker, and `null` on the refusals with no mode to name: a PR it could not read at all, a
+base branch whose rules it could not read, and a diff whose file list it could not read.
+The `{ error }` lines name it too — the usage
 line as `mode: null`, because it is printed before a mode can be read, and the merge
 failure, the clean-status retry failure and the disarm failure as
 `{ error, pr, gate, mode }` — since those are exactly what an operator reads when no merge
@@ -512,7 +538,13 @@ is reviewed again and gets a fresh marker),
 included, which is not a mergeability this script may assume),
 `checks:required` (a required check outside bucket `pass`, an empty list, or a bucket read
 that could not answer), `merge:not-clean` (mode `agent` only, below), `gh-rules` (the base
-branch's effective rules could not be read) or `gh-pr-view` (could not read the PR at all).
+branch's effective rules could not be read), `gh-pr-files` (the changed-path read could not
+answer, so whether the diff stays inside the documentation classes is unknown — a file list
+that cannot be read is not a docs-only diff), `docs:label-mismatch` (the PR carries
+`type:docs` and its diff leaves those classes, or gh reported no changed files at all —
+refused at mode selection, before any other condition, because the label has to come off
+before any verdict about the PR means anything) or `gh-pr-view` (could not read the PR at
+all).
 
 **In mode `agent` nothing is left queued.** `--match-head-commit` is checked by GitHub when
 auto-merge is *enabled*, not when it later fires, so a queue left armed merges whatever the
