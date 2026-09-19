@@ -112,11 +112,16 @@ way: it reports a failure rather than choosing to believe the branch is governed
 
 Three, and the first two are wider than #373's own wording asked for.
 
-**1. A `gh` failure for a non-refusal reason exits 1 too.** No network, an expired token, a
-rate limit, `gh` not installed on the PATH — every one of them reaches `reportRefusedWrite`,
-because the branch is on `r.ok` and nothing downstream of it asks *why* the call failed. The
-run exits 1 and the report line carries `gh`'s own text, so nothing is mislabelled — the
-word "refused" never appears in operator-facing output for these. It is still a widening:
+**1. A `gh` failure on the write call for a non-refusal reason exits 1 too.** The branch is
+on `r.ok` and nothing downstream of it asks *why* the call failed, so any failure of that
+`gh api -X POST|PUT` reaches `reportRefusedWrite`. Which failures those can be is narrower
+than it first looks, and for the same reason the cost below is latent: the rulesets list GET
+is made first, so an expired token, a missing `gh` on the PATH or a network that was down
+when the run started fails *that* read, is reported by `reportGhCallFailure`, and exits 0.
+What is left to land on the write itself is a failure that arrives between the two calls — a
+network that drops mid-run, a secondary rate limit on the write — and those now exit 1. The
+report line carries `gh`'s own text, so nothing is mislabelled: the word "refused" never
+appears in operator-facing output for them. It is still a widening:
 #373 asked for an exit 1 when GitHub **refuses** the write, and what landed is an exit 1
 when the write did not demonstrably succeed. That is the right direction for a path whose
 failure mode is a silently unprotected branch, and it is a cost, because a transient network
@@ -190,7 +195,7 @@ And the install card runs the installer as two bare lines, chained to nothing, s
 non-zero exit stops no sequence there either:
 
 ```
-$ git grep -h "node \"\$INIT\"" -- skills
+$ git grep -h "node \"\$INIT\"" f7041b2 -- skills
 node "$INIT" --dry-run --milestone "M1 <name>"
 node "$INIT" --milestone "M1 <name>"
 ```
