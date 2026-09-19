@@ -38,6 +38,15 @@ What is in force, as `scripts/land.mts` implements it:
   The first glob is the negative control's whole `NEVER_SKIP_GLOBS`
   (`ci/negative-control.mts:138`); the other two are this list's own, and they are a
   narrowing, not drift. See **Reason**.
+- **The carve-out is not sufficient on its own for a *renamed* carved path.**
+  `changedFiles` reads `--jq .[].filename`, which reports a detected rename's new path
+  only, so a pull request that renames a carved-out file reaches `land` as a single
+  docs-class path and this carve-out does not fire. What refuses it is `scope`'s
+  dangling-reference check, and `scope` is a required context, so the merge is still
+  held — by a different check from the one this item describes. Whether `changedFiles`
+  should read renames the way `ci/negative-control.mts` and `ci/scope-check.mts` do, with
+  `--no-renames`, or whether this qualification is permanent, is #378's to decide with a
+  fixture.
 - **Mirrored, not imported, and pinned.** `ci/negative-control.mts` runs its check at import
   time (`:145`) and exports nothing, so no route lets `land.mts` import either constant.
   `tests/land.test.mts` pins both — the classes as identical to `SKIP_PATH_GLOBS`, the
