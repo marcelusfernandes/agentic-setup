@@ -59,7 +59,7 @@ const FULL_PAGE_JSON = JSON.stringify(
 
 /** Every value each knob accepts; anything else is a typo and is refused. */
 const KNOBS = {
-  FAKE_GH_FAIL: ['', 'repo', 'issue-list', 'issue-create'],
+  FAKE_GH_FAIL: ['', 'repo', 'issue-list', 'issue-create', 'label-decided'],
   FAKE_GH_RULES: ['', 'full'],
   FAKE_GH_LABELS: ['', 'all', 'full-page'],
 };
@@ -123,6 +123,13 @@ case "\${1:-} \${2:-}" in
     echo "https://github.com/org/repo/issues/7"
     ;;
   "label create")
+    # The label's name is the third argument. Failing one label and not the
+    # other is what tells a run that stopped on \`human:decided\` apart from one
+    # that stopped on \`human:pending\`.
+    if [ "\${FAKE_GH_FAIL:-}" = "label-decided" ] && [ "\${3:-}" = "human:decided" ]; then
+      echo "fake-gh: could not create the label" >&2
+      exit 1
+    fi
     echo "fake-gh: label created"
     ;;
   *)
@@ -514,6 +521,88 @@ check(
   'the documentation says which plan issue authorises when two share the title, and names the ambiguous refusal',
   docs.includes('pr:plan-ambiguous') && /open/.test(prDoc.split('### Which plan issue authorises')[1] ?? ''),
   'ambiguity',
+);
+
+// --- K: --plan-issue creates both labels of the question it asks (#366) ------
+// The plan's own last line tells the reader to move the issue to
+// `human:decided`, and `--pr` refuses without that label. Creating only
+// `human:pending` put the label that records the decision behind the decision:
+// on a repository nobody prepared — the only kind `adopt` exists for — the
+// person answering the plan had to create a label by hand before they could
+// answer. Both are created now, and both before the issue that carries one.
+const kState = newStateDir();
+const k = adopt(['--plan-issue'], gappy, {}, kState);
+check('--plan-issue on a repository with neither human label exits 0', k.status === 0 && parse(k.stdout)?.issue === 7, `${k.stdout}\n${k.stderr}`);
+check('--plan-issue creates exactly two labels, and no third', ran(k.log, 'label create') === 2, k.log);
+
+/** Where a `gh` call sits in the run's log, or -1 when it was never made. */
+const lineIndex = (log: string, pattern: RegExp): number => log.split('\n').findIndex((line) => pattern.test(line));
+const kPending = lineIndex(k.log, /^label create human:pending /);
+const kDecided = lineIndex(k.log, /^label create human:decided /);
+const kIssue = lineIndex(k.log, /^issue create /);
+check('--plan-issue creates human:pending and human:decided, each by name', kPending !== -1 && kDecided !== -1, k.log);
+check(
+  'both label creates precede the issue create: an issue cannot carry a label that does not exist yet',
+  kIssue !== -1 && kPending !== -1 && kDecided !== -1 && kPending < kIssue && kDecided < kIssue,
+  k.log,
+);
+
+// The colour and description each label is created with, written out here
+// rather than read from `labels.json`: a pin that reuses the dictionary it
+// pins cannot catch the script drifting away from it (CLAUDE.md invariant 10).
+// It mirrors the `human:` entries of `labels.json`.
+const kLines = k.log.split('\n');
+check(
+  'human:decided is created by the same call shape human:pending is, with the colour the dictionary seeds',
+  /^label create human:pending --color f9d0c4 --description .+ --force$/.test(kLines[kPending] ?? '') &&
+    /^label create human:decided --color c2e0c6 --description .+ --force$/.test(kLines[kDecided] ?? ''),
+  `${kLines[kPending]}\n${kLines[kDecided]}`,
+);
+
+// A failed write is named after the label it failed on, so a caller can tell
+// the two apart, and no issue follows a label that does not exist.
+const kFail = adopt(['--plan-issue'], gappy, { FAKE_GH_FAIL: 'label-decided' });
+const kFailOut = parse(kFail.stdout);
+check(
+  'a human:decided create that fails exits 1 as label:human:decided:not-created and opens no issue',
+  kFail.status === 1 && kFailOut?.error === 'label:human:decided:not-created' && ran(kFail.log, 'issue create') === 0,
+  `${kFail.stdout}\n${kFail.log}`,
+);
+
+// A repository that already has both is left as it is for both: the inventory
+// read is the guard, so a label whose colour or description a person chose is
+// never passed to `gh label create` at all.
+const kHas = adopt(['--plan-issue'], gappy, { FAKE_GH_LABELS: 'all' }, newStateDir());
+check(
+  'a repository that already has both human labels gets no label create at all',
+  kHas.status === 0 && ran(kHas.log, 'label create') === 0,
+  kHas.log,
+);
+
+// And the plan body stops counting the two labels this same run created among
+// the labels adoption would still create: both exist by the time anyone reads
+// it, so a box ticked for them would ask for work already done.
+const kBodyArgs = existsSync(join(kState, 'issue-create.args'))
+  ? readFileSync(join(kState, 'issue-create.args'), 'utf8').split('\0').filter((s) => s.length > 0)
+  : [];
+const kBody = kBodyArgs.indexOf('--body') === -1 ? '' : kBodyArgs[kBodyArgs.indexOf('--body') + 1];
+const kLabelsBox = kBody.split(/\r?\n/).find((line) => line.startsWith('- [ ] `labels:missing`')) ?? '';
+check('the plan body still carries the labels:missing checkbox', kLabelsBox.length > 0, prose(kBody));
+check(
+  'the labels checkbox counts neither human:pending nor human:decided among the labels adoption would create',
+  !kLabelsBox.includes('human:pending') && !kLabelsBox.includes('human:decided'),
+  kLabelsBox,
+);
+check(
+  'and it still names the labels adoption would create, so the box says what ticking it buys',
+  /`state:ready`/.test(kLabelsBox) && /`review:approved`/.test(kLabelsBox),
+  kLabelsBox,
+);
+
+check(
+  'the documentation says --plan-issue makes at most two label writes besides the issue, and names the new refusal',
+  /two label writes/.test(adoptDoc) && adoptDoc.includes('label:human:decided:not-created'),
+  'two label writes',
 );
 
 finish();
