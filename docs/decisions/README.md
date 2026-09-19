@@ -77,7 +77,7 @@ not a detail of item 8:
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
   [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0033-<slug>.md`. The date lives inside the file, on its
+  the next free number is `0034-<slug>.md`. The date lives inside the file, on its
   `Date:` line. The number continues the register across both files: items 16, 18, 19 and
   20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
   number is the one after the highest in the index below, not the one after the
@@ -183,3 +183,4 @@ that was false when it was written, and what may not is the decision it sits und
 | 30 | [The structural signature sees this repository's own harness output](0030-the-structural-signature-sees-this-repositorys-own-output.md) | proposed |
 | 31 | [A bare glob with a backticked justification is refused](0031-a-bare-glob-with-a-backticked-justification-is-refused.md) | proposed |
 | 32 | [A refused ruleset write exits 1; a failed read still exits 0](0032-a-refused-ruleset-write-exits-1.md) | proposed |
+| 33 | [A tick is what adoption acts on; `human:decided` alone authorises nothing](0033-a-tick-is-what-adoption-acts-on.md) | proposed |

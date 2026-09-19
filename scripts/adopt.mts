@@ -105,6 +105,15 @@
 // rather than a standing authorisation, and several open ones are
 // `{ refused, missing: ['plan:ambiguous'] }` rather than a choice made by
 // search order.
+// **The boxes of that issue are what it acts on** (#368): the search asks for
+// the body, each ticked checkbox is a gap accepted and each empty one a gap
+// declined, and a declined gap whose remedy is a file leaves that file out of
+// the branch entirely. A plan carrying `human:decided` with nothing ticked is
+// `{ refused, missing: ['plan:nothing-ticked'] }` — the label is right and the
+// answer is empty, which is the opposite mistake to `plan:not-decided`. Before
+// the pull request is opened, both lists and the login that applied the label
+// (read from the issue's timeline) are commented back onto the plan issue, so
+// the decision is recorded somewhere a later reader finds it.
 // The branch is assembled through git's plumbing against a temporary index,
 // so nothing is ever written into the working tree; the push is the
 // create-only push `scripts/claim.mts` uses
