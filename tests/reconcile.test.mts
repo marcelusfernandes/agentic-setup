@@ -447,11 +447,7 @@ check(
   resumable70?.branch === 'feat/70-resumable-ahead' && resumable70?.commitsAheadOfMain === 2,
   JSON.stringify(resumable70),
 );
-check(
-  'a resumable issue is removed from inProgress (AC1)',
-  (out?.inProgress ?? []).every((i: any) => i.number !== 70),
-  JSON.stringify(out?.inProgress),
-);
+check('a resumable issue is removed from inProgress (AC1)', (out?.inProgress ?? []).every((i: any) => i.number !== 70), JSON.stringify(out?.inProgress));
 
 const inProgress71 = (out?.inProgress ?? []).find((i: any) => i.number === 71);
 check(
@@ -459,11 +455,7 @@ check(
   inProgress71?.branch === 'feat/71-resumable-worktree' && inProgress71?.hasRemoteBranch === true && inProgress71?.pr === null,
   JSON.stringify(inProgress71),
 );
-check(
-  'a worktree-checked-out issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 71),
-  JSON.stringify(out?.resumable),
-);
+check('a worktree-checked-out issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 71), JSON.stringify(out?.resumable));
 
 // --- AC1/AC2/AC4 (#56): a dead-pid lock does not count as a live agent -----
 const resumable72 = (out?.resumable ?? []).find((i: any) => i.number === 72);
@@ -472,11 +464,7 @@ check(
   resumable72?.branch === 'feat/72-dead-locked-worktree' && resumable72?.commitsAheadOfMain === 0,
   JSON.stringify(resumable72),
 );
-check(
-  'a dead-pid-locked issue is removed from inProgress',
-  (out?.inProgress ?? []).every((i: any) => i.number !== 72),
-  JSON.stringify(out?.inProgress),
-);
+check('a dead-pid-locked issue is removed from inProgress', (out?.inProgress ?? []).every((i: any) => i.number !== 72), JSON.stringify(out?.inProgress));
 
 const deadWorktrees: any[] = out?.deadWorktrees ?? [];
 const deadWorktree72 = deadWorktrees.find((w) => w.branch === 'feat/72-dead-locked-worktree');
@@ -519,16 +507,8 @@ check(
   inProgress73?.branch === 'feat/73-live-locked-worktree' && inProgress73?.pr === null,
   JSON.stringify(inProgress73),
 );
-check(
-  'a live-pid-locked issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 73),
-  JSON.stringify(out?.resumable),
-);
-check(
-  'deadWorktrees does not list a worktree locked by a live pid',
-  !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'),
-  JSON.stringify(deadWorktrees),
-);
+check('a live-pid-locked issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 73), JSON.stringify(out?.resumable));
+check('deadWorktrees does not list a worktree locked by a live pid', !deadWorktrees.some((w) => w.branch === 'feat/73-live-locked-worktree'), JSON.stringify(deadWorktrees));
 
 // --- regression guard (#56 round 2): pid 0 in a lock reason is not evidence
 // of death — treated as alive, same as no pid at all -----------------------
@@ -538,16 +518,8 @@ check(
   inProgress74?.branch === 'feat/74-pid-zero-worktree' && inProgress74?.pr === null,
   JSON.stringify(inProgress74),
 );
-check(
-  'a pid-0-locked issue is never reported as resumable',
-  (out?.resumable ?? []).every((i: any) => i.number !== 74),
-  JSON.stringify(out?.resumable),
-);
-check(
-  'deadWorktrees does not list a worktree locked with pid 0 in the reason',
-  !deadWorktrees.some((w) => w.branch === 'feat/74-pid-zero-worktree'),
-  JSON.stringify(deadWorktrees),
-);
+check('a pid-0-locked issue is never reported as resumable', (out?.resumable ?? []).every((i: any) => i.number !== 74), JSON.stringify(out?.resumable));
+check('deadWorktrees does not list a worktree locked with pid 0 in the reason', !deadWorktrees.some((w) => w.branch === 'feat/74-pid-zero-worktree'), JSON.stringify(deadWorktrees));
 
 const inReview30 = (out?.inReview ?? []).find((i: any) => i.number === 30);
 const inReview31 = (out?.inReview ?? []).find((i: any) => i.number === 31);
@@ -565,21 +537,13 @@ check('in-review red, not approved', inReview31?.pr === 131 && inReview31?.check
 const inReview40 = (out?.inReview ?? []).find((i: any) => i.number === 40);
 const inReview41 = (out?.inReview ?? []).find((i: any) => i.number === 41);
 const inReview42 = (out?.inReview ?? []).find((i: any) => i.number === 42);
-check(
-  'in-review reads pending when gh pr checks reports a check still pending',
-  inReview40?.pr === 140 && inReview40?.checks === 'pending',
-  JSON.stringify(inReview40),
-);
+check('in-review reads pending when gh pr checks reports a check still pending', inReview40?.pr === 140 && inReview40?.checks === 'pending', JSON.stringify(inReview40));
 check(
   'in-review reads pending when gh pr checks exits non-zero with non-JSON stdout, instead of erroring the whole pass',
   inReview41?.pr === 141 && inReview41?.checks === 'pending',
   JSON.stringify(inReview41),
 );
-check(
-  'in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")',
-  inReview42?.pr === 142 && inReview42?.checks === 'red',
-  JSON.stringify(inReview42),
-);
+check('in-review reads red when gh pr checks reports a cancelled check (bucket "cancel")', inReview42?.pr === 142 && inReview42?.checks === 'red', JSON.stringify(inReview42));
 
 const orphanRealpath = realpathSync(worktreeDir);
 const orphans: string[] = out?.orphanWorktrees ?? [];
@@ -610,11 +574,7 @@ git(['branch', '-D', 'feat/50-prune-target'], remoteDir);
 
 const outNoFetch: any = JSON.parse(reconcile('--milestone', 'M1', '--no-fetch').stdout);
 const noFetchResumable50 = (outNoFetch?.resumable ?? []).find((i: any) => i.number === 50);
-check(
-  '--no-fetch still reports the stale local ref as a resumable remote branch (AC2)',
-  noFetchResumable50 !== undefined,
-  JSON.stringify(noFetchResumable50),
-);
+check('--no-fetch still reports the stale local ref as a resumable remote branch (AC2)', noFetchResumable50 !== undefined, JSON.stringify(noFetchResumable50));
 
 const outFetched: any = JSON.parse(reconcile('--milestone', 'M1').stdout);
 const fetchedResumable50 = (outFetched?.resumable ?? []).find((i: any) => i.number === 50);
@@ -653,11 +613,7 @@ check(
     JSON.stringify(outObjectiveOnly?.milestoneLint?.missing) === JSON.stringify(['out-of-phase', 'exit-criteria', 'depends-on']),
   JSON.stringify(outObjectiveOnly?.milestoneLint),
 );
-check(
-  'the lint never changes which milestone was reconciled',
-  outObjectiveOnly?.milestone === 'M2',
-  JSON.stringify(outObjectiveOnly?.milestone),
-);
+check('the lint never changes which milestone was reconciled', outObjectiveOnly?.milestone === 'M2', JSON.stringify(outObjectiveOnly?.milestone));
 
 const rNoDescription = reconcile('--milestone', 'M3');
 check('reconcile exits 0 on a milestone with no description at all', rNoDescription.status === 0, `${rNoDescription.stdout}\n${rNoDescription.stderr}`);
