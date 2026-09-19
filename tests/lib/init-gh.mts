@@ -26,7 +26,12 @@
 // live list endpoint answers with summaries only, so conditions, rules and
 // bypass actors live in the per-id fixture, exactly as the real API serves
 // them. A `$state/ruleset-<id>-fail` marker makes that one detail GET fail
-// instead — the refusal path of the lookup.
+// instead — the refusal path of the lookup. A `$state/ruleset-write-fail`
+// marker is read inside the POST and PUT arms alone and refuses that write
+// the way GitHub refuses a ruleset it will not accept: the body is recorded
+// as usual, then the two lines of the real 422 go to stderr and the call
+// exits 1 (#373). The 403 fixture cannot serve for that: it is tested before
+// every arm, so it fails the list GET and the run never reaches a write.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +41,16 @@ import { cleanup, ROOT, RUNTIME } from './harness.mts';
 const FAKE_GH = `#!/usr/bin/env bash
 state="$FAKE_GH_STATE_DIR"
 printf '%s\\n' "$*" >> "$state/gh-argv.log"
+# The write refusal, called from the POST and the PUT arm only: the request
+# body is recorded first, so a case can still read what was refused, and the
+# stderr is the real one GitHub answers a ruleset it will not accept with —
+# two lines, the property named on the second (#373).
+refuse_write() {
+  cat > "$state/ruleset-$1-body.json"
+  echo "gh: Invalid request." >&2
+  echo "Invalid property /rules/0: data matches no possible input. (HTTP 422)" >&2
+  exit 1
+}
 case "\${1:-} \${2:-}" in
   "auth status") exit 0 ;;
   "repo view")
@@ -59,9 +74,11 @@ case "\${1:-} \${2:-}" in
       exit 1
     fi
     if [ "\${3:-}" = "-X" ] && [ "\${4:-}" = "POST" ]; then
+      [ -f "$state/ruleset-write-fail" ] && refuse_write post
       cat > "$state/ruleset-post-body.json"
       echo '{"id":101,"name":"agentic-setup"}'
     elif [ "\${3:-}" = "-X" ] && [ "\${4:-}" = "PUT" ]; then
+      [ -f "$state/ruleset-write-fail" ] && refuse_write put
       cat > "$state/ruleset-put-body.json"
       echo '{"id":42,"name":"agentic-setup"}'
     else

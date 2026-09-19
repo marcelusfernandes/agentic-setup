@@ -86,10 +86,25 @@ The script is idempotent. It:
    reading an error body as "no ruleset governs this branch"; or a ruleset's detail cannot
    be read — the call failed, the response is not a ruleset object, or its `rules` /
    `bypass_actors` is not an array, its `conditions` not an object, or its
-   `conditions.ref_name.include` not an array. The run still exits 0: the refusal is a
-   report line, not a crash. "Not available on this plan for a private repository" is said
-   only for a genuine `HTTP 403` from a gh call, never by matching those digits inside
-   another message.
+   `conditions.ref_name.include` not an array. The run still exits 0: a refusal on one of
+   those **reads** is a report line, not a crash — nothing was written, and the report says
+   what could not be read. A refused **write** is the one exception, and the paragraph below
+   is it. "Not available on this plan for a private repository" is said only for a genuine
+   `HTTP 403` from a gh call, never by matching those digits inside another message; that
+   line comes with exit 0 when the 403 answered a read, and with exit 1 when it answered the
+   POST or the PUT, because a 403 on a write is a refused write like any other.
+
+   **A refused write exits 1** (#373). When GitHub refuses the POST or the PUT itself, the
+   report carries `! ruleset:` followed by *every* line `gh` printed, joined into one — a 422
+   says `gh: Invalid request.` first and names the property it refused on the next line, so
+   the first line alone sends you hunting for a malformed command — and the process exits 1.
+   The whole report prints first, the by-hand list included: the exit code is set after it,
+   so nothing the run did on disk is hidden by the failure. The reason for the departure is
+   that a refused write means the branch protection you asked for does not exist, where a
+   refused read means only that nothing was attempted. A `gh` failure on that same call for
+   any other reason — no network, an expired token, a rate limit — exits 1 too: the write did
+   not happen, and this path fails closed rather than sorting failures into harmless and
+   not. `--dry-run` attempts no write, so it never exits 1 this way.
 
    What it writes: a `pull_request` rule with `allowed_merge_methods: ['squash']`;
    `required_status_checks` for the checks below; and `non_fast_forward` and `deletion`
@@ -116,8 +131,16 @@ The script is idempotent. It:
    carried over like any other unmanaged parameter. **With `--require-review`** those three
    become `1`, `true` and `true` — the shape `land.mts` and the Codex route need before they
    will queue an automatic merge, and the shape that freezes every merge on a repository
-   with a single identity. `--rules` raises them no other way; there is nothing left for you
-   to edit by hand.
+   with a single identity. `--rules` raises those three no other way.
+
+   It also sends `require_code_owner_review` and `required_review_thread_resolution` — the
+   other two parameters the API documents as required on a `pull_request` rule — as `false`
+   on a create and at the fetched value on an update, exactly the way the two stale-approval
+   fields beside them are carried. GitHub refuses a create that omits them, which is why
+   they are sent at all (#373); they are **not** part of `--require-review`'s opt-in, which
+   owns the three fields above. So those two are the review-gate parameters still left to
+   you: raise them in the GitHub UI, and `--rules` carries them through rather than lowering
+   what you raised.
 
    What it keeps: a PUT replaces the whole ruleset, so everything the installer does not
    manage is carried over from the ruleset it found — its name and conditions, its
@@ -128,7 +151,9 @@ The script is idempotent. It:
    `= ruleset updated` without writing; `--dry-run` additionally prints the exact payload
    it would send and makes no POST or PUT at all. A 403 — rulesets are not available on a
    private repository on the free plan — is reported as exactly that, `! ruleset: not
-   available on this plan for a private repository`, instead of `gh`'s raw error.
+   available on this plan for a private repository`, instead of `gh`'s raw error. On a read
+   that is the whole of it and the run exits 0; on the POST or the PUT it is a refused write
+   and the run exits 1, and the only remedies are outside the repository.
 
    When a detail fetch fails or answers with something that is not a ruleset object, the
    run **refuses**: `! ruleset: could not read ruleset #<id>: <gh's first error line>`, no

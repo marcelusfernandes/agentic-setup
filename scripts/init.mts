@@ -64,6 +64,15 @@
 // and only for a genuine HTTP 403 from a gh call — never by matching those
 // digits inside some other message (#229).
 //
+// A refused *write* is the one departure from that exit 0 (#373). The reads
+// above end in a report line and exit 0 because nothing was changed and the
+// operator is told why; a POST or PUT GitHub refuses means the protection the
+// run was asked for does not exist, so the process exits 1 — after the whole
+// report has printed, the filesystem work included, so nothing is hidden by
+// the failure. Its "! ruleset:" line keeps every line gh printed, not only
+// the first: GitHub's 422 says "gh: Invalid request." first and names the
+// property it refused on the next line.
+//
 // --rules resets required_approving_review_count to 0 and carries the fetched
 // dismiss_stale_reviews_on_push / require_last_push_approval through (false
 // when there was no ruleset to fetch), so --rules on its own never turns a
@@ -132,6 +141,12 @@ const dryRun = flags.has('--dry-run');
 
 const report: string[] = [];
 const say = (line: string): number => report.push(line);
+// Set when GitHub refuses the ruleset POST or PUT. The run exits 1 on it,
+// but only after the whole report has printed (#373): the rest of the
+// install did happen and the operator needs to read it, while an installer
+// that leaves the default branch unprotected and answers 0 tells every
+// caller the protection is there.
+let rulesetWriteRefused = false;
 if (dryRun) say('dry run — nothing written');
 // --require-review only ever changes the ruleset call --rules makes. Say so
 // rather than accept the flag in silence and write nothing it asked for.
@@ -353,6 +368,16 @@ function buildRulesetPayload(
         required_approving_review_count: requireReview ? 1 : 0,
         dismiss_stale_reviews_on_push: requireReview || fetchedFlag('dismiss_stale_reviews_on_push'),
         require_last_push_approval: requireReview || fetchedFlag('require_last_push_approval'),
+        // The other two parameters the API documents as required on this
+        // rule. They are not part of --require-review's opt-in — that flag
+        // owns the three fields above — but the API refuses a create that
+        // omits them ("Invalid property /rules/0: data matches no possible
+        // input", HTTP 422, #373), and the update path only ever worked
+        // because the spread above carried them over from the fetched
+        // ruleset. Sent false on a create, fetched value on an update, the
+        // way the stale-approval fields beside them are carried.
+        require_code_owner_review: fetchedFlag('require_code_owner_review'),
+        required_review_thread_resolution: fetchedFlag('required_review_thread_resolution'),
         allowed_merge_methods: ['squash'],
       },
     },
@@ -637,6 +662,18 @@ if (useGh) {
         if (/\bHTTP 403\b/.test(r.err)) say('  ! ruleset: not available on this plan for a private repository');
         else refuseRuleset(r.err.split('\n')[0] || 'gh gave no reason');
       };
+      // A read's failure is one line: gh's first line is all it has to say
+      // about a GET it could not make. A refused write is not — GitHub
+      // answers a ruleset POST it will not accept with "gh: Invalid
+      // request." and puts the property it refused on the next line, so the
+      // first line alone sends the operator hunting for a malformed command
+      // instead of the field (#373). Every line gh printed is kept, joined
+      // into the one report line, and the run is a failure from here on.
+      const reportRefusedWrite = (r: { err: string }): void => {
+        rulesetWriteRefused = true;
+        if (/\bHTTP 403\b/.test(r.err)) say('  ! ruleset: not available on this plan for a private repository');
+        else refuseRuleset(r.err.split('\n').map((l) => l.trim()).filter(Boolean).join(' ') || 'gh gave no reason');
+      };
 
       const list = !rulesetNameMissing && defaultBranch !== null
         ? run('gh', ['api', 'repos/{owner}/{repo}/rulesets'], root)
@@ -698,7 +735,7 @@ if (useGh) {
           } else {
             const r = run('gh', ['api', endpoint, '-X', method, '--input', '-'], root, payload);
             if (r.ok) say(outcome);
-            else reportGhCallFailure(r);
+            else reportRefusedWrite(r);
           }
         }
       }
@@ -734,3 +771,7 @@ next, by hand:
     two steps is the point too: GitHub computes a PR's reviewDecision only where a review is
     actually required, so a token set before the rule exists leaves it null forever and
     land.mts refuses every PR`);
+// The report is out; only now does the refused ruleset write become the exit
+// code (#373). `exitCode` rather than `exit(1)`: the process ends once the
+// two writes above have drained, which `exit` does not wait for.
+if (rulesetWriteRefused) process.exitCode = 1;

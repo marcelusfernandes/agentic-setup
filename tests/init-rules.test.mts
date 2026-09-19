@@ -69,6 +69,35 @@ function requiresOneApprovingReview(body: any): boolean {
   );
 }
 
+/**
+ * Every parameter GitHub documents as required on a `pull_request` rule,
+ * written out literally here rather than read back off the payload: the fake
+ * `gh` above accepts whatever it is sent, so a parameter the installer never
+ * sends can only be caught by a list this file owns (#373). Source: REST
+ * "Create a repository ruleset", `rules[].parameters` for `pull_request`
+ * (docs.github.com/en/rest/repos/rules). Measured on 2026-09-19 against a
+ * disposable public repository with no ruleset: the create missing
+ * `require_code_owner_review` and `required_review_thread_resolution` is
+ * refused with `Invalid property /rules/0: data matches no possible input.
+ * (HTTP 422)`, and the same POST with those two added, and nothing else
+ * changed, is accepted.
+ */
+const PULL_REQUEST_REQUIRED_PARAMETERS = [
+  'dismiss_stale_reviews_on_push',
+  'require_code_owner_review',
+  'require_last_push_approval',
+  'required_approving_review_count',
+  'required_review_thread_resolution',
+];
+/**
+ * The required parameters a payload's `pull_request` rule does not carry.
+ * Presence, never truth: every one of them is legitimately `false` or `0`.
+ */
+function missingPullRequestParameters(body: any): string[] {
+  const p = prParameters(body) ?? {};
+  return PULL_REQUEST_REQUIRED_PARAMETERS.filter((name) => !Object.hasOwn(p, name));
+}
+
 const stateRulesEmpty = mkdtempSync(join(tmpdir(), 'agentic-init-rules-empty-'));
 cleanup(() => rmSync(stateRulesEmpty, { recursive: true, force: true }));
 const rulesEmpty = initWithGh(ghRepo, stateRulesEmpty, '--rules');
@@ -91,6 +120,16 @@ check(
 check(
   'the created ruleset leaves the review gate off by default and allows squash only',
   leavesReviewGateOff(postBody),
+  JSON.stringify(postBody),
+);
+check(
+  'the created ruleset carries every parameter the API requires on a pull_request rule',
+  missingPullRequestParameters(postBody).length === 0,
+  `missing: ${missingPullRequestParameters(postBody).join(', ')}\n${JSON.stringify(postBody)}`,
+);
+check(
+  'the created ruleset leaves the code-owner and thread-resolution gates off',
+  prParameters(postBody)?.require_code_owner_review === false && prParameters(postBody)?.required_review_thread_resolution === false,
   JSON.stringify(postBody),
 );
 
@@ -147,6 +186,11 @@ check(
   'the update keeps the review gate off: count 0 and the fetched dismiss_stale_reviews_on_push: false left alone',
   leavesReviewGateOff(liveBody),
   JSON.stringify(liveBody),
+);
+check(
+  'the updated ruleset carries every parameter the API requires on a pull_request rule too',
+  missingPullRequestParameters(liveBody).length === 0,
+  `missing: ${missingPullRequestParameters(liveBody).join(', ')}\n${JSON.stringify(liveBody)}`,
 );
 check(
   'the update keeps a pull_request parameter the installer does not set',
@@ -253,7 +297,9 @@ check(
 
 // The default carries the fetched stale-approval fields through as they are:
 // a ruleset already dismissing stale approvals keeps doing so, even though
-// --require-review was not passed and the count is reset to 0.
+// --require-review was not passed and the count is reset to 0. The two gates
+// #373 added beside them are carried the same way: the installer sets them
+// false on a create and never lowers one an existing ruleset has raised.
 const stateRulesCarry = rulesState('carry', [
   {
     id: 71,
@@ -263,7 +309,13 @@ const stateRulesCarry = rulesState('carry', [
     rules: [
       {
         type: 'pull_request',
-        parameters: { required_approving_review_count: 2, dismiss_stale_reviews_on_push: true, require_last_push_approval: true },
+        parameters: {
+          required_approving_review_count: 2,
+          dismiss_stale_reviews_on_push: true,
+          require_last_push_approval: true,
+          require_code_owner_review: true,
+          required_review_thread_resolution: true,
+        },
       },
     ],
     bypass_actors: [],
@@ -275,6 +327,11 @@ const carryBody = ruleBody(stateRulesCarry, 'put');
 check(
   'init --rules resets the count to 0 but carries a fetched dismiss_stale_reviews_on_push / require_last_push_approval: true through',
   leavesReviewGateOff(carryBody, { dismiss: true, lastPush: true }),
+  JSON.stringify(carryBody),
+);
+check(
+  'init --rules carries a fetched require_code_owner_review / required_review_thread_resolution: true through',
+  prParameters(carryBody)?.require_code_owner_review === true && prParameters(carryBody)?.required_review_thread_resolution === true,
   JSON.stringify(carryBody),
 );
 
@@ -664,5 +721,53 @@ for (const [label, id, field, detail] of [
     `${r.stdout}${r.stderr}`,
   );
 }
+
+// --- #373 AC2/AC3: the write GitHub refuses. Every refusal above is a read
+// that changed nothing, and ends in a report line and exit 0. A POST or PUT
+// that comes back refused is the other case: the protection the run was
+// asked for does not exist, so the process exits 1 — after the whole report,
+// the filesystem work included, has printed, because that work did happen.
+// And the line keeps what GitHub said, not only what gh said: its 422
+// answers "gh: Invalid request." first and names the refused property on the
+// next line, so the first line alone sends the operator hunting for a
+// malformed command instead of the field. The fake gh's `ruleset-write-fail`
+// marker is the only fixture that reaches a write: `rulesets-403` is tested
+// before every arm and fails the list GET instead.
+const PROPERTY_LINE = 'Invalid property /rules/0: data matches no possible input. (HTTP 422)';
+const REFUSAL_LINE = `  ! ruleset: gh: Invalid request. ${PROPERTY_LINE}`;
+/**
+ * The report printed whole before the failure: its first section, the
+ * pre-push line the filesystem half ends on, and the by-hand block after the
+ * refusal — the order is the assertion, not just the presence.
+ */
+function reportPrintedWhole(stdout: string): boolean {
+  const refusal = stdout.indexOf(REFUSAL_LINE);
+  return (
+    stdout.startsWith('templates\n') &&
+    stdout.includes('git pre-push\n  + ') &&
+    refusal !== -1 &&
+    stdout.indexOf('next, by hand:') > refusal
+  );
+}
+
+const stateRefusedPost = ghState('rules-refused-post');
+writeFileSync(join(stateRefusedPost, 'ruleset-write-fail'), '');
+const refusedPost = initWithGh(ghRepo, stateRefusedPost, '--rules');
+check('init --rules exits 1 when GitHub refuses the ruleset POST', refusedPost.status === 1, `exit ${refusedPost.status}\n${refusedPost.stdout}${refusedPost.stderr}`);
+check('init --rules did reach the POST the refusal is about', ghLog(stateRefusedPost).includes('rulesets -X POST'), ghLog(stateRefusedPost));
+check('the refused POST is reported with the line that names the property', refusedPost.stdout.includes(REFUSAL_LINE), refusedPost.stdout);
+check('the whole report prints before a refused POST fails the run', reportPrintedWhole(refusedPost.stdout), refusedPost.stdout);
+check('init --rules claims no ruleset was created when the POST was refused', claimedNoOutcome(refusedPost.stdout), refusedPost.stdout);
+
+const stateRefusedPut = rulesState('refused-put', [
+  { id: 81, name: 'main', target: 'branch', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, rules: [], bypass_actors: [] },
+]);
+writeFileSync(join(stateRefusedPut, 'ruleset-write-fail'), '');
+const refusedPut = initWithGh(ghRepo, stateRefusedPut, '--rules');
+check('init --rules exits 1 when GitHub refuses the ruleset PUT', refusedPut.status === 1, `exit ${refusedPut.status}\n${refusedPut.stdout}${refusedPut.stderr}`);
+check('init --rules did reach the PUT the refusal is about', ghLog(stateRefusedPut).includes('rulesets/81 -X PUT'), ghLog(stateRefusedPut));
+check('the refused PUT is reported with the line that names the property', refusedPut.stdout.includes(REFUSAL_LINE), refusedPut.stdout);
+check('the whole report prints before a refused PUT fails the run', reportPrintedWhole(refusedPut.stdout), refusedPut.stdout);
+check('init --rules claims no ruleset was updated when the PUT was refused', claimedNoOutcome(refusedPut.stdout), refusedPut.stdout);
 
 finish();
