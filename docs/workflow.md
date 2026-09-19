@@ -366,7 +366,7 @@ quietly become inert would hide that disagreement exactly as the old override di
 |---|---|
 | `test` | the project's check + test commands, as detected or configured |
 | `scope` | `git diff --name-only base...head` ⊆ union of the globs of every issue linked by `Closes`/`Fixes`/`Resolves #N`, plus whatever an `authorised:` line in one of those **issue** bodies grants — a grant in the pull-request body is ignored and reported as such (#155). Also: a path the diff deletes or renames-from must not still be named, outside the diff, by another tracked file — the #3 shape (a rename that drops a path a workflow or doc still names by string), decidable here because the diff is known, unlike at issue-lint time (#51). A hit is a failure unless the referencing file is itself inside the linked issue's globs (the reviewer sees it in the diff) or is granted with `authorised:`; lockfiles, `docs/research/**`, and a basename under 4 characters are excluded as noise. Also: a file new at head over 800 lines, or grown past 800 against the base, fails; one already over 800 that shrinks or holds steady does not; `@generated` on the first line exempts (#134). Finally, a **warning that never fails the check**: when the diff changes a mechanism file — anything under `hooks/`, `ci/`, `scripts/` or `.github/workflows/`, or a `skills/**/SKILL.md` — and records no decision (`docs/decisions.md` or a file under `docs/decisions/`), the JSON and the job summary carry a `warning:` line naming each of those paths, and the check still exits 0. It is asking for an entry under `docs/decisions/`; `docs/decisions/README.md` says what earns a number and what stays a note. It stays a warning because a required check cannot judge from a file name whether a change binds the next agent — the reviewer's checklist and the milestone closeout hold the binding half (#177, decided on #180). `tests/**` and `templates/**` are not mechanism files. And a **second warning of the same shape, which also never fails the check**: when the diff changes the mechanism the dogfood loop runs on — anything under `hooks/`, `ci/` or `scripts/`, or a `skills/**/SKILL.md`, deliberately *without* `.github/workflows/**` — and neither the pull-request body nor the diff names a `docs/dogfood/<date>.md` report, the JSON carries `dogfoodTrigger` and `dogfoodWarning` and the job summary a second `> warning:` line, and the check still exits 0. It stays a warning for the same reason: whether a dogfood run was owed is a judgement no file name settles. **The binding half of this one is not the check but the close of the phase**: `scripts/close-milestone.mts` refuses with `missing: ['dogfood']` when a pull request merged into the milestone touched one of those paths and the closeout's `## Dogfood` section names no dated report, so a phase that skipped a run does not close (#182). A phase whose merged pull requests touched nothing sensitive closes with no report |
-| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**, *and must fail in a file the overlay placed*. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes, the overlaid run fails, and at least one failure in it names an overlaid file = pass (and when that same run also carries a failure naming another file as its owner, still pass, with a `warning:` naming it); baseline passes and the overlaid run fails but no failure in it is attributable to an overlaid file = fail (`unattributed` — something else was already broken, and crediting it to the overlay reports `pass` on a change nothing depends on; deliberately not `vacuous`, because "nothing depended on the change" and "something else was already broken" are different facts, #354); baseline passes and the overlaid run also passes = fail (vacuous tests); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the branch's `proof/<slug>.json` could not be read as written = fail (`cannot-run` too, naming the path it rejected — the declaration is unreadable at head, does not parse, is not a JSON object, has no `tests` array, has a `command` that is not a non-empty string, names a path that is absolute or escapes the repository root once normalised, or names a path the head commit does not have); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `.claude/**` (session configuration), and Markdown anywhere in the tree (`**/*.md` as well as the root-level `*.md`, because `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) — and minus `.github/scripts/agentic/**`, which no class covers, because that is where `scripts/init.mts` copies this repository's `ci/` in an adopting repository and a gate that exempts a change to itself is not a gate (#214). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
+| `negative-control` | checkout of the PR base, first run **unchanged** (the baseline), then with **only the test files from the diff** overlaid on top, the test command run again — which **must fail**, *and must fail in a file the overlay placed*. Outcomes: baseline fails = fail (`inconclusive` — the base does not pass its own tests, so the check cannot discriminate); baseline passes, the overlaid run fails, and at least one failure in it names an overlaid file = pass (and when that same run also carries a failure naming another file as its owner, still pass, with a `warning:` naming it); baseline passes and the overlaid run fails but no failure in it is attributable to an overlaid file = fail (`unattributed` — something else was already broken, and crediting it to the overlay reports `pass` on a change nothing depends on; deliberately not `vacuous`, because "nothing depended on the change" and "something else was already broken" are different facts, #354); baseline passes and the overlaid run also passes = fail (`vacuous` — the tests prove nothing), **except** when the overlay withheld nothing the diff changes, which is a pass (`test-only`, below); no test files in the diff = fail (`no-tests`); the test command could not be found or executed = fail (`cannot-run`); the branch's `proof/<slug>.json` could not be read as written = fail (`cannot-run` too, naming the path it rejected — the declaration is unreadable at head, does not parse, is not a JSON object, has no `tests` array, has a `command` that is not a non-empty string, names a path that is absolute or escapes the repository root once normalised, or names a path the head commit does not have); the overlaid run failed only structurally and no `test(red):` commit vouches for it = fail (`structural`, see below). Skipped (`skipped`) when **every** file the diff changes sits in a skipped path class: `docs/**`, `.github/**`, `templates/**`, `.claude/**` (session configuration), and Markdown anywhere in the tree (`**/*.md` as well as the root-level `*.md`, because `*` never crosses a `/`), plus whatever the `AGENTIC_SKIP_GLOBS` repository variable adds (comma-separated globs, env only, no config file) — and minus `.github/scripts/agentic/**`, which no class covers, because that is where `scripts/init.mts` copies this repository's `ci/` in an adopting repository and a gate that exempts a change to itself is not a gate (#214). When the head branch declares its proof in `proof/<slug>.json`, that file replaces "the test files from the diff" and, if it names a `command`, the detected test command — see below |
 
 The exemption is by **path class**, not by the PR's own labels (#135): the implementer
 applies its own PR's labels, so a `type:` label could buy its own exemption. A diff that
@@ -397,6 +397,51 @@ names one of the overlaid test files or a file the diff touches. Matching the ov
 run's whole output let a structural-looking line from anywhere decide the verdict: a
 dependency that logs `Cannot find module` and carries on prints it in a block of its own,
 and flipped an honest assertion red to `structural` (#214).
+
+### `test-only`: the one diff the overlay cannot judge, and passes
+
+The rule above — baseline green and the overlaid run green is a fail — has exactly one
+carve-out, and it is not an exemption anyone applies (#355). The overlay is a comparison:
+head's test files on a base that lacks **the rest of** the change. What makes a red
+available to it is the part of the diff it *withholds*. When a diff is nothing but test
+files, the overlay withholds nothing: the second run is the pull request's own suite with
+no part of its change absent for a test to bite on. Requiring it to fail is requiring the
+pull request's own tests to fail, so `vacuous` was a required
+check no work could clear — measured, not supposed: **no commit confined to the test
+globs has ever landed on this repository's `main`** (150 read), and PR #348, whose whole
+diff is `tests/adopt-record.test.mts`, was held on `vacuous` rather than on merit.
+
+That diff now reports **`test-only`, and the check passes.** The verdict is deliberately
+distinct from the other two greens: `vacuous` says *nothing depended on the change* and is
+cleared by writing a test that bites; `unattributed` says *something else was already
+broken* and is cleared by fixing that other red; `test-only` says *nothing could have
+depended on the change*, and nothing clears it because there is nothing to clear. It goes
+back to being judged the moment the diff touches one file outside the test globs — that
+file is the difference the overlay withholds.
+
+**The class is two facts read off `git diff`, and a pull request cannot claim either.**
+The overlay carried every file the diff changes, and every one of them is a test file by
+`TEST_FILE_GLOBS` *as written in `ci/negative-control.mts`* — not as extended by
+`AGENTIC_TEST_GLOBS`, and not as replaced by a branch's `proof/<slug>.json` `tests` list.
+Both of those decide what is **overlaid** and deliberately do not decide the **class**:
+either would let a repository variable, or the implementer's own declaration, call a
+production file a test and buy the verdict for it. The declaration's own path is the one
+addition, since a branch that declares its proof has still changed nothing but tests. No
+label, no body flag and no path convention is read.
+
+**What carries the weight instead**, since this control is the only check that asks
+whether a change is proved at all: no file outside the test globs changed, so there is no
+unproved production change for it to hold; the overlaid run *is* the pull request's own
+suite, which is the `test` check's business; `scope` still holds those test paths to the
+linked issue's globs; and whether a test-only change strengthens or **weakens** the suite
+is the reviewer's judgement — the overlay carries the change either way, so this control
+never could have told the two apart, for a test-only diff or any other.
+
+One escape remains available to a **mixed** diff and is not the answer here: a case that
+asserts on a file the overlay does *not* carry gives a real red, which is how
+`tests/provenance.test.mts` earned one in `9be1b1b` and #376 by asserting on
+`docs/closeout/**`. It needs a non-test file in the diff to bite on, and a test-only diff
+has none by definition.
 
 ### The proof a branch declares
 

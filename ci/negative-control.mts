@@ -37,6 +37,18 @@
 //                point is overlaid only when a test glob matches its path or
 //                a declaration's `tests` names it — the same two routes that
 //                let the fix prove itself in the PR that makes it
+//   test-only    the baseline was green, the overlaid run also passed, and the
+//                overlay withheld nothing the diff changed: every changed file
+//                is a test file by TEST_FILE_GLOBS *as written below* and every
+//                one of them was overlaid, so the second run is the pull
+//                request's own suite with no part of its change absent for a
+//                test to bite on. No red was available, and none ever will
+//                be. Deliberately not
+//                `vacuous`: that says nothing *depended* on the change and is
+//                cleared by writing a test that bites, while this says nothing
+//                *could have* depended on it and no test clears it. It passes
+//                the check (#355); see the note below for what carries the
+//                weight instead
 //   no-tests     the diff adds or changes no test files
 //   cannot-run   the test command could not be found or detected, or the
 //                branch's `proof/<slug>.json` could not be read as written.
@@ -141,6 +153,29 @@
 // Without a declaration nothing changes, including the path-class skip,
 // which is decided before the declaration is read.
 //
+// `test-only` is the one verdict that passes without any red at all, so what
+// it rests on is written out here (#355). The overlay is a comparison: head's
+// test files on a base that lacks the rest of the change. What makes a red
+// available is the part of the diff it *withholds*. When it withholds
+// nothing, the second run is the pull request's own suite on the pull
+// request's own tree — green exactly when the `test` check is green — and
+// requiring it to fail is requiring the pull request's own tests to fail. No
+// test-only pull request could ever land, and none has: 150 commits of this
+// repository's `main` were read and not one is confined to the test globs.
+// The class is two facts, both read off `git diff` and neither claimable by a
+// pull request: the overlay carried every changed file, and every changed
+// file is a test file by TEST_FILE_GLOBS as written in this file.
+// AGENTIC_TEST_GLOBS and a declaration's `tests` decide what is *overlaid*
+// and deliberately do not decide the *class*: letting either in would let a
+// repository variable, or the implementer's own declaration, call a
+// production file a test and buy the verdict for it. What carries the weight
+// instead: nothing outside the test globs changed, so there is no unproved
+// production change to carry; the overlaid run is the pull request's own
+// suite, which is the `test` check's business; `scope` holds those test paths
+// to the linked issue's globs; and whether a test-only change strengthens or
+// weakens the suite is the reviewer's, because the overlay carries the change
+// either way and so could never have told the two apart.
+//
 // Both runs — the baseline and the overlaid one — happen in the base
 // worktree, so a declared `command` is only ever executed against the base;
 // that the same command passes at head is the repository's own test check's
@@ -184,7 +219,7 @@ const FAILURE_WIDTH = 200;
 const args = parseArgs(process.argv.slice(2));
 const root = process.cwd();
 
-type Outcome = 'skipped' | 'pass' | 'unattributed' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
+type Outcome = 'skipped' | 'pass' | 'test-only' | 'unattributed' | 'structural' | 'vacuous' | 'no-tests' | 'cannot-run' | 'inconclusive';
 
 /** A comma-separated env list, trimmed, empty entries dropped. */
 const csv = (value: string | undefined): string[] =>
@@ -366,7 +401,9 @@ const listFailures = (failures: string[]): string => {
 };
 
 function finish(outcome: Outcome, detail: string, warning?: string): never {
-  const ok = outcome === 'skipped' || outcome === 'pass';
+  // `test-only` passes: the control could not put a question to this diff at
+  // all, and a gate that refuses what it cannot judge refuses forever (#355).
+  const ok = outcome === 'skipped' || outcome === 'pass' || outcome === 'test-only';
   const summaryWarning = warning ? `\n\n> warning: ${warning}` : '';
   appendSummary(`## negative-control\n\n${ok ? '' : '**FAILED** — '}\`${outcome}\` — ${detail}${summaryWarning}`);
   console.log(`negative-control: ${outcome} — ${detail}`);
@@ -558,6 +595,22 @@ const testFiles = declaration
 // was proved to be at head above, so the same failure there means the content
 // could not be read — two different facts that must not share a branch.
 const declaredPaths = new Set(declaration ? [...declaration.tests, declaration.path] : []);
+// The two facts that make the overlay incapable of a red, read off `git diff`
+// alone (#355). `withheld` is the part of the change the second run did not
+// see — the only thing a test there could bite on. `notATestFile` is what
+// keeps the class from being claimable: TEST_FILE_GLOBS without the env
+// extension and without the declaration's `tests`, plus the declaration's own
+// path, since a branch that declares its proof has still changed nothing but
+// tests. Both empty is `test-only`; either non-empty and the diff is judged
+// as it always was. `changed` is three-dot, so a base that moved on since the
+// branch is a tree the overlay does not reconstruct — and a red there is a
+// real red, decided by the branches above. This verdict is only ever reached
+// after the overlaid run came back green, so it reports what was measured.
+const overlaidPaths = new Set(testFiles);
+const withheld = changed.filter((f) => !overlaidPaths.has(f));
+const notATestFile = changed.filter((f) => !matchesAny(f, TEST_FILE_GLOBS) && f !== declaration?.path);
+/** The files that keep this diff inside the control, for a `vacuous` to name. */
+const keptInTheControl = [...new Set([...withheld, ...notATestFile])].map((f) => `\`${f}\``).join(', ');
 if (testFiles.length === 0) finish('no-tests', 'the diff changes no test files, and it is not confined to a skipped path class; add the test that fails first (`test(red):`), declare the proof in `proof/<slug>.json`, or add the path class to AGENTIC_SKIP_GLOBS.');
 
 const commands = detectCommands(root);
@@ -666,10 +719,16 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     if (overlaid.crashed) {
       return { outcome: 'cannot-run', detail: `\`${testCommand}\` could not be executed on the base checkout.` };
     }
+    if (overlaid.status === 0 && withheld.length === 0 && notATestFile.length === 0) {
+      return {
+        outcome: 'test-only',
+        detail: `\`${testCommand}\` passed on the base with the ${testFiles.length} test file(s) from head overlaid — and it could not have done anything else. The overlay withheld nothing this diff changes: every changed file is a test file by TEST_FILE_GLOBS and every one of them was overlaid, so the run that had to fail is this pull request's own suite with no part of its change absent for a test to bite on. That is not \`vacuous\`, which says nothing *depended* on the change and is cleared by writing a test that bites; here nothing could have depended on it and no test clears it. **This verdict passes the check**: the control could put no question to this diff, and a gate that refuses what it cannot judge refuses forever (#355). It would go back to being judged the moment the diff touched one file outside the test globs — that file is the difference the overlay withholds, and this diff has none. What carries the weight instead: nothing outside the test globs changed, so there is no unproved production change; this very run is the pull request's own suite, which is the \`test\` check's business; \`scope\` holds these test paths to the linked issue's globs; and whether the change strengthens or weakens the suite is the reviewer's, because the overlay carries it either way and so could never have told the two apart. The class is not claimable: AGENTIC_TEST_GLOBS and a \`proof/<slug>.json\` \`tests\` list decide what is overlaid and deliberately do not decide this.`,
+      };
+    }
     if (overlaid.status === 0) {
       return {
         outcome: 'vacuous',
-        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs.`,
+        detail: `\`${testCommand}\` passed on the base with the PR's test files applied — the tests do not depend on the change. When the PR adds a whole new test tree, suspect the entry point instead of the tests: a command that enumerates its test directories cannot see a tree the base does not have, so the base keeps running its own list and stays green. The entry point is overlaid only when it is one of the overlaid files — a path a test glob matches (TEST_FILE_GLOBS, extended by AGENTIC_TEST_GLOBS) or a path \`proof/<slug>.json\` names in its \`tests\`. So make the entry point discover its tests rather than list them, and either keep it in the overlay by one of those two routes, which proves the fix in this same PR, or name the discovering command as the \`command\` of \`proof/<slug>.json\`, which replaces the detected command for both runs. This diff is not \`test-only\` (#355), and here is why, because that is what a reader asks next: ${keptInTheControl} — the overlay withheld it, or it is outside TEST_FILE_GLOBS as written in this file — so a test could have bitten here and did not.`,
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
