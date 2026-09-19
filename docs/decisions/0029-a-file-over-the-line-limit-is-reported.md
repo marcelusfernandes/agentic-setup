@@ -45,7 +45,7 @@ What is in force, as `ci/lib/scope.mts` and `ci/scope-check.mts` implement it:
   `inherited-over` file appears in the check's JSON under a new `inherited` key and in
   the job summary under `### Already over the line limit`, and the check still exits 0.
 - **The two messages are different sentences, on purpose.** The failing section says this
-  pull request *took* N file(s) past the limit and gives each file's base and head
+  pull request *added or lengthened* them and gives each file's base and head
   counts. The reported section says the file *was already over at the base*, states the
   exit code is unchanged, and says what closes it: a pull request that brings the file
   back under the limit. A reader who sees one must not be able to mistake it for the
@@ -158,14 +158,41 @@ now have the fact in front of them instead of having to count lines to find it.
   reader scanning for bold will stop at it, and a reader who has stopped at it twice on
   pull requests that passed will stop reading the section. The wording is the whole of
   the defence.
-- **The failing section's wording changed.** It read "new or grown past 800 lines" and
-  now reads "this pull request took N file(s) past 800 lines", because the two sections
-  had to be distinguishable by sentence and not only by heading. Anything outside this
-  repository that matched the old string matches nothing now. Nothing in the tree did,
-  which is why the change was cheap here and may not be in an adopting repository that
-  grepped the summary.
+- **The `### File growth` section's wording changed, and the summary now describes the
+  same failure in two different sentences.** The section line read "new or grown past 800
+  lines" and now reads "over 800 lines at the head, and this pull request added or
+  lengthened them, so it is answerable for them", so the failing and the reported section
+  differ by sentence and not only by heading. What did **not** change is the summary's
+  **headline**, which `ci/scope-check.mts` composes separately and which still reads
+  "N file(s) new or grown past 800 lines". Both strings are therefore live at once, in the
+  same summary, saying the same thing differently. Verified by `git grep "new or grown
+  past"` against the head of this pull request: two hits in `ci/scope-check.mts`, both in
+  the headline branches, neither touched by this diff. The earlier draft of this bullet
+  claimed the old string had disappeared from the tree; it had not, and the claim was
+  false when it was written — corrected here in the body, which is what
+  [`README.md`](README.md) ("Correcting an item that is already written") prescribes for a
+  statement that was never true rather than one the ground moved under.
+- **The summary's headline still reads all-clear on a run that reports an inherited
+  file.** On a passing run the first line is "N file(s), all inside the linked issues'
+  globs." and the inherited section sits below it, so an operator who reads only the
+  headline sees nothing. The removal of silence this item exists for lives entirely in the
+  section, which is the closest thing to the original defect that survives this change.
+  It is not the defect — the fact is now written, durably, where the old behaviour wrote
+  nothing at all — but it is the residual, and where it sits was never chosen so much as
+  inherited from the headline's existing structure. Moving the fact into the headline is a
+  separate change to what a passing check says and belongs to its own item.
 - **One more key in the check's JSON.** `inherited` is always present, empty on a run
   with no base and head. A consumer that enumerates the keys sees a new one.
+- **The rule still does not report the file this item was written about.**
+  `tests/scope.test.mts`, the file this pull request's own cases go in, stands at 798 of
+  800 — two lines from the limit, with no room for the next case. Under this item's own
+  classifier it is `under-limit`, so nothing reports it, and the person who adds the next
+  case discovers the wall the same way the implementer of #229 discovered it on
+  `tests/init.test.mts`: by measuring. This item removes the silence for a file that has
+  **crossed** the limit and buys nothing at all for one approaching it, which is the
+  shape both measured incidents actually had. A check that warned on approach is a
+  different rule with a different cost — a threshold to argue about, and a warning on
+  every large file — and is not proposed here.
 
 ## Supersedes
 

@@ -331,7 +331,14 @@ appendSummary(
           '',
           '### File growth',
           '',
-          `**FAILED** — this pull request took ${growth.length} file(s) past ${FILE_LINE_LIMIT} lines:`,
+          // "took it past the limit" is false for a file already over that
+          // grows further — 900 to 950 is further past, not past. What is
+          // true of all three sub-cases (new at head over the limit, grown
+          // from under to over, grown from over to more over) is that the
+          // file is over at the head and this pull request is what added the
+          // length. Kept parallel to the reported section below, which is the
+          // same sentence with both halves negated.
+          `**FAILED** — over ${FILE_LINE_LIMIT} lines at the head, and this pull request added or lengthened them, so it is answerable for them:`,
           ...growth.map((g) => `- \`${g.path}\` ${g.baseLines === null ? 'is new at' : `grew from ${g.baseLines} to`} ${g.headLines} line(s)`),
         ]
       : []),

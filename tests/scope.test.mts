@@ -527,15 +527,15 @@ check(
 );
 // #310: the same run *reports* that file — over the limit at the base, not
 // lengthened here — in a section of its own, and still exits 0. The two
-// sentences read differently on purpose: "took ... past" blames this diff,
-// "was already over at the base" does not.
+// sentences read differently on purpose: "added or lengthened them" blames
+// this diff, "was already over at the base" does not.
 check(
   'scope reports an inherited over-limit file in a section of its own, without failing and without blaming this diff',
   rGrowthEdited.status === 0
     && /### Already over the line limit/.test(rGrowthEdited.out)
     && /`src\/big\.ts` was already over at the base: 900 line\(s\) there, 900 at the head/.test(rGrowthEdited.out)
     && /brings the file back under 800 lines/.test(rGrowthEdited.out)
-    && !/took \d+ file\(s\) past 800 lines/.test(rGrowthEdited.out)
+    && !/this pull request added or lengthened them/.test(rGrowthEdited.out)
     && JSON.stringify(scopeJson(rGrowthEdited.out).inherited) === JSON.stringify([{ path: 'src/big.ts', baseLines: 900, headLines: 900 }]),
   rGrowthEdited.out,
 );

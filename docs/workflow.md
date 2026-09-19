@@ -269,8 +269,12 @@ a pull request touching it has a budget for new lines of **zero**, not of "800 m
 current length". Since #310 `scope` says so out loud rather than staying silent: such a
 file is named under `### Already over the line limit` in the job summary and carried in
 the check's JSON as `inherited`, with the exit code unchanged. The failing half is named
-under `### File growth`, and the two sentences are deliberately different — "took N
-file(s) past 800 lines" blames this diff, "was already over at the base" does not. What
+under `### File growth`, and the two sentences are deliberately different — "this pull
+request added or lengthened them" blames this diff, "was already over at the base" does
+not. (The summary's *headline* is composed separately and still reads "N file(s) new or
+grown past 800 lines" on a failing run, and on a passing run it reads "all inside the
+linked issues' globs" whether or not an inherited file was reported: the report lives in
+the section, not in the first line.) What
 closes the reported case is a pull request that brings the file back under 800; until one
 does, the message repeats on every pull request that touches the file, including ones
 that shorten it. Before #310 nothing was reported at all, so a file that crossed the
