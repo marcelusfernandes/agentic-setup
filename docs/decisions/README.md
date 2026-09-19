@@ -77,7 +77,7 @@ not a detail of item 8:
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
   [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0027-<slug>.md`. The date lives inside the file, on its
+  the next free number is `0028-<slug>.md`. The date lives inside the file, on its
   `Date:` line. The number continues the register across both files: items 16, 18, 19 and
   20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
   number is the one after the highest in the index below, not the one after the
@@ -177,3 +177,4 @@ that was false when it was written, and what may not is the decision it sits und
 | 24 | [An `authorised:` grant is never written from inside the worktree it would exempt](0024-a-grant-is-never-written-from-a-worktree.md) | proposed |
 | 25 | [In mode `approved`, the server's review pins the commit it was cast against](0025-a-review-pins-the-commit-it-was-cast-against.md) | proposed |
 | 26 | [The changed paths decide the review exemption; the `type:docs` label no longer does](0026-the-paths-decide-the-review-exemption-not-the-label.md) | proposed |
+| 27 | [A `negative-control` pass names the file the overlay placed](0027-a-pass-names-the-file-the-overlay-placed.md) | proposed |

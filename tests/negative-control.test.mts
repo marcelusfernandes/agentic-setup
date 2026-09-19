@@ -10,7 +10,8 @@
 // does not have or a path outside the checkout, is `cannot-run` — never a
 // silent fall back to the diff's globs, which would report "we could not
 // verify this" as "this passed".
-import { rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, ci, commit, finish, git, tempRepo } from './lib/harness.mts';
 
@@ -22,10 +23,16 @@ const base = commit(repo, {
   'tests/check.mts': 'process.exit(0);\n',
 }, 'chore: base');
 
+// Every fixture red below throws rather than exiting 1 in silence. That is
+// the shape safe-worktree §B7 tells implementers to write, and it is also the
+// shape a negative control can attribute: a thrown error prints the overlaid
+// file as a source location in its stack, which is the evidence `pass` now
+// requires (#354). A command that fails without reporting what failed is
+// `unattributed`, and has a case of its own at the end of this file.
 git(['checkout', '-q', '-b', 'feat/1-x'], repo);
 const head = commit(repo, {
   'lib.mts': 'export const v = 2;\n',
-  'tests/check.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'tests/check.mts': "import { v } from '../lib.mts';\nif (v !== 2) throw new Error('v is not 2');\n",
 }, 'feat: v2');
 git(['checkout', '-q', '-b', 'feat/3-notests', base], repo);
 const noTestsHead = commit(repo, { 'lib.mts': 'export const v = 4;\n' }, 'feat: no tests');
@@ -232,7 +239,11 @@ const noisyRedHead = commit(repo, {
   'tests/check.mts':
     "import { v } from '../lib.mts';\n" +
     'console.log("vendor/dep: Cannot find module \'optional-extra\' — ignored");\n' +
-    'process.exit(v === 6 ? 0 : 1);\n',
+    // The red stays an exit-code red, not a throw, so the case keeps testing
+    // the shape it was written for; the report goes to stderr, which
+    // `runTests` keeps in a diagnostic block of its own, so the FAIL line
+    // cannot share a block with the `Cannot find module` noise on stdout.
+    "if (v !== 6) { console.error('FAIL tests/check.mts: v is not 6'); process.exit(1); }\n",
 }, 'feat: a runtime red whose output also carries an unrelated structural line');
 git(['checkout', '-q', 'feat/1-x'], repo);
 r = nc(noisyRedHead);
@@ -263,6 +274,20 @@ check(
   r.out,
 );
 
+// The other half of the ranking, and the reason it is a ranking rather than a
+// narrower match: `FAIL tests/check.mts: v is not 6` carries no count of its
+// own and is no stack frame, so it is only a mention — and a runner that
+// prints `FAIL <path>` and nothing else says no more than that. With nothing
+// reporting another file as the owner of a red, the mention is believed. The
+// noisy-red case above is exactly that shape; this pins it deliberately
+// rather than by accident.
+r = nc(noisyRedHead);
+check(
+  'a failure naming the overlaid file without a count of its own is believed when nothing contradicts it',
+  r.status === 0 && /negative-control: pass/.test(r.out) && !/unattributed/.test(r.out),
+  r.out,
+);
+
 check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], repo)));
 
 // --- `proof/<slug>.json`: the overlay a branch declares (#136) -------------
@@ -283,7 +308,7 @@ const declBase = commit(declRepo, {
 git(['checkout', '-q', '-b', 'feat/10-declared'], declRepo);
 const declHead = commit(declRepo, {
   'lib.mts': 'export const v = 2;\n',
-  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'checks/pin.mts': "import { v } from '../lib.mts';\nif (v !== 2) throw new Error('v is not 2');\n",
   'proof/declared.json': JSON.stringify({ tests: ['checks/pin.mts'] }),
 }, 'feat: declare the proof of this slug');
 
@@ -316,7 +341,7 @@ const cmdBase = commit(cmdRepo, {
 git(['checkout', '-q', '-b', 'feat/11-command'], cmdRepo);
 const cmdHead = commit(cmdRepo, {
   'lib.mts': 'export const v = 2;\n',
-  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'checks/pin.mts': "import { v } from '../lib.mts';\nif (v !== 2) throw new Error('v is not 2');\n",
   'proof/command.json': JSON.stringify({ tests: ['checks/pin.mts'], command: 'node checks/pin.mts' }),
 }, 'feat: declare the command that proves this slug');
 
@@ -332,7 +357,7 @@ check(
 git(['checkout', '-q', '-b', 'feat/12-broken', cmdBase], cmdRepo);
 const brokenHead = commit(cmdRepo, {
   'lib.mts': 'export const v = 3;\n',
-  'checks/pin.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 3 ? 0 : 1);\n",
+  'checks/pin.mts': "import { v } from '../lib.mts';\nif (v !== 3) throw new Error('v is not 3');\n",
   'proof/broken.json': '{ not json at all\n',
 }, 'feat: a declaration that does not parse');
 r = declNc(['--base', cmdBase, '--head', brokenHead, '--branch', 'feat/12-broken'], cmdRepo);
@@ -351,7 +376,7 @@ const declaringBranch = (branch: string, slug: string, v: number, decl: unknown)
   git(['checkout', '-q', '-b', branch, cmdBase], cmdRepo);
   return commit(cmdRepo, {
     'lib.mts': `export const v = ${v};\n`,
-    'checks/pin.mts': `import { v } from '../lib.mts';\nprocess.exit(v === ${v} ? 0 : 1);\n`,
+    'checks/pin.mts': `import { v } from '../lib.mts';\nif (v !== ${v}) throw new Error('v is not ${v}');\n`,
     [`proof/${slug}.json`]: JSON.stringify(decl),
   }, `feat: declare ${slug}`);
 };
@@ -425,18 +450,41 @@ check(
   r.out,
 );
 
-// Last in this repository: the blob is removed from the object store, so
-// `git show` fails for a reason that is not "the file is absent at head".
-// Presence has to come from the tree (`git ls-tree`), because a non-zero
-// `git show` read alike for a corrupt object, an unreadable head and a branch
-// that simply declares nothing — and the last of the three fell back to the
-// diff's globs.
-const unreadableHead = declaringBranch('feat/22-unreadable', 'unreadable', 14, {
-  tests: ['checks/pin.mts'],
-  command: 'node checks/pin.mts',
-});
-const blob = git(['rev-parse', `${unreadableHead}:proof/unreadable.json`], cmdRepo);
-rmSync(join(cmdRepo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)), { force: true });
+// Last in this repository: the declaration is in the head tree and `git show`
+// cannot read it, so `git show` fails for a reason that is not "the file is
+// absent at head". Presence has to come from the tree (`git ls-tree`), because
+// a non-zero `git show` read alike for a corrupt object, an unreadable head
+// and a branch that simply declares nothing — and the last of the three fell
+// back to the diff's globs.
+//
+// The unreadable entry is a gitlink: a tree entry recording a commit id no
+// object store has, which `git update-index --cacheinfo 160000` writes without
+// checking. `git ls-tree` lists the path (it reads the tree, which holds the
+// id); `git show <head>:<path>` fails with `bad object`. The case used to
+// delete the loose object behind a blob instead, which left the outcome to
+// whether the object was still loose at that moment: it passed 35/0 in three
+// plain runs, under `CI=1`, and under a PR-shaped `GITHUB_EVENT_PATH`, and
+// failed only inside the run `ci/negative-control.mts` itself spawns in CI,
+// where an unrelated red is what a false `pass` is made of (#354). A tree
+// entry is not object-store state, so nothing outside this file can repack,
+// repair or garbage-collect the condition away.
+git(['checkout', '-q', '-b', 'feat/22-unreadable', cmdBase], cmdRepo);
+writeFileSync(join(cmdRepo, 'lib.mts'), 'export const v = 14;\n');
+writeFileSync(join(cmdRepo, 'checks', 'pin.mts'), "import { v } from '../lib.mts';\nif (v !== 14) throw new Error('v is not 14');\n");
+git(['add', '-A'], cmdRepo);
+git(['update-index', '--add', '--cacheinfo', '160000,0123456789abcdef0123456789abcdef01234567,proof/unreadable.json'], cmdRepo);
+git(['commit', '-q', '-m', 'feat: declare unreadable'], cmdRepo);
+const unreadableHead = git(['rev-parse', 'HEAD'], cmdRepo);
+// The precondition this case rests on, asserted rather than assumed: the path
+// is in the head tree and its content cannot be read.
+check(
+  'the unreadable declaration is present in the head tree',
+  git(['ls-tree', '--name-only', unreadableHead, '--', 'proof/unreadable.json'], cmdRepo) === 'proof/unreadable.json',
+);
+check(
+  'the unreadable declaration cannot be read out of the head commit',
+  spawnSync('git', ['show', `${unreadableHead}:proof/unreadable.json`], { cwd: cmdRepo, encoding: 'utf8' }).status !== 0,
+);
 r = declRun('feat/22-unreadable', unreadableHead);
 check(
   'a declaration present at head that cannot be read is cannot-run, not a fallback to the diff globs',
@@ -459,7 +507,7 @@ const undetectedBase = commit(undetectedRepo, {
 git(['checkout', '-q', '-b', 'feat/13-undetected'], undetectedRepo);
 const undetectedHead = commit(undetectedRepo, {
   'lib.mts': 'export const v = 2;\n',
-  'tests/check.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+  'tests/check.mts': "import { v } from '../lib.mts';\nif (v !== 2) throw new Error('v is not 2');\n",
 }, 'feat: v2');
 
 r = ci('negative-control.mts', ['--base', undetectedBase, '--head', undetectedHead], { cwd: undetectedRepo });
@@ -472,6 +520,232 @@ check(
   'the cannot-run detail names the `Makefile` with a `test:` target as the escape',
   /Makefile/.test(r.out) && /`test:` target/.test(r.out) && /ci\/lib\/detect\.mts/.test(r.out),
   r.out,
+);
+
+// --- a red the overlay did not cause is not the overlay's red (#354) -------
+// The false pass this section exists for: run `35405433899`, job
+// `105794181719`, on pull request #349 at head `594481b`. The pristine base
+// was green (`2398 passed, 0 failed`); the overlaid run was red
+// (`2397 passed, 1 failed`) — and the one failure was in
+// `tests/negative-control.test.mts`, named by neither overlaid file, while
+// both overlaid files reported `0 failed`. The control printed `pass`.
+//
+// The runner below reproduces the shape of that log literally: one
+// `<file>: N passed, M failed` line per test file, consecutive and with no
+// blank line between them, so the whole listing is a single diagnostic block.
+// That is why the block mechanism `structuralInOverlay` uses cannot decide
+// this one on its own — inside that block every overlaid name sits next to
+// every unrelated red — and why attribution is read per failure line, with
+// the block reserved for the stack-trace shape, where the overlaid file
+// appears as a source location.
+const attrRepo = tempRepo();
+const RUNNER = [
+  "import { readdirSync } from 'node:fs';",
+  "import { spawnSync } from 'node:child_process';",
+  "import { dirname, join } from 'node:path';",
+  "import { fileURLToPath } from 'node:url';",
+  'const dir = dirname(fileURLToPath(import.meta.url));',
+  'let failed = 0;',
+  "for (const f of readdirSync(dir).filter((n) => n.endsWith('.case.mts')).sort()) {",
+  "  const bad = spawnSync(process.argv[0], [join(dir, f)], { stdio: ['ignore', 'ignore', 'inherit'] }).status === 0 ? 0 : 1;",
+  '  failed += bad;',
+  '  console.log(`${f}: ${1 - bad} passed, ${bad} failed`);',
+  '}',
+  'process.exit(failed ? 1 : 0);',
+  '',
+].join('\n');
+// Green on the pristine base and red in the overlaid run, deterministically:
+// it fails exactly when the overlay has put `breaker.case.mts` beside it. The
+// trigger is a stand-in for whatever made the real one red — a flake, a
+// regression already on the base, a rate limit. What the cases pin is *which*
+// file the run reports as failing, never why it failed.
+const UNRELATED = [
+  "import { existsSync } from 'node:fs';",
+  "import { dirname, join } from 'node:path';",
+  "import { fileURLToPath } from 'node:url';",
+  'const dir = dirname(fileURLToPath(import.meta.url));',
+  "process.exit(existsSync(join(dir, 'breaker.case.mts')) ? 1 : 0);",
+  '',
+].join('\n');
+// The same trigger, but this one reports its failure in a sentence that
+// quotes an overlaid file's name — the shape of a `check(...)` case name that
+// cites a path, of which this repository writes nineteen. Bare substring
+// matching reads it as "the overlay failed"; it is a mention, not an owner.
+const MENTIONS = [
+  "import { existsSync } from 'node:fs';",
+  "import { dirname, join } from 'node:path';",
+  "import { fileURLToPath } from 'node:url';",
+  'const dir = dirname(fileURLToPath(import.meta.url));',
+  "if (!existsSync(join(dir, 'mentioner.case.mts'))) process.exit(0);",
+  "console.error('FAIL  mentioner.case.mts is listed in the pin table');",
+  'process.exit(1);',
+  '',
+].join('\n');
+const attrBase = commit(attrRepo, {
+  'package.json': JSON.stringify({ name: 'a', private: true, scripts: { test: 'node tests/run-all.mts' } }),
+  'lib.mts': 'export const v = 1;\n',
+  'tests/run-all.mts': RUNNER,
+  'tests/unrelated.case.mts': UNRELATED,
+  'tests/mentions.case.mts': MENTIONS,
+}, 'chore: base');
+
+const attrRun = (head: string) =>
+  ci('negative-control.mts', ['--base', attrBase, '--head', head], { cwd: attrRepo });
+
+// 1. Red only on a file the overlay did not place. The overlaid file is in
+//    the run and reports `0 failed`; the red belongs to a file neither
+//    overlay named. That is not this control's red.
+git(['checkout', '-q', '-b', 'feat/30-unrelated-red', attrBase], attrRepo);
+const unrelatedRedHead = commit(attrRepo, {
+  'lib.mts': 'export const v = 2;\n',
+  'tests/breaker.case.mts': 'process.exit(0);\n',
+}, 'feat: a test that passes on the base, beside a change nothing tests');
+git(['checkout', '-q', 'main'], attrRepo);
+r = attrRun(unrelatedRedHead);
+check(
+  'an overlaid run red only on a non-overlaid file is `unattributed`, not `pass`',
+  r.status === 1 && /unattributed/.test(r.out) && !/negative-control: pass/.test(r.out),
+  r.out,
+);
+check(
+  'the `unattributed` verdict is its own, not folded into `vacuous`',
+  /negative-control: unattributed/.test(r.out) && !/negative-control: vacuous/.test(r.out),
+  r.out,
+);
+check(
+  'the `unattributed` detail names the failures it did see, so the reader can act on them',
+  /unattributed/.test(r.out) && /unrelated\.case\.mts: 0 passed, 1 failed/.test(r.out),
+  r.out,
+);
+check(
+  'the `unattributed` detail names the overlaid files it looked for and found nothing about',
+  /unattributed/.test(r.out) && /tests\/breaker\.case\.mts/.test(r.out),
+  r.out,
+);
+check(
+  'the `unattributed` detail gives the two-argument invocation that reproduces it by hand',
+  /unattributed/.test(r.out) && /--base/.test(r.out) && /--head/.test(r.out),
+  r.out,
+);
+
+// 2. One red on a file the overlay did place: the tests bite, and the verdict
+//    is the unchanged `pass` with no warning.
+git(['checkout', '-q', '-b', 'feat/31-overlay-red', attrBase], attrRepo);
+const overlayRedHead = commit(attrRepo, {
+  'lib.mts': 'export const v = 3;\n',
+  // The bare `FAIL <case name>` a harness prints names no file — a runner
+  // prints those under the file it is reporting, several lines from its
+  // name. It must not be read as another file's red, or a warning lands on
+  // nearly every honest pass naming the overlay's own failures as unrelated.
+  'tests/bites.case.mts': "console.error('FAIL the thing this change breaks');\nprocess.exit(1);\n",
+}, 'feat: a test that fails on the base');
+git(['checkout', '-q', 'main'], attrRepo);
+r = attrRun(overlayRedHead);
+check(
+  'a red on a file the overlay placed is still `pass`',
+  r.status === 0 && /\bpass\b/.test(r.out) && !/unattributed/.test(r.out),
+  r.out,
+);
+check(
+  'a clean pass carries no warning about an unrelated red',
+  !/warning:/.test(r.out),
+  r.out,
+);
+check(
+  'a bare FAIL line naming no file is not read as another file\'s red',
+  /FAIL the thing this change breaks/.test(r.out) && !/warning:/.test(r.out),
+  r.out,
+);
+
+// 3. One of each. The overlay's own red is there, so the verdict stays
+//    `pass` — but the unrelated red is real and the operator is told, rather
+//    than left to find it in the log.
+git(['checkout', '-q', '-b', 'feat/32-both-reds', attrBase], attrRepo);
+const bothRedsHead = commit(attrRepo, {
+  'lib.mts': 'export const v = 4;\n',
+  'tests/breaker.case.mts': 'process.exit(0);\n',
+  'tests/bites.case.mts': 'process.exit(1);\n',
+}, 'feat: a test that fails on the base, beside one that trips an unrelated file');
+git(['checkout', '-q', 'main'], attrRepo);
+r = attrRun(bothRedsHead);
+check(
+  'a run red on both an overlaid and a non-overlaid file is `pass`',
+  r.status === 0 && /\bpass\b/.test(r.out) && !/unattributed/.test(r.out),
+  r.out,
+);
+check(
+  'that pass warns about the unrelated red and names the file it was in',
+  /warning:/.test(r.out) && /unrelated\.case\.mts/.test(r.out),
+  r.out,
+);
+
+// 4. A mention is not an owner. The only line naming an overlaid file quotes
+//    it inside a sentence, while the failure that states its own owner names
+//    a different file. Reading the mention as attribution reports `pass` and
+//    warns that the run's only owned red is not this change's — the same
+//    output saying both things at once. Neither is the honest reading.
+git(['checkout', '-q', '-b', 'feat/34-prose-mention', attrBase], attrRepo);
+const proseMentionHead = commit(attrRepo, {
+  'lib.mts': 'export const v = 5;\n',
+  'tests/mentioner.case.mts': 'process.exit(0);\n',
+}, 'feat: a test the base passes, whose name another file quotes when it fails');
+git(['checkout', '-q', 'main'], attrRepo);
+r = attrRun(proseMentionHead);
+check(
+  'a prose mention of an overlaid file does not outvote a failure that names its own owner',
+  r.status === 1 && /negative-control: unattributed/.test(r.out),
+  r.out,
+);
+check(
+  'the contradiction is explained: the mention is named as a mention, the owned red as the owner',
+  /mention it in passing/.test(r.out) && /mentions\.case\.mts: 0 passed, 1 failed/.test(r.out),
+  r.out,
+);
+check(
+  'the contradictory run never reports `pass` and an unrelated-red warning together',
+  !(/negative-control: pass/.test(r.out) && /warning:/.test(r.out)),
+  r.out,
+);
+
+// The wording the issue's comment asked for: the run the control calls "the
+// base" in a `pass` is the base *with the overlay applied*, and a reader who
+// misses that misdiagnoses the next occurrence the way this one nearly was.
+check(
+  'the pass detail says the overlay was applied, not just "failed on the base"',
+  /from head overlaid/.test(r.out) && !/failed on the base \(exit/.test(r.out),
+  r.out,
+);
+
+// A command that fails without reporting any failure at all cannot be
+// attributed either: there is nothing to read. It is the same verdict, and
+// the detail says the run reported no failure of its own rather than naming
+// failures that do not exist.
+const silentRepo = tempRepo();
+const silentBase = commit(silentRepo, {
+  'package.json': JSON.stringify({ name: 's', private: true, scripts: { test: 'node tests/check.mts' } }),
+  'lib.mts': 'export const v = 1;\n',
+  'tests/check.mts': 'process.exit(0);\n',
+}, 'chore: base');
+git(['checkout', '-q', '-b', 'feat/33-silent'], silentRepo);
+const silentHead = commit(silentRepo, {
+  'lib.mts': 'export const v = 2;\n',
+  'tests/check.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
+}, 'feat: a red that reports nothing');
+r = ci('negative-control.mts', ['--base', silentBase, '--head', silentHead], { cwd: silentRepo });
+check(
+  'a red that reports no failure at all is `unattributed`, not `pass`',
+  r.status === 1 && /unattributed/.test(r.out),
+  r.out,
+);
+check(
+  'its detail says the run reported no failure of its own',
+  /reported no failure of its own/.test(r.out),
+  r.out,
+);
+
+check(
+  'negative-control leaves no worktree behind in the attribution repo',
+  !/negative-control-/.test(git(['worktree', 'list'], attrRepo)),
 );
 
 finish();
