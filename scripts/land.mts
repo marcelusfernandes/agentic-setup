@@ -121,11 +121,15 @@
 //              than imported: `ci/negative-control.mts` runs its check on
 //              import, so nothing may import a constant out of it.
 //              `tests/land.test.mts` pins both copies against a list it
-//              writes out itself (invariant 10). What is deliberately *not*
-//              mirrored is AGENTIC_SKIP_GLOBS, the environment extension of
-//              that list: it widens what owes a failing test, and an
-//              environment variable that widened a *review* exemption would
-//              be a hole an operator could open from outside the repository.
+//              writes out itself (invariant 10). Two things are deliberately
+//              not mirrored, and the pin states both so neither reads as
+//              drift. AGENTIC_SKIP_GLOBS, the environment extension of that
+//              list, is not read here: it widens what owes a failing test,
+//              and an environment variable that widened a *review* exemption
+//              would be a hole an operator could open from outside the
+//              repository. And NEVER_DOCS_GLOBS is *narrower* than the skip
+//              it inherits, by `.github/workflows/**` and
+//              `templates/.github/workflows/**` — see that constant.
 //
 // The mode is read before anything else is decided, because a refusal that
 // cannot name its mode says nothing: the base branch's effective rules are
@@ -280,14 +284,32 @@ const USAGE = 'usage: node scripts/land.mts <pr> [--require-review] [--wait [--t
  */
 const DOCS_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
 /**
- * The carve-out no documentation class may cover, mirroring
- * `NEVER_SKIP_GLOBS`. `scripts/init.mts` copies this repository's `ci/` into
- * an adopting repository's `.github/scripts/agentic/`, which the `.github/**`
- * class would otherwise swallow whole: a pull request rewriting the merge
- * gate's own code would merge under the merge gate's own review exemption. A
- * mechanism that can exempt a change to itself is not a gate.
+ * The carve-out no documentation class may cover: a mechanism that can exempt
+ * a change to itself is not a gate. The first glob is `NEVER_SKIP_GLOBS` from
+ * `ci/negative-control.mts` — `scripts/init.mts` copies this repository's
+ * `ci/` into an adopting repository's `.github/scripts/agentic/`, which the
+ * `.github/**` class would otherwise swallow whole.
+ *
+ * The other two are this list's **deliberate narrowing** of the negative
+ * control's, not drift: that list and this one answer different questions.
+ * `.github/**` is a sound answer to "does this diff owe a failing test" — a
+ * workflow has no unit test to fail, which is why #135 put it there — and an
+ * unsound answer to "may this diff merge unreviewed". `.github/workflows/**`
+ * is where this repository's required checks are *defined*, and
+ * `templates/.github/workflows/**` is what `init` installs as that definition
+ * in every adopting repository. Both are inputs to the gate this file runs:
+ * a pull request removing a required check from either would be exempt from
+ * the review, under the exemption this file grants. They are also in
+ * `MECHANISM_GLOBS` (`ci/lib/scope.mts`), which is the same judgement made by
+ * a different check.
+ *
+ * A `SKILL.md` card under `skills/` is in `MECHANISM_GLOBS` too and is
+ * deliberately *not* carved out: a card changes what an agent is told to do,
+ * never what this gate measures, and the docs-writer flow exists to land card
+ * updates. (Its glob is not written out here: the two stars and the slash
+ * would close this comment.)
  */
-const NEVER_DOCS_GLOBS = ['.github/scripts/agentic/**'];
+const NEVER_DOCS_GLOBS = ['.github/scripts/agentic/**', '.github/workflows/**', 'templates/.github/workflows/**'];
 /** How long `--wait` waits for the queue to fire when --timeout says nothing. */
 const DEFAULT_TIMEOUT_SECONDS = 900;
 /** How often it reads the state back — or a quarter of the budget, when that is shorter. */

@@ -331,9 +331,14 @@ this very head, and never falls back to the label alone).
 **`type:docs` no longer decides the review exemption. The changed paths do** (#308, item
 26). `land.mts` reads the pull request's diff — `gh api repos/{owner}/{repo}/pulls/<pr>/files
 --paginate` — and enters mode `docs` only when every changed path sits in a documentation
-path class and none sits in the carve-out, `.github/scripts/agentic/**`. Those are the
-same classes the negative control skips by (`SKIP_PATH_GLOBS`), mirrored in `land.mts` as
-`DOCS_PATH_GLOBS` and `NEVER_DOCS_GLOBS` and pinned against them by `tests/land.test.mts`;
+path class and none sits in the carve-out. The classes are the ones the negative control
+skips by (`SKIP_PATH_GLOBS`), mirrored in `land.mts` as `DOCS_PATH_GLOBS`. The carve-out,
+`NEVER_DOCS_GLOBS`, is the negative control's `NEVER_SKIP_GLOBS` — `.github/scripts/agentic/**`,
+the gate's own installed code — **narrowed** by `.github/workflows/**` and
+`templates/.github/workflows/**`, because those declare the required checks `land.mts`
+itself gates on and `.github/**` would otherwise exempt a change to them from the review
+(#308, item 26). The two lists answer different questions, so one is narrower; both are
+pinned against each other by `tests/land.test.mts`, so the divergence cannot read as drift;
 `AGENTIC_SKIP_GLOBS` extends the negative control's list and is deliberately **not** read
 by `land.mts`, because an environment variable that widened a *review* exemption would be a
 hole openable from outside the repository. The label stays necessary as well: a docs-only
@@ -474,8 +479,9 @@ condition of that mode is met:
   exemption from the *review*, never from the checks. It is selected by the pull request's
   **changed paths and** the `type:docs` label, both (#308, item 26): every changed path in
   a documentation class (`DOCS_PATH_GLOBS`, mirroring the negative control's
-  `SKIP_PATH_GLOBS`), none in the carve-out (`NEVER_DOCS_GLOBS`, `.github/scripts/agentic/**`),
-  and the label on the pull request. The label alone used to select it, which let it beat a
+  `SKIP_PATH_GLOBS`), none in the carve-out (`NEVER_DOCS_GLOBS`: the gate's own installed
+  code, plus `.github/workflows/**` and `templates/.github/workflows/**`, which declare the
+  required checks this very script gates on), and the label on the pull request. The label alone used to select it, which let it beat a
   base ruleset that *requires* a review — an override, not a relaxation. A label on a diff
   that leaves those classes refuses `docs:label-mismatch` instead; a docs-only diff without
   the label is mode `agent` and still owes its marker.

@@ -28,16 +28,22 @@ What is in force, as `scripts/land.mts` implements it:
 - **The read.** `changedFiles` (`scripts/land.mts:362-367`) runs
   `gh api repos/{owner}/{repo}/pulls/<pr>/files --paginate --jq .[].filename`, once per run,
   after the rules read and before the mode is selected (`:517`).
-- **The classes.** `DOCS_PATH_GLOBS` (`:281`) is
-  `['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']` and
-  `NEVER_DOCS_GLOBS` (`:290`) is `['.github/scripts/agentic/**']`. A path is a
-  documentation path when it matches the first and not the second (`isDocsPath`, `:369`).
-  These are the negative control's own classes — `SKIP_PATH_GLOBS` and `NEVER_SKIP_GLOBS`,
-  `ci/negative-control.mts:131` and `:138` — mirrored rather than imported, because that
-  file runs its check at import time (`ci/negative-control.mts:145`) and exports nothing.
-  `tests/land.test.mts` pins the two copies against a list it writes out itself, so drift in
-  either fails a test (CLAUDE.md invariant 10). Consolidating the constant into `ci/lib/` is
-  filed as its own change; the pin is what makes deferring it safe.
+- **The classes.** `DOCS_PATH_GLOBS` is
+  `['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']`, exactly the
+  negative control's `SKIP_PATH_GLOBS` (`ci/negative-control.mts:131`). A path is a
+  documentation path when it matches that and not the carve-out (`isDocsPath`).
+- **The carve-out is inherited and then narrowed, deliberately.** `NEVER_DOCS_GLOBS` is
+  `['.github/scripts/agentic/**', '.github/workflows/**', 'templates/.github/workflows/**']`.
+  The first glob is the negative control's whole `NEVER_SKIP_GLOBS`
+  (`ci/negative-control.mts:138`); the other two are this list's own, and they are a
+  narrowing, not drift. See **Reason**.
+- **Mirrored, not imported, and pinned.** `ci/negative-control.mts` runs its check at import
+  time (`:145`) and exports nothing, so no route lets `land.mts` import either constant.
+  `tests/land.test.mts` pins both — the classes as identical to `SKIP_PATH_GLOBS`, the
+  carve-out as `NEVER_SKIP_GLOBS` **plus the two workflow globs** — against lists it writes
+  out itself, so drift in either file fails a test and the narrowing cannot later be read as
+  drift (CLAUDE.md invariant 10). Consolidating into `ci/lib/` is filed as its own change;
+  the pin is what makes deferring it safe.
 - **`AGENTIC_SKIP_GLOBS` is not read here.** It extends the negative control's list from the
   environment. `land.mts` ignores it, and two cases in `tests/land.test.mts` hold that:
   the source carries no such read, and setting the variable does not buy the exemption.
@@ -103,6 +109,32 @@ exactly as thoroughly as the override did. Three of tonight's four merges are wh
 looks like: each was in fact reviewed, and nobody could tell from the output. A refusal
 makes a person or the orchestrator say which the pull request is.
 
+**The carve-out covers the gate's own definition, not only its installed code.** The
+negative control carves out `.github/scripts/agentic/**` because `scripts/init.mts` copies
+this repository's `ci/` there, and a check that exempts a rewrite of itself is not a check.
+Inheriting that list unchanged would have carried the principle in and left the instance
+out: `.github/**` is in the documentation classes, so a pull request changing nothing but
+`.github/workflows/agentic-checks.yml` — the file that *declares the required checks
+`land.mts` gates on* — would have been docs-only, and with `type:docs` would have merged
+with no marker. A change removing a required check would have been review-exempt, in the
+change whose subject is closing a review exemption. `templates/.github/workflows/**` is the
+same file one level out: it is what `init` installs as that declaration in every adopting
+repository, and `templates/**` is a documentation class too.
+
+The two lists answer different questions, and that is why one is narrower. "Does this diff
+owe a failing test" is answered soundly by `.github/**` — a workflow has no unit test to
+fail, which is why #135 put it there. "May this diff merge unreviewed" is not. Both globs
+are already in `MECHANISM_GLOBS` (`ci/lib/scope.mts:274`), which is the same judgement
+reached by a different check; this item makes the review gate agree with it.
+
+**The line is drawn at what the gate measures, not at what is important.**
+`skills/**/SKILL.md` is in `MECHANISM_GLOBS` as well, and is a documentation path here via
+`**/*.md`. It is deliberately *not* carved out. A card changes what an agent is told to do;
+it cannot change what this gate measures, and the docs-writer flow exists precisely to land
+card updates without a review. The carve-out is for the gate's own inputs — its installed
+code and the declarations of its required checks — and that boundary is stated here so the
+next person extending it has a rule rather than a list.
+
 **The read is REST and paginated deliberately.** `gh pr view <pr> --json files` is the
 shorter call, but it is GraphQL and asks for one page, so a pull request whose first hundred
 entries are Markdown would read as docs-only however much code followed them. This is the
@@ -136,6 +168,14 @@ writes the six globs out itself and reads both source files from disk, so drift 
 test rather than a merge. The cost accepted is the duplication itself, for as long as the
 consolidation is deferred, and it is deferred so that a change to the *review* gate and a
 change to what the *negative control* reads are not in one pull request.
+
+**A workflow-only change now always owes a review.** Before this item a `type:docs` pull
+request touching only `.github/workflows/**` merged unreviewed; after it, that pull request
+refuses `docs:label-mismatch` until the label comes off and a reviewer reads it. That is the
+point, and it is a real cost: workflow edits are often trivial, and the label lands on them
+by inheritance, since the orchestrator copies `type:docs` from the linked issue
+(`skills/orchestrate/SKILL.md`) rather than deciding it per diff. Who pays: whoever files a
+workflow change as a docs issue, once per pull request.
 
 **The refusal line grows with the diff.** Every path outside the classes is named, joined
 with commas, on one line. A very large mixed diff produces a long refusal. Consistent with
