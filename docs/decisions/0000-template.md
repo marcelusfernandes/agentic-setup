@@ -39,3 +39,11 @@ Dated lines, newest last, in the shape item 8 of `../decisions.md` already uses:
 
 *YYYY-MM-DD (#issue, #PR):* what changed and what still holds. The decision above
 keeps its original wording; an update never rewrites it.
+
+That freeze is for a statement the ground moved under — a line that drifted, a mechanism
+that changed after this item landed. A statement that was **false when it was written**
+is corrected in the body instead, in place, because an appended line cannot make the body
+stop asserting it and a reader who stops at the section carrying it never reaches the
+update. A correction in the body never touches the decision itself, its `Status:` or its
+number. `README.md`, "Correcting an item that is already written", states the split in
+full and gives the argument for it.
