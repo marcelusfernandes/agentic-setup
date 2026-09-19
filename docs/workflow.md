@@ -404,9 +404,9 @@ The rule above — baseline green and the overlaid run green is a fail — has e
 carve-out, and it is not an exemption anyone applies (#355). The overlay is a comparison:
 head's test files on a base that lacks **the rest of** the change. What makes a red
 available to it is the part of the diff it *withholds*. When a diff is nothing but test
-files, the overlay withholds nothing: the second run is the pull request's own suite on
-the pull request's own tree, green exactly when the `test` check is green. Requiring it
-to fail is requiring the pull request's own tests to fail, so `vacuous` was a required
+files, the overlay withholds nothing: the second run is the pull request's own suite with
+no part of its change absent for a test to bite on. Requiring it to fail is requiring the
+pull request's own tests to fail, so `vacuous` was a required
 check no work could clear — measured, not supposed: **no commit confined to the test
 globs has ever landed on this repository's `main`** (150 read), and PR #348, whose whole
 diff is `tests/adopt-record.test.mts`, was held on `vacuous` rather than on merit.

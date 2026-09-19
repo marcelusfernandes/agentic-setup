@@ -41,8 +41,9 @@
 //                overlay withheld nothing the diff changed: every changed file
 //                is a test file by TEST_FILE_GLOBS *as written below* and every
 //                one of them was overlaid, so the second run is the pull
-//                request's own suite on the pull request's own tree. No red was
-//                available to it and none ever will be. Deliberately not
+//                request's own suite with no part of its change absent for a
+//                test to bite on. No red was available, and none ever will
+//                be. Deliberately not
 //                `vacuous`: that says nothing *depended* on the change and is
 //                cleared by writing a test that bites, while this says nothing
 //                *could have* depended on it and no test clears it. It passes
@@ -601,7 +602,10 @@ const declaredPaths = new Set(declaration ? [...declaration.tests, declaration.p
 // extension and without the declaration's `tests`, plus the declaration's own
 // path, since a branch that declares its proof has still changed nothing but
 // tests. Both empty is `test-only`; either non-empty and the diff is judged
-// as it always was.
+// as it always was. `changed` is three-dot, so a base that moved on since the
+// branch is a tree the overlay does not reconstruct — and a red there is a
+// real red, decided by the branches above. This verdict is only ever reached
+// after the overlaid run came back green, so it reports what was measured.
 const overlaidPaths = new Set(testFiles);
 const withheld = changed.filter((f) => !overlaidPaths.has(f));
 const notATestFile = changed.filter((f) => !matchesAny(f, TEST_FILE_GLOBS) && f !== declaration?.path);
@@ -718,7 +722,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     if (overlaid.status === 0 && withheld.length === 0 && notATestFile.length === 0) {
       return {
         outcome: 'test-only',
-        detail: `\`${testCommand}\` passed on the base with the ${testFiles.length} test file(s) from head overlaid — and it could not have done anything else. The overlay withheld nothing this diff changes: every changed file is a test file by TEST_FILE_GLOBS and every one of them was overlaid, so the run that had to fail is this pull request's own suite on its own tree, green exactly when the \`test\` check is green. That is not \`vacuous\`, which says nothing *depended* on the change and is cleared by writing a test that bites; here nothing could have depended on it and no test clears it. **This verdict passes the check**: the control could put no question to this diff, and a gate that refuses what it cannot judge refuses forever (#355). It would go back to being judged the moment the diff touched one file outside the test globs — that file is the difference the overlay withholds, and this diff has none. What carries the weight instead: nothing outside the test globs changed, so there is no unproved production change; this very run is the pull request's own suite, which is the \`test\` check's business; \`scope\` holds these test paths to the linked issue's globs; and whether the change strengthens or weakens the suite is the reviewer's, because the overlay carries it either way and so could never have told the two apart. The class is not claimable: AGENTIC_TEST_GLOBS and a \`proof/<slug>.json\` \`tests\` list decide what is overlaid and deliberately do not decide this.`,
+        detail: `\`${testCommand}\` passed on the base with the ${testFiles.length} test file(s) from head overlaid — and it could not have done anything else. The overlay withheld nothing this diff changes: every changed file is a test file by TEST_FILE_GLOBS and every one of them was overlaid, so the run that had to fail is this pull request's own suite with no part of its change absent for a test to bite on. That is not \`vacuous\`, which says nothing *depended* on the change and is cleared by writing a test that bites; here nothing could have depended on it and no test clears it. **This verdict passes the check**: the control could put no question to this diff, and a gate that refuses what it cannot judge refuses forever (#355). It would go back to being judged the moment the diff touched one file outside the test globs — that file is the difference the overlay withholds, and this diff has none. What carries the weight instead: nothing outside the test globs changed, so there is no unproved production change; this very run is the pull request's own suite, which is the \`test\` check's business; \`scope\` holds these test paths to the linked issue's globs; and whether the change strengthens or weakens the suite is the reviewer's, because the overlay carries it either way and so could never have told the two apart. The class is not claimable: AGENTIC_TEST_GLOBS and a \`proof/<slug>.json\` \`tests\` list decide what is overlaid and deliberately do not decide this.`,
       };
     }
     if (overlaid.status === 0) {
