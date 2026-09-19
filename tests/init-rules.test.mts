@@ -69,6 +69,35 @@ function requiresOneApprovingReview(body: any): boolean {
   );
 }
 
+/**
+ * Every parameter GitHub documents as required on a `pull_request` rule,
+ * written out literally here rather than read back off the payload: the fake
+ * `gh` above accepts whatever it is sent, so a parameter the installer never
+ * sends can only be caught by a list this file owns (#373). Source: REST
+ * "Create a repository ruleset", `rules[].parameters` for `pull_request`
+ * (docs.github.com/en/rest/repos/rules). Measured on 2026-09-19 against a
+ * disposable public repository with no ruleset: the create missing
+ * `require_code_owner_review` and `required_review_thread_resolution` is
+ * refused with `Invalid property /rules/0: data matches no possible input.
+ * (HTTP 422)`, and the same POST with those two added, and nothing else
+ * changed, is accepted.
+ */
+const PULL_REQUEST_REQUIRED_PARAMETERS = [
+  'dismiss_stale_reviews_on_push',
+  'require_code_owner_review',
+  'require_last_push_approval',
+  'required_approving_review_count',
+  'required_review_thread_resolution',
+];
+/**
+ * The required parameters a payload's `pull_request` rule does not carry.
+ * Presence, never truth: every one of them is legitimately `false` or `0`.
+ */
+function missingPullRequestParameters(body: any): string[] {
+  const p = prParameters(body) ?? {};
+  return PULL_REQUEST_REQUIRED_PARAMETERS.filter((name) => !Object.hasOwn(p, name));
+}
+
 const stateRulesEmpty = mkdtempSync(join(tmpdir(), 'agentic-init-rules-empty-'));
 cleanup(() => rmSync(stateRulesEmpty, { recursive: true, force: true }));
 const rulesEmpty = initWithGh(ghRepo, stateRulesEmpty, '--rules');
@@ -91,6 +120,16 @@ check(
 check(
   'the created ruleset leaves the review gate off by default and allows squash only',
   leavesReviewGateOff(postBody),
+  JSON.stringify(postBody),
+);
+check(
+  'the created ruleset carries every parameter the API requires on a pull_request rule',
+  missingPullRequestParameters(postBody).length === 0,
+  `missing: ${missingPullRequestParameters(postBody).join(', ')}\n${JSON.stringify(postBody)}`,
+);
+check(
+  'the created ruleset leaves the code-owner and thread-resolution gates off',
+  prParameters(postBody)?.require_code_owner_review === false && prParameters(postBody)?.required_review_thread_resolution === false,
   JSON.stringify(postBody),
 );
 
@@ -147,6 +186,11 @@ check(
   'the update keeps the review gate off: count 0 and the fetched dismiss_stale_reviews_on_push: false left alone',
   leavesReviewGateOff(liveBody),
   JSON.stringify(liveBody),
+);
+check(
+  'the updated ruleset carries every parameter the API requires on a pull_request rule too',
+  missingPullRequestParameters(liveBody).length === 0,
+  `missing: ${missingPullRequestParameters(liveBody).join(', ')}\n${JSON.stringify(liveBody)}`,
 );
 check(
   'the update keeps a pull_request parameter the installer does not set',
@@ -253,7 +297,9 @@ check(
 
 // The default carries the fetched stale-approval fields through as they are:
 // a ruleset already dismissing stale approvals keeps doing so, even though
-// --require-review was not passed and the count is reset to 0.
+// --require-review was not passed and the count is reset to 0. The two gates
+// #373 added beside them are carried the same way: the installer sets them
+// false on a create and never lowers one an existing ruleset has raised.
 const stateRulesCarry = rulesState('carry', [
   {
     id: 71,
@@ -263,7 +309,13 @@ const stateRulesCarry = rulesState('carry', [
     rules: [
       {
         type: 'pull_request',
-        parameters: { required_approving_review_count: 2, dismiss_stale_reviews_on_push: true, require_last_push_approval: true },
+        parameters: {
+          required_approving_review_count: 2,
+          dismiss_stale_reviews_on_push: true,
+          require_last_push_approval: true,
+          require_code_owner_review: true,
+          required_review_thread_resolution: true,
+        },
       },
     ],
     bypass_actors: [],
@@ -275,6 +327,11 @@ const carryBody = ruleBody(stateRulesCarry, 'put');
 check(
   'init --rules resets the count to 0 but carries a fetched dismiss_stale_reviews_on_push / require_last_push_approval: true through',
   leavesReviewGateOff(carryBody, { dismiss: true, lastPush: true }),
+  JSON.stringify(carryBody),
+);
+check(
+  'init --rules carries a fetched require_code_owner_review / required_review_thread_resolution: true through',
+  prParameters(carryBody)?.require_code_owner_review === true && prParameters(carryBody)?.required_review_thread_resolution === true,
   JSON.stringify(carryBody),
 );
 
