@@ -3,7 +3,8 @@
 [`../decisions.md`](../decisions.md) holds items 1 to 13 — the reasoning behind the
 loop, each item a decision, its reason and what it costs. This file is the rule the
 register runs by: what earns a number, what the three statuses mean, who may move an
-item between them, and where a new decision lands. The index below is the authority on
+item between them, where a new decision lands, and how an item already written is
+corrected. The index below is the authority on
 which item lives in which file, because some later material has not been relocated yet.
 
 ## What becomes a numbered decision
@@ -89,6 +90,62 @@ not a detail of item 8:
 - [`0000-template.md`](0000-template.md) is the shape such a file takes. It is a
   template, not a decision, and holds no number of its own.
 - A PR that adds a decision file adds its line to the index below in the same diff.
+
+## Correcting an item that is already written
+
+Every item ends with `## Updates` ([`0000-template.md`](0000-template.md)), and the
+template states one half of the rule: *the decision above keeps its original wording; an
+update never rewrites it.* That freeze is right for one of the two ways a written item
+goes wrong and wrong for the other, so the split is stated here rather than derived
+again — two implementers derived it independently on 2026-09-19, on separate pull
+requests and never in contact, and neither found it written.
+
+- **Overtaken — true when it was written, and the ground moved under it.** A cited line
+  that drifted when the file grew, a mechanism that changed after the item landed, a
+  consequence the code no longer has. The body keeps the wording and the numbers it was
+  written with, and a dated `## Updates` line says what moved, what still holds, and
+  which sentence above no longer describes the code. The original sentence is the record
+  of what was true on the item's `Date:`; rewriting it erases that record and buys
+  nothing, because the sentence was right on its date and the world moved, not the
+  sentence.
+- **Wrong when it was written — false on its own date.** A claim about the code that was
+  never true of it, a reason that does not hold, a citation that never pointed where it
+  said it did. This is corrected **in the body**, in place, where the sentence is. The
+  pull request that makes the correction is its record — an explanation of one change is
+  a note (**What stays a note**), and the diff shows what the sentence used to say.
+
+A sentence corrected in the body is rewritten whole, its citations with it, pointing at
+the code as of the correction: a freshly written sentence carrying an old line number
+asserts something nobody checked. The freeze keeps the numbers of the sentences that
+stay.
+
+**Why an appended line cannot serve the second case.** Read literally against a false
+sentence, the freeze is an instruction to leave the falsehood standing, and the argument
+against that does not depend on how widely the template's sentence is read. The
+acceptance criteria decide it on their own: a criterion that requires an item to **stop
+asserting** something cannot be satisfied by appending a line. Appending adds a
+sentence; it removes none. The body goes on making the claim, in the present tense,
+above the correction, and a reader stops at the section that answers the question they
+came with — so the sentence they read and cite is the false one, and the update at the
+foot of the file is never reached. A criterion phrased as a removal is met only by a
+removal. Nothing in the template asks otherwise: its freeze is about wording that is
+still true of its own date, which is exactly what a wrong-when-written sentence is not.
+
+**What a correction in the body may not touch.** A correction fixes a statement, never
+the item. Three things are not statements, and each has a route of its own:
+
+- **the decision** — the rule in force under `## Decision`. A rule that should now be
+  different is replaced by a new item that supersedes this one (**The three statuses**),
+  never edited into a different rule, which would leave nothing to show that the loop
+  ever ran by the old one.
+- **its `Status:`** — `accepted` comes only from an explicit written OK (**Silence never
+  accepts**), and `superseded by item <n>` is written by the pull request that lands the
+  replacement, on both sides. Neither is a correction.
+- **its number** — other files cite items by number and the index resolves the number to
+  the file, so renumbering moves every citation without touching one of them.
+
+So the freeze is narrowed here, not lifted: what may be corrected in place is a sentence
+that was false when it was written, and what may not is the decision it sits under.
 
 ## Index
 
