@@ -38,6 +38,15 @@ You implement exactly one issue, from start to PR. Nothing beyond it.
    *structural* (a missing module or export, a syntax error), the check needs a
    `test(red):` commit in `base..head` touching one of the overlaid test files to
    accept it — that commit is the vouch. Without one the check fails as `structural`.
+   A red is not enough by itself: the check reads *which file* failed, and a run
+   whose failures name no overlaid file is `unattributed`, not a pass — something
+   else was already broken on the base and that is what to fix (#354).
+   **Run it by hand before you open the PR**, from your worktree:
+   `node ci/negative-control.mts --base <merge-base> --head HEAD --branch <your branch>`.
+   This card has never told you to, and that gap is why a false pass went unnoticed
+   for a full review round: the two-argument form is the only way to compare a local
+   verdict with CI's, and an implementer doing exactly that is what caught it. A
+   verdict you cannot reproduce is one you have to take on faith.
 5. Implement until the test command is green. Commit at every green
    (`<type>(<scope>): <imperative>`).
 6. Run the check command (types, lint). Green.
