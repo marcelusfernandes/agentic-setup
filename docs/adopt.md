@@ -114,20 +114,55 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 
 ## `--plan-issue` asks
 
-`--plan-issue` takes the same inventory and opens **one** issue labelled `human:pending`
-(creating that label first if the repository does not have it yet), titled
-`Adoption plan: what this repository is missing`. The body renders the inventory, lists
-exactly the gaps found as checkboxes — one per gap, each saying what adoption would do
-about it — and ends with the raw JSON. Nothing is written to disk: no adoption record, no
-file, no setting. What it does change is on GitHub, and there are two things there: the
-issue itself, and the `human:pending` label when the repository did not already have it.
-Both are named below.
+`--plan-issue` takes the same inventory and opens **one** issue labelled `human:pending`,
+titled `Adoption plan: what this repository is missing`. The body renders the inventory,
+lists exactly the gaps found as checkboxes — one per gap, each saying what adoption would
+do about it — and ends with the raw JSON. Nothing is written to disk: no adoption record,
+no file, no setting. What it does change is on GitHub, and there are at most three things
+there: the issue itself, and **two label writes** — `human:pending` and `human:decided`.
+All are named below.
+
+### The two labels, before the issue
+
+Both labels of the question are created before the issue, and only when the inventory's
+label read did not see them. `human:pending` is the one the issue carries.
+`human:decided` is the one the plan's own last line asks the reader to move it to, and
+the one [`--pr`](#--pr-opens-the-adoption-pull-request) refuses without. Creating only
+the first left the label that records the decision behind the decision, so on a
+repository nobody prepared (the only kind this script exists for) answering the plan
+meant creating a label by hand first. Both carry the colour and description
+[`labels.json`](../labels.json) seeds, so the pair matches the rest of the vocabulary
+rather than two colours `gh` picked at random.
+
+**A label the repository already has is left exactly as it is.** The guard is the
+inventory read: a label that read saw is never passed to `gh label create` at all, so a
+colour or a description a person chose stays theirs, and a repository that already has
+both makes no label write at all.
+
+That guard, and not `--force`, is what protects an existing label — and the distinction
+matters, because the call does carry `--force`, which `gh` documents as *"update the
+label color and description if label already exists"*. There is one window where that
+applies: when the inventory read did **not** see a label the repository nonetheless has
+— `labelsTruncated` is `true` and the label sits off the page, or someone created it
+between the read and this write. In that window `--force` does overwrite the label's
+colour and description with the seeded values. It stays anyway, because the alternative
+is worse: without it that same window ends the run with
+`label:human:pending:not-created` or `label:human:decided:not-created` over a label that
+exists, opening no issue at all, and telling "already exists" apart from a real failure
+would mean reading `gh`'s wording — which every named error here exists to avoid.
 
 The body carries one warning the JSON carries as a field: when `labelsTruncated` is
 `true`, the `Labels:` line says so and names the limit the read asked for, because the
 checklist right below it lists the labels adoption would create and that list is drawn
 from a page. A person should not tick a box without knowing the list behind it was
 complete.
+
+That checklist counts neither `human:pending` nor `human:decided` among the labels
+adoption would create: this run created both, so a box ticked for them would ask for work
+already done. The `labels:missing` gap itself is unchanged — `scripts/lib/adopt/inventory.mts`
+computes it from the read taken *before* the write, and that read was accurate when it was
+taken — so a repository whose only missing labels were those two still shows the box, and
+the box says so rather than naming none.
 
 That is the repository's own pattern. `.github/workflows/guard-main.yml` opens exactly
 such an issue and deduplicates it by title, and the three readers that honour the label
@@ -564,15 +599,21 @@ names: `agentic.config.json` for `--record`, the files under `.github/workflows/
 `--inventory`, `--plan-issue` and `--pr` write no file at all. It is **not** a claim that
 the run had no effect on GitHub — `--pr` is the clearest case: it creates commits in the
 object database, pushes a branch and opens a pull request, and every one of those is the
-point of the flag. Two branches of `--plan-issue` show the same thing:
+point of the flag. Three branches of `--plan-issue` show the same thing:
 
 - **The plan issue itself.** `--plan-issue` is a mutation by design: on success the issue
-  exists, and so does the `human:pending` label when the repository did not already have
-  it. That is the point of the flag, not an exception to the policy.
-- **A `gh issue create` that fails after the label was created.** The label is created
+  exists, and so do `human:pending` and `human:decided` where the repository did not
+  already have them. That is the point of the flag, not an exception to the policy.
+- **A second label create that fails after the first succeeded.** The labels are written
+  in order, `human:pending` then `human:decided`. When the second fails, the run stops
+  with `label:human:decided:not-created`, no issue is opened, and the first label is left
+  behind — created, and carried by nothing. Running `--plan-issue` again is safe and is
+  the remedy: the guard skips the label that now exists and retries only the one that does
+  not.
+- **A `gh issue create` that fails after the labels were created.** The labels are created
   first, because the issue cannot carry a label that does not exist. When `gh issue
-  create` then fails, the run stops with `plan-issue:not-created` and the label is left
-  behind — created, and carried by nothing. Nothing on disk changed and no issue was
+  create` then fails, the run stops with `plan-issue:not-created` and the labels are left
+  behind. Nothing on disk changed and no issue was
   opened, but the repository is not byte-for-byte as the run found it. The same holds for
   `plan-issue:unreadable` when the issue was created and its number could not be read back
   from what `gh` printed: there, the issue exists and the script cannot name it. Run
@@ -580,7 +621,9 @@ point of the flag. Two branches of `--plan-issue` show the same thing:
 
 Every other named error below is either reached before any write is attempted, or is that
 write itself failing — and no second write follows it. `label:human:pending:not-created`
-is the label create that failed, so no issue was opened and no label exists;
+is the first label create that failed, so no issue was opened and neither label exists;
+`label:human:decided:not-created` is the second, so no issue was opened and
+`human:pending` may exist from the same run (the bullet above);
 `record:not-written` is `agentic.config.json` failing to be written, and the write is a
 single `writeFileSync`, not a rename, so a file left half-written by the filesystem is
 possible. `--inventory` reports it as `record:unparsable` on the next run rather than
@@ -597,7 +640,8 @@ reading it as "no record"; delete the file and run `--record` again.
 | `workflows:unreadable` | `.github/workflows` exists and could not be listed |
 | `plan-issue:unreadable` | the open-issue search failed, or the created issue's number could not be read back from what `gh` printed |
 | `plan-issue:not-created` | `gh issue create` failed; its first line, when it had one, is in `detail` |
-| `label:human:pending:not-created` | the label does not exist and could not be created |
+| `label:human:pending:not-created` | the label does not exist and could not be created; it is the first of the two writes, so neither label exists |
+| `label:human:decided:not-created` | the same for the second write; `human:pending` may have been created by the same run, and running `--plan-issue` again retries only what is missing |
 | `record:unreadable` | `agentic.config.json` exists and could not be read |
 | `record:unparsable` | it exists and is not JSON |
 | `record:unknown-key` | it holds a key the shape does not define; `field` names it |
