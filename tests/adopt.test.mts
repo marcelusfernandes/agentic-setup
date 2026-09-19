@@ -46,6 +46,13 @@ const ALL_LABELS = [
 const ALL_LABELS_JSON = JSON.stringify(ALL_LABELS.map((name) => ({ name })));
 
 /**
+ * The vocabulary minus the two labels `--plan-issue` writes itself: the one
+ * repository where those two are the only thing `labels:missing` is about,
+ * and the checklist therefore has no label left to name.
+ */
+const NO_HUMAN_LABELS_JSON = JSON.stringify(ALL_LABELS.filter((name) => !name.startsWith('human:')).map((name) => ({ name })));
+
+/**
  * The page `gh label list` is asked for. A repository with at least this many
  * labels answers with exactly this many and says nothing about the ones it
  * left out, which is the whole point of the case below.
@@ -61,7 +68,7 @@ const FULL_PAGE_JSON = JSON.stringify(
 const KNOBS = {
   FAKE_GH_FAIL: ['', 'repo', 'issue-list', 'issue-create', 'label-decided'],
   FAKE_GH_RULES: ['', 'full'],
-  FAKE_GH_LABELS: ['', 'all', 'full-page'],
+  FAKE_GH_LABELS: ['', 'all', 'full-page', 'no-human'],
 };
 
 /** `knob NAME "$NAME" allowed...` lines, one per knob, in a stable order. */
@@ -109,6 +116,7 @@ case "\${1:-} \${2:-}" in
       # JSON in a case arm is unreadable, and the file is what a repository
       # with more labels than the limit would hand back.
       full-page) cat "$(dirname "$0")/labels-full-page.json" ;;
+      no-human) echo '${NO_HUMAN_LABELS_JSON}' ;;
       *) echo '[]' ;;
     esac
     ;;
@@ -597,6 +605,23 @@ check(
   'and it still names the labels adoption would create, so the box says what ticking it buys',
   /`state:ready`/.test(kLabelsBox) && /`review:approved`/.test(kLabelsBox),
   kLabelsBox,
+);
+
+// The one repository where the filter removes every name the checkbox had:
+// the gap is still real — the inventory read it before the write — so the box
+// stays, and it has to say something other than "create the 0 missing label(s)".
+const kOnly = newStateDir();
+const kOnlyRun = adopt(['--plan-issue'], gappy, { FAKE_GH_LABELS: 'no-human' }, kOnly);
+const kOnlyArgs = existsSync(join(kOnly, 'issue-create.args'))
+  ? readFileSync(join(kOnly, 'issue-create.args'), 'utf8').split('\0').filter((s) => s.length > 0)
+  : [];
+const kOnlyBody = kOnlyArgs.indexOf('--body') === -1 ? '' : kOnlyArgs[kOnlyArgs.indexOf('--body') + 1];
+const kOnlyBox = kOnlyBody.split(/\r?\n/).find((line) => line.startsWith('- [ ] `labels:missing`')) ?? '';
+check('a repository missing only the two human labels still opens the issue', kOnlyRun.status === 0 && kOnlyBox.length > 0, `${kOnlyRun.stdout}\n${kOnlyRun.stderr}`);
+check(
+  'and its labels checkbox names no label to create, and says the two it created were the only ones missing',
+  !/create the \d+ missing/.test(kOnlyBox) && kOnlyBox.includes('human:pending') && kOnlyBox.includes('human:decided') && /\bcreated both\b/.test(kOnlyBox),
+  kOnlyBox,
 );
 
 check(
