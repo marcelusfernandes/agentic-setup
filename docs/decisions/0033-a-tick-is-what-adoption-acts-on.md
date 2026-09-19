@@ -153,8 +153,10 @@ they are written down rather than left in the diff.
   *first* backticked span counts, so a remedy quoting a second path does not become a
   second decision. That is the same failure mode `issue-lint` refuses on `authorised:`
   lines — one line, two spans, and the parser silently taking both — recorded as
-  [item 31](0031-a-bare-glob-with-a-backticked-justification-is-refused.md), which names
-  #316 for the multi-span refusal and #357 for its mirror. Here the direction is
+  [item 31](0031-a-bare-glob-with-a-backticked-justification-is-refused.md). That item
+  *is* the #357 rule, and it describes itself as "the direct mirror of #316, which refused
+  a grant line carrying more than one backticked span" — #316 is the multi-span refusal,
+  and item 31 is its mirror, not the other way round. Here the direction is
   narrowing rather than refusal, because a plan issue is answered by a person who is not
   writing a grant, and a refusal over a second backtick would stop an adoption over
   punctuation.

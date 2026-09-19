@@ -469,13 +469,16 @@ export function planPullRequest(record: AdoptionRecord, options: PlanOptions): P
   // so its jobs exist nowhere and neither the deliberate red nor the body may
   // name them (#368).
   //
-  // The test is the **reason**, never `content === null`. Three other reasons
-  // plan a workflow with no content — `unchanged`, where the base already
-  // carries the generated file, and `not-generated`, where a person wrote it
-  // — and in both the workflow exists at the head and nobody declined
-  // anything. Reading "no content" as "declined" would make the body say the
-  // box was left empty over a decision that ticked it, in the one artefact
-  // whose purpose is recording what was decided.
+  // The test is the **reason**, never `content === null`. A planned workflow
+  // carries no content for three reasons and only one of them is a decision:
+  // `declined`, but also `unchanged`, where the base already carries the
+  // generated file, and `not-generated`, where a person wrote it. In those two
+  // the workflow exists at the head and nobody declined anything. Reading "no
+  // content" as "declined" would make the body say the box was left empty over
+  // a decision that ticked it, in the one artefact whose purpose is recording
+  // what was decided. (`planSettings` has three more such reasons, on
+  // `.claude/settings.json`; none of them reaches a workflow, which is why the
+  // count here is three and not six — `docs/decisions/0033-…`.)
   const checks = workflows.some((file) => file.reason === 'declined') ? [] : rendering.checks;
   const files: PlannedFile[] = [
     // The red first, so the plan reads in the order the commits land.

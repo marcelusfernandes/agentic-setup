@@ -211,6 +211,10 @@ ${PLAN_ARMS}
     esac
     ;;
   "issue comment")
+    if [ "\${FAKE_GH_FAIL:-}" = "comment" ]; then
+      echo "fake-gh: the comment could not be posted" >&2
+      exit 1
+    fi
     : > "\$state/issue-comment.args"
     for a in "\$@"; do printf '%s\\0' "\$a" >> "\$state/issue-comment.args"; done
     echo "https://github.com/org/repo/issues/${PLAN_ISSUE}#issuecomment-1"
@@ -323,7 +327,10 @@ const pathsIn = (repo: string, range: string): string[] =>
 
 // --- the modules under test, imported rather than spawned -------------------
 type Decision = { accepted: string[]; declined: string[] };
-type Module = { parseDecision: (body: string) => Decision };
+type Module = {
+  parseDecision: (body: string) => Decision;
+  decidedBy: (timeline: unknown, label: string) => string | null;
+};
 
 let mod: Module | null = null;
 try {
@@ -520,6 +527,33 @@ check(
 );
 check('a timeline that cannot be read opens no pull request', !existsSync(join(f.stateDir, 'pr-create.args')), f.stateDir);
 
+// --- F2: a comment that cannot be written is the one failure that leaves state
+// `pr:decision-not-recorded` is the only new path that leaves something behind:
+// the branch is pushed by the time the comment is attempted, and it stays
+// pushed. The pull request is not opened, so re-running is the remedy — and
+// re-running has to answer `{ held }` on the branch rather than commenting a
+// second time, which is the whole reason the comment sits after the push.
+const mute = fixture();
+const f2 = adopt(['--pr'], mute.repo, { FAKE_GH_PLAN: 'all', FAKE_GH_FAIL: 'comment' });
+const f2Out = parse(f2.stdout);
+check(
+  'a comment that cannot be written exits 1 as pr:decision-not-recorded',
+  f2.status === 1 && f2Out?.error === 'pr:decision-not-recorded',
+  `${f2.stdout}\n${f2.stderr}`,
+);
+const mutedHead = remoteSha(mute.origin, `refs/heads/${BRANCH}`);
+check('the branch is on origin: the push happened before the comment was attempted', mutedHead.length === 40, mutedHead || '(no branch)');
+check('no pull request is opened over an unrecorded decision', !existsSync(join(f2.stateDir, 'pr-create.args')), f2.stateDir);
+check('nothing is written into the working tree either', git(['status', '--porcelain'], mute.repo) === '', git(['status', '--porcelain'], mute.repo));
+
+// The remedy `docs/adopt.md` names: run it again. The branch is there, so the
+// create-only push is `held`, and the run stops before it comments twice.
+const again = adopt(['--pr'], mute.repo, { FAKE_GH_PLAN: 'all' });
+check('running it again answers { held } rather than pushing over the branch', parse(again.stdout)?.held === BRANCH && again.status === 2, `${again.stdout}\n${again.stderr}`);
+check('and leaves the remote branch exactly where it was', remoteSha(mute.origin, `refs/heads/${BRANCH}`) === mutedHead, remoteSha(mute.origin, `refs/heads/${BRANCH}`));
+check('a held run comments nothing: one decision is recorded once', !existsSync(join(again.stateDir, 'issue-comment.args')), again.stateDir);
+check('and opens no pull request', !existsSync(join(again.stateDir, 'pr-create.args')), again.stateDir);
+
 // --- G: the parser itself, over bodies written out here ---------------------
 // The spawn cases above are what invariant 6 asks for; these prove the reading
 // directly, the way `resolvePlanIssue` is proved in the sibling file. Every
@@ -587,11 +621,65 @@ check(
   JSON.stringify(read('- [x] `labels:missing` — create `state:ready` too')),
 );
 
+// --- G2: who decided is the LAST matching event's actor, absent or not ------
+// Timelines are written out here as literals, the shape GitHub renders.
+const who = (timeline: unknown): string | null | 'not-exported' => {
+  if (!mod?.decidedBy) return 'not-exported';
+  try {
+    return mod.decidedBy(timeline, DECIDED_LABEL);
+  } catch {
+    return 'not-exported';
+  }
+};
+const labeled = (name: string, login: string | null) => ({
+  event: 'labeled',
+  label: { name },
+  ...(login === null ? {} : { actor: { login } }),
+});
+
+check('decidedBy is exported', typeof mod?.decidedBy === 'function');
+check(
+  'the last labeled event for the label is the one reported, not the first',
+  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
+  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)])),
+);
+check(
+  'an event for another label never decides',
+  who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)]) === DECIDED_BY,
+  String(who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)])),
+);
+check('a timeline naming no such event answers null', who([labeled('human:pending', PENDING_BY)]) === null, String(who([labeled('human:pending', PENDING_BY)])));
+check('a timeline that is not a list answers null', who('not a list') === null && who(null) === null, `${who('not a list')} | ${who(null)}`);
+
+// The correction the review caught. GitHub omits `actor` for an event
+// attributed to a deleted user or to an integration, and the guard used to
+// keep the previous login when that happened — reporting *a different person*
+// as the one who decided. A login that is wrong looks exactly like a login
+// that is right; a null announces itself, which is the direction this module
+// fails in everywhere else.
+check(
+  'a last event with no actor answers null, never the earlier decider',
+  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)]) === null,
+  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)])),
+);
+check(
+  'the same for an actor whose login is null rather than absent',
+  who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }]) === null,
+  String(who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }])),
+);
+check(
+  'and an actorless event earlier in the timeline does not erase a later decider',
+  who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
+  String(who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)])),
+);
+
 // --- H: only a *declined* box empties the checks ----------------------------
-// A planned workflow carries no content for four different reasons, and only
+// A planned workflow carries no content for three different reasons, and only
 // one of them is a decision: `declined`, but also `unchanged` when the base
 // already carries the generated file and `not-generated` when a person wrote
-// it. Reading "no content" as "declined" made the body say the box was left
+// it. (`planSettings` has three more, on `.claude/settings.json`, and none of
+// them reaches a workflow — which is why the count is three and not six.)
+// Reading "no content" as "declined" made the body say the box was left
 // empty over a decision that ticked it — a false sentence about the decision,
 // in the artefact whose purpose is recording the decision.
 //

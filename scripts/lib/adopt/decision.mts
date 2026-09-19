@@ -132,6 +132,17 @@ export type TimelineEvent = {
  * a timeline that *answered* and named no such event, which is a fact about
  * the issue; a timeline that could not be read at all never reaches here, and
  * `pr-run.mts` fails closed on it by name.
+ *
+ * **The last matching event's actor is the answer, including when it has
+ * none.** An earlier version kept the previous login when the last event
+ * carried no actor — GitHub omits one for an event attributed to a deleted
+ * user or to an integration — and that reported *a different person* as the
+ * one who decided. It is the direction this module's own reasoning forbids:
+ * the point of failing closed on an unreadable timeline is that `null` must
+ * not mean two things, and carrying an earlier login forward makes a non-null
+ * value mean two things instead, which is worse. A login that is wrong looks
+ * exactly like a login that is right, and nothing downstream can tell them
+ * apart; a `null` announces itself.
  */
 export function decidedBy(timeline: unknown, label: string): string | null {
   if (!Array.isArray(timeline)) return null;
@@ -140,7 +151,7 @@ export function decidedBy(timeline: unknown, label: string): string | null {
     if (raw?.event !== 'labeled') continue;
     if (String(raw?.label?.name ?? '') !== label) continue;
     const actor = String(raw?.actor?.login ?? '');
-    if (actor !== '') login = actor;
+    login = actor === '' ? null : actor;
   }
   return login;
 }
