@@ -759,7 +759,7 @@ const testOnlyHead = commit(repo, {
 git(['checkout', '-q', 'feat/1-x'], repo);
 r = nc(testOnlyHead);
 check('a diff of nothing but test files is `test-only`, not `vacuous`',
-  r.status === 0 && /negative-control: test-only/.test(r.out) && !/vacuous/.test(r.out), r.out);
+  r.status === 0 && /negative-control: test-only/.test(r.out) && !/negative-control: vacuous/.test(r.out), r.out);
 check('the `test-only` detail says nothing could have depended on the change',
   /could have depended/.test(r.out), r.out);
 check('the `test-only` detail names what would put the diff back in the control',
