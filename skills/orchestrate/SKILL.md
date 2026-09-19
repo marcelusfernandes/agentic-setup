@@ -439,7 +439,10 @@ Then act on the verdict:
   `agent`) approval *is* that label plus the `<!-- agentic-reviewed-sha: <oid> -->` marker
   you commented above: it reads the newest marker on the PR and compares it with the PR's
   current `headRefOid`. The opt-in `approved` mode adds `reviewDecision === 'APPROVED'`
-  from the server **on top of everything `agent` requires**, marker included; it is
+  from the server **on top of everything `agent` requires**, marker included, and pins that
+  review too: the newest `APPROVED` entry of `gh pr view <pr> --json reviews` carries the
+  commit it was cast against, and it must be the head as well, so an approval GitHub did
+  not dismiss after a push merges nothing (`docs/decisions.md` item 25); it is
   selected by adding `--require-review` to the run above, or by a base branch whose effective
   rules already require an approving review — never by whether `AGENTIC_REVIEWER_TOKEN` is
   set in your environment, which selects no mode at all and only gives the reviewer the
@@ -448,10 +451,13 @@ Then act on the verdict:
   commit or nothing. `missing` names
   what is wrong: `state=<x>` (not `OPEN`), `review:not-approved` (the label, or in mode
   `approved` the server's decision as well), `head:changed` (someone
-  pushed after the review, or no marker records which head was reviewed — write one and
+  pushed after the review, or no marker records which head was reviewed, or in mode
+  `approved` the approving review was cast against another commit — write one and
   review again; a push after the review sends the PR back instead of merging),
   `gh-pr-comments` (the comments read could not answer, so the reviewed head is unknown and
-  nothing is merged), `merge:not-mergeable` (GitHub does not report the head as
+  nothing is merged), `gh-pr-reviews` (mode `approved` only: the reviews read could not
+  answer, so the commit the approving review was cast against is unknown — the same failing
+  closed), `merge:not-mergeable` (GitHub does not report the head as
   `MERGEABLE` — a conflict to send back, or a mergeability it has not computed yet, which
   simply means running `land` again in a moment), `checks:required` (a required check
   outside bucket `pass`, or no required check at all), `merge:not-clean` (mode `agent`

@@ -85,7 +85,10 @@ Two roles:
    `<!-- agentic-reviewed-sha: <oid> -->` marker equal to the head, and every required
    check in bucket `pass`, then `gh pr merge <pr> --squash --auto --match-head-commit
    <headRefOid>` pinned to that same head. `approved` is the opt-in that adds the server's
-   own `APPROVED` on top of all of it; `docs` is the `type:docs` exemption from the
+   own `APPROVED` on top of all of it, pinned too: the newest approving review's own
+   commit (`gh pr view <pr> --json reviews`, whose entries carry the oid they were cast
+   against) must be that same head, so an approval GitHub did not dismiss after a push
+   merges nothing. `docs` is the `type:docs` exemption from the
    review, never from the checks. `gate` names who *else* holds the line — `ruleset` when
    the base branch's effective rules carry a `required_status_checks` rule,
    `client-checks` otherwise — and the buckets are read in both. `Closes #N` closes the
@@ -102,8 +105,10 @@ Two roles:
    issue you did not land: an entry with `foreignLock: true` is the other coordinator's to
    merge, so waiting on it is waiting on work this route does not own
    `land.mts` refused (`missing`: `state=<x>`, `review:not-approved`, `head:changed` —
-   the head is not the commit the marker records, or no marker records one —
-   `gh-pr-comments`, `merge:not-mergeable`, `checks:required`, `merge:not-clean`,
+   the head is not the commit the marker records, or no marker records one, or in mode
+   `approved` it is not the commit the approving review was cast against —
+   `gh-pr-comments`, `gh-pr-reviews` (mode `approved` only: the reviews read could not
+   answer), `merge:not-mergeable`, `checks:required`, `merge:not-clean`,
    `gh-rules` or `gh-pr-view`) → read it and decide between waiting and sending the PR
    back; never a retry with `--admin`, which the session denies anyway
    rejected (CI or reviewer), first time → back to the implementer with the summary
