@@ -73,20 +73,10 @@
 //     bodies newest-first, and the head-oid guard already refuses
 //     `gh-pr-view`. They are here because neither rule was pinned anywhere.
 //
-//   * #308's cases. The base selects mode `docs` from the `type:docs` label
-//     alone and never reads the pull request's changed paths at all, so the
-//     files endpoint appears in no argv log there. The assertion reds: AY
-//     (case C's log carries no files read), AZ (PR 47, a mixed diff carrying
-//     the label, which the base merges in mode `docs` with no marker read —
-//     the issue's `## Proof` claim, and it still holds at 6c894f5), BA (PR
-//     48, an unreadable file list, which the base merges on its
-//     `review:approved` label without ever asking for the list), BB (PR 50,
-//     an empty file list under the label, merged in mode `docs`), BC (PR 51,
-//     the `.github/scripts/agentic/**` carve-out, likewise) and BE (the
-//     class pin, which finds no `DOCS_PATH_GLOBS` in `scripts/land.mts` on
-//     the base). BD (PR 49, a docs-only diff with no label) is coverage, not
-//     a red, and is marked as such where it stands: it pins the half of the
-//     rule that must not change.
+//   * #308's cases. The base picks mode `docs` off the `type:docs` label alone and
+//     never reads the changed paths, so AY, AZ (PR 47 — the issue's `## Proof`
+//     claim, re-measured at 6c894f5: the base merges it in mode `docs` with no
+//     marker read), BA, BB, BC and BE are reds; BD is coverage.
 //
 // Cases M and O remain the negative control for #78, and P-T for #144: the
 // base named no commit on either merge call before those landed.
@@ -127,27 +117,15 @@ case "\${1:-} \${2:-}" in
     esac
     ;;
   "api repos/{owner}/{repo}/pulls/"*"/files")
-    # The changed-path read land.mts decides its docs mode from (#308). REST
-    # and paginated on purpose: \`gh pr view --json files\` is GraphQL and asks
-    # for the first 100 entries only, so a pull request whose first hundred
-    # files are Markdown would read as docs-only however much code follows.
+    # The changed-path read land.mts decides its docs mode from (#308).
     files_pr=\$(printf '%s' "$2" | sed -e 's|.*/pulls/||' -e 's|/files$||')
     case "\$files_pr" in
-      # The docs fixtures: every path in a documentation class.
       12|33|4[0-3]) printf '%s\\n' 'docs/decisions.md' 'docs/workflow.md' ;;
-      # 47: the label's disagreement with the diff — one scripts/ file beside
-      # the documentation ones, and everything else in place.
-      47) printf '%s\\n' 'docs/decisions.md' 'scripts/land.mts' ;;
-      # 48: the read that cannot answer.
+      47) printf '%s\\n' 'docs/decisions.md' 'scripts/land.mts' ;;  # mixed
       48) echo "fake-gh: could not read the changed files" >&2; exit 1 ;;
-      # 49: docs-only, and no type:docs label on the PR itself.
-      49) printf '%s\\n' 'docs/decisions.md' ;;
-      # 50: a readable answer carrying no files at all.
-      50) : ;;
-      # 51: the carve-out — the gate's own code, copied into an adopting
-      # repository under .github/, which the .github/** class would otherwise
-      # swallow whole.
-      51) printf '%s\\n' 'docs/decisions.md' '.github/scripts/agentic/negative-control.mts' ;;
+      49) printf '%s\\n' 'docs/decisions.md' ;;  # docs-only, unlabelled
+      50) : ;;                                   # readable, no files at all
+      51) printf '%s\\n' '.github/scripts/agentic/negative-control.mts' ;;
       *) printf '%s\\n' 'scripts/land.mts' ;;
     esac
     ;;
@@ -214,9 +192,7 @@ case "\${1:-} \${2:-}" in
       case "$pr" in
         11|20) label='[]' ;;
         12|33|4[0-3]|50) label='[{"name":"type:docs"}]' ;;
-        # 47 and 51 carry everything both bindings ask for on top of the docs
-        # label, so what refuses them can only be the diff (#308).
-        47|51) label='[{"name":"type:docs"},{"name":"review:approved"}]' ;;
+        47|51) label='[{"name":"type:docs"},{"name":"review:approved"}]' ;;  # #308: only the diff can refuse these
       esac
       case "$pr" in
         20|27|28|38|39) decision='"APPROVED"' ;;
@@ -764,115 +740,58 @@ const ax = land(46, { FAKE_GH_RULES: 'required' });
 check('a run whose status is not completed refuses, whatever its bucket says', ax.status === 1 && JSON.stringify(parse(ax.stdout)?.missing) === JSON.stringify(['checks:required']), ax.stdout);
 check('a run that has not completed never reached gh pr merge', !/pr merge/.test(ax.log), ax.log);
 
-// --- AY (#308 AC1): the docs exemption is decided from the pull request's
-// changed paths. PR 12 (case C) is docs-only, so it keeps mode `docs` — but
-// it now has to *prove* that, and the read that proves it happens before any
-// merge call rather than after one. On the base nothing reads the paths at
-// all, so the endpoint never appears in the log.
+// --- AY (#308 AC1): the exemption is decided from the changed paths, so that read happens, and before any merge call.
 const FILES_READ = (pr: number): string => `api repos/{owner}/{repo}/pulls/${pr}/files --paginate --jq .[].filename`;
-check('the docs exemption reads the PR\'s changed paths', c.log.includes(FILES_READ(12)), c.log);
-check('the changed-path read happens before any merge call', c.log.indexOf(FILES_READ(12)) >= 0 && c.log.indexOf(FILES_READ(12)) < c.log.indexOf('pr merge 12'), c.log);
+check('the docs exemption reads the PR\'s changed paths, before any merge call', c.log.includes(FILES_READ(12)) && c.log.indexOf(FILES_READ(12)) < c.log.indexOf('pr merge 12'), c.log);
 
-// --- AZ (#308 AC2): a `type:docs` label on a pull request whose diff leaves
-// the documentation classes is a *named refusal*, not a silent docs-mode
-// merge and not a silent fall back to mode `agent` either — the label
-// becoming inert would hide the disagreement as thoroughly as the old
-// override did. PR 47 carries everything both bindings ask for: the docs
-// label, `review:approved`, a marker equal to its head and green required
-// checks. The only thing against it is one `scripts/land.mts` in its diff.
+// --- AZ (#308 AC2): `type:docs` on a diff that leaves the documentation classes is a
+// *named refusal* — an inert label would hide the disagreement as thoroughly as the
+// override did. PR 47 has everything else; only its `scripts/` file is against it.
 const ay = land(47, { FAKE_GH_RULES: 'required' });
-check('a type:docs label on a mixed diff refuses (exit 1)', ay.status === 1, `${ay.stdout}\n${ay.stderr}`);
 const ayOut = parse(ay.stdout);
+check('a type:docs label on a mixed diff refuses (exit 1)', ay.status === 1, `${ay.stdout}\n${ay.stderr}`);
 check('a mixed diff names missing: [docs:label-mismatch] and never merges', JSON.stringify(ayOut?.missing) === JSON.stringify(['docs:label-mismatch']) && !/pr merge/.test(ay.log), `${ay.stdout}\n${ay.log}`);
-check('the mismatch refusal names the non-docs path it read, and the mode that applies instead', /scripts\/land\.mts/.test(String(ayOut?.refused)) && ayOut?.mode === 'agent', ay.stdout);
-check('a mixed diff read the changed paths, and read no checks after refusing', ay.log.includes(FILES_READ(47)) && !/pr checks/.test(ay.log), ay.log);
+check('the mismatch names the non-docs path it read, and the mode that applies instead', /scripts\/land\.mts/.test(String(ayOut?.refused)) && ayOut?.mode === 'agent', ay.stdout);
+check('a mixed diff read the changed paths, and no checks after refusing', ay.log.includes(FILES_READ(47)) && !/pr checks/.test(ay.log), ay.log);
 
-// --- BA (#308 AC4): the changed-path read is the input the mode is decided
-// from, so a read that cannot answer refuses under its own name and merges
-// nothing. A file list that cannot be read is not a docs-only diff — this
-// file fails closed on a read that cannot answer (CLAUDE.md invariant 3), the
-// way it already does for the rules, the comments and the reviews.
+// --- BA (#308 AC4): a file list that cannot be read is not a docs-only diff.
 const az = land(48, { FAKE_GH_RULES: 'required' });
-check('an unreadable file list refuses (exit 1)', az.status === 1, `${az.stdout}\n${az.stderr}`);
 const azOut = parse(az.stdout);
+check('an unreadable file list refuses (exit 1)', az.status === 1, `${az.stdout}\n${az.stderr}`);
 check('an unreadable file list names missing: [gh-pr-files] and mode null', JSON.stringify(azOut?.missing) === JSON.stringify(['gh-pr-files']) && azOut?.mode === null, az.stdout);
 check('an unreadable file list never merged and never read the checks', !/pr merge/.test(az.log) && !/pr checks/.test(az.log), az.log);
 
-// --- BB (#308 AC2, the empty case): a readable answer carrying no files is
-// not a docs-only diff either. Nothing in it shows the diff stays inside the
-// documentation classes, so the label's claim is unverified, not granted.
+// --- BB (#308 AC2, empty): no files shows nothing about where the diff sits.
 const bb = land(50, { FAKE_GH_RULES: 'required' });
-check('an empty file list under type:docs refuses (exit 1)', bb.status === 1, `${bb.stdout}\n${bb.stderr}`);
 const bbOut = parse(bb.stdout);
-check('an empty file list names missing: [docs:label-mismatch] and never merges', JSON.stringify(bbOut?.missing) === JSON.stringify(['docs:label-mismatch']) && !/pr merge/.test(bb.log), `${bb.stdout}\n${bb.log}`);
-check('the empty-list refusal says gh reported no changed files rather than naming a path', /no changed files/i.test(String(bbOut?.refused)), bb.stdout);
+check('an empty file list under type:docs refuses, named and unmerged', bb.status === 1 && JSON.stringify(bbOut?.missing) === JSON.stringify(['docs:label-mismatch']) && !/pr merge/.test(bb.log), `${bb.stdout}\n${bb.log}`);
+check('the empty-list refusal says gh reported no changed files, naming no path', /no changed files/i.test(String(bbOut?.refused)), bb.stdout);
 
-// --- BC (#308 AC1, the carve-out): `.github/scripts/agentic/**` is the one
-// path no documentation class may cover. `scripts/init.mts` copies this
-// repository's `ci/` there in an adopting repository, so a `.github/**` class
-// that swallowed it would let a pull request rewrite the merge gate's own
-// code under the merge gate's own review exemption.
+// --- BC (#308 AC1, the carve-out): `.github/scripts/agentic/**` is the one path no
+// class covers — `init.mts` copies `ci/` there, so `.github/**` would else exempt a rewrite of the gate under the gate.
 const bc = land(51, { FAKE_GH_RULES: 'required' });
-check('the gate\'s own code under .github/scripts/agentic refuses (exit 1)', bc.status === 1, `${bc.stdout}\n${bc.stderr}`);
 const bcOut = parse(bc.stdout);
-check('the carve-out names missing: [docs:label-mismatch] and the path it read', JSON.stringify(bcOut?.missing) === JSON.stringify(['docs:label-mismatch']) && /\.github\/scripts\/agentic\//.test(String(bcOut?.refused)), bc.stdout);
-check('the carve-out never invoked gh pr merge', !/pr merge/.test(bc.log), bc.log);
+check('the gate\'s own code under .github/scripts/agentic refuses, named and unmerged', bc.status === 1 && JSON.stringify(bcOut?.missing) === JSON.stringify(['docs:label-mismatch']) && !/pr merge/.test(bc.log), `${bc.stdout}\n${bc.log}`);
+check('the carve-out refusal names the path it read', /\.github\/scripts\/agentic\//.test(String(bcOut?.refused)), bc.stdout);
 
-// --- BD: coverage, not a red, and said so rather than claimed. A docs-only
-// diff with no `type:docs` label stays in mode `agent` and merges on its
-// marker: the paths are necessary for the exemption and never sufficient, so
-// #308 takes an override away without handing a new one to every docs-only
-// pull request. The base reaches the same verdict by the other route — no
-// label, therefore not docs — which is exactly why this is coverage: it pins
-// the half of the rule that must *not* change.
+// --- BD: coverage, not a red, and said so. The paths are necessary for the exemption
+// and never sufficient, so a docs-only diff with no `type:docs` stays in mode `agent` and owes its marker: #308 hands out no new exemption.
 const bd = land(49, { FAKE_GH_RULES: 'required' });
-const bdOut = parse(bd.stdout);
-check('a docs-only diff without the label merges in mode agent, not as an exemption', bd.status === 0 && bdOut?.merged === 49 && bdOut?.mode === 'agent', `${bd.stdout}\n${bd.stderr}`);
-check('a docs-only diff without the label still had to produce its marker', /pr view 49 --json comments/.test(bd.log), bd.log);
+check('a docs-only diff without the label merges in mode agent, on its marker', bd.status === 0 && parse(bd.stdout)?.merged === 49 && parse(bd.stdout)?.mode === 'agent' && /pr view 49 --json comments/.test(bd.log), `${bd.stdout}\n${bd.log}`);
 
-// --- BE: the path classes are the negative control's, not a second list
-// land.mts invented. The pin writes the expected shape out itself rather than
-// importing either constant (CLAUDE.md invariant 10): a pin that reuses the
-// thing it pins cannot catch that thing drifting. It mirrors
-// `SKIP_PATH_GLOBS` and `NEVER_SKIP_GLOBS` in `ci/negative-control.mts` and
-// `DOCS_PATH_GLOBS` and `NEVER_DOCS_GLOBS` in `scripts/land.mts`; the two
-// files are separate only because `ci/negative-control.mts` runs its check on
-// import, so nothing may import a constant out of it — consolidating them
-// into `ci/lib/` is the change this pin exists to make safe.
-const DOCS_CLASSES_PIN = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
-const CARVE_OUT_PIN = ['.github/scripts/agentic/**'];
-function declaredGlobs(source: string, name: string): string[] | null {
-  const declaration = new RegExp(`const ${name}\\b[^=]*=\\s*\\[([^\\]]*)\\]`).exec(source);
-  return declaration ? [...declaration[1].matchAll(/'([^']*)'/g)].map((m) => m[1]) : null;
-}
-const negativeControlSource = readFileSync(join(ROOT, 'ci', 'negative-control.mts'), 'utf8');
-const landSource = readFileSync(join(ROOT, 'scripts', 'land.mts'), 'utf8');
-check(
-  'ci/negative-control.mts still declares exactly the pinned documentation classes',
-  JSON.stringify(declaredGlobs(negativeControlSource, 'SKIP_PATH_GLOBS')) === JSON.stringify(DOCS_CLASSES_PIN),
-  String(declaredGlobs(negativeControlSource, 'SKIP_PATH_GLOBS')),
-);
-check(
-  'scripts/land.mts declares exactly the same documentation classes',
-  JSON.stringify(declaredGlobs(landSource, 'DOCS_PATH_GLOBS')) === JSON.stringify(DOCS_CLASSES_PIN),
-  String(declaredGlobs(landSource, 'DOCS_PATH_GLOBS')),
-);
-check(
-  'ci/negative-control.mts still declares exactly the pinned carve-out',
-  JSON.stringify(declaredGlobs(negativeControlSource, 'NEVER_SKIP_GLOBS')) === JSON.stringify(CARVE_OUT_PIN),
-  String(declaredGlobs(negativeControlSource, 'NEVER_SKIP_GLOBS')),
-);
-check(
-  'scripts/land.mts declares exactly the same carve-out',
-  JSON.stringify(declaredGlobs(landSource, 'NEVER_DOCS_GLOBS')) === JSON.stringify(CARVE_OUT_PIN),
-  String(declaredGlobs(landSource, 'NEVER_DOCS_GLOBS')),
-);
-// AGENTIC_SKIP_GLOBS extends the negative control's list from the
-// environment. land.mts must not read it: a variable that widens a *review*
-// exemption is a hole an operator can open from outside the repository, and
-// the two lists answer different questions — what owes a failing test, and
-// what owes a review.
-check('land.mts never reads AGENTIC_SKIP_GLOBS', !/AGENTIC_SKIP_GLOBS/.test(landSource.replace(/^\/\/.*$/gm, '')), 'land.mts reads AGENTIC_SKIP_GLOBS');
+// --- BE: the path classes are the negative control's, not a second list land.mts
+// invented. The pin writes the shape out itself rather than importing either constant
+// (invariant 10); the copies exist only because `ci/negative-control.mts` runs its check
+// on import, and this pin is what makes consolidating them into `ci/lib/` safe.
+// AGENTIC_SKIP_GLOBS is not mirrored: widening a *review* exemption from the environment would be a hole.
+const DOCS_CLASSES_PIN = "['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']";
+const CARVE_OUT_PIN = "['.github/scripts/agentic/**']";
+const declaredGlobs = (src: string, n: string): string | null => new RegExp(`const ${n}\\b[^=]*=\\s*(\\[[^\\]]*\\])`).exec(src)?.[1] ?? null;
+const ncSrc = readFileSync(join(ROOT, 'ci', 'negative-control.mts'), 'utf8');
+const landSrc = readFileSync(join(ROOT, 'scripts', 'land.mts'), 'utf8');
+check('ci/negative-control.mts declares exactly the pinned classes and carve-out', declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS') === DOCS_CLASSES_PIN && declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS') === CARVE_OUT_PIN, `${declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS')} / ${declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS')}`);
+check('scripts/land.mts declares exactly the same classes and carve-out', declaredGlobs(landSrc, 'DOCS_PATH_GLOBS') === DOCS_CLASSES_PIN && declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS') === CARVE_OUT_PIN, `${declaredGlobs(landSrc, 'DOCS_PATH_GLOBS')} / ${declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS')}`);
+check('land.mts never reads AGENTIC_SKIP_GLOBS outside its header', !/AGENTIC_SKIP_GLOBS/.test(landSrc.replace(/^\/\/.*$/gm, '')), 'land.mts reads AGENTIC_SKIP_GLOBS');
 const bf = land(47, { FAKE_GH_RULES: 'required', AGENTIC_SKIP_GLOBS: 'scripts/**' });
 check('AGENTIC_SKIP_GLOBS cannot buy the exemption: the mixed diff still refuses', bf.status === 1 && JSON.stringify(parse(bf.stdout)?.missing) === JSON.stringify(['docs:label-mismatch']), bf.stdout);
 
