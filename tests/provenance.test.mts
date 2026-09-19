@@ -23,25 +23,22 @@
 // live API unless it is asked to: set `AGENTIC_PROVENANCE_LIVE_GH=1` and the
 // real tree's check runs against the `gh` on PATH; unset, it is skipped with a
 // note naming the variable. Ancestry is never opportunistic; it needs no
-// credentials, only history, which is why `.github/workflows/test.yml` checks
-// out with `fetch-depth: 0`.
+// credentials, only history, hence `fetch-depth: 0` in test.yml.
 //
 // That default is #356. The check used to shell out unconditionally, once per
 // row of every closeout -- 129 calls per run -- to a quota shared with every
-// other agent and tool on the account. Exhausting it did not merely fail this
-// file: it failed it as `docs/closeout/M*.md is clean`, naming a file when the
-// cause was an HTTP status from another machine, and a required gate read that
-// non-zero exit as a change proved. A shared, exhaustible service is not an
-// input a unit test in the required suite may have. In CI the live half never
-// ran at all -- the `test` job is granted `contents: read` and no token -- so
-// the run that asks GitHub with a real token is, and remains,
+// other agent and tool on the account. Exhausting it failed this file as
+// `docs/closeout/M*.md is clean`, naming a file when the cause was an HTTP
+// status from another machine, and a required gate read that non-zero exit as
+// a change proved. In CI the live half never ran at all (`contents: read`, no
+// token), so the run that asks GitHub with a real token is, and remains,
 // `scripts/close-milestone.mts`, the only way a milestone closes.
 //
 // Third fail-open, stated with the other two below: with the opt-in set, a
 // `gh` that cannot answer -- a rate limit, a 5xx, no network -- is a note per
 // row, not a failure. A number that resolves to nothing is not that case and
-// stays red; `classifyGhFailure` is where the two are told apart, because the
-// CLI gives them the same exit and the same shape of stderr.
+// stays red; `classifyGhFailure` tells the two apart, since the CLI gives them
+// the same exit and the same shape of stderr.
 //
 // One more fail-open, stated here so it is not discovered in a log: the
 // shallow-checkout case below needs `git clone --depth 1` to work in the
@@ -222,12 +219,9 @@ export const EMPTY_TEMPLATE_MESSAGE = "still the empty template — a milestone'
 export const NO_CLOSEOUT_MESSAGE = 'no docs/closeout/M<n>.md yet — the provenance pin has nothing to check';
 
 // --- the issue-closed check's source ---------------------------------------
-// The one half of this pin that needs an answer from outside the checkout.
-// Ancestry is git, and git is in the checkout; whether #123 is closed is not.
-// Until #356 that answer came from whatever `gh` was on PATH, unconditionally,
-// once per row of every closeout -- 129 calls per run of the required `test`
-// suite against a quota shared with every other agent and every other tool.
-// Now the source is a value, chosen once and passed in, so the default run
+// The one half of this pin that needs an answer from outside the checkout:
+// ancestry is git, and git is here, but whether #123 is closed is not. Since
+// #356 that answer is a value, chosen once and passed in, so the default run
 // asks nothing and the synthetic cases below keep the controlled fixture they
 // already had.
 
@@ -240,12 +234,11 @@ export const OFFLINE_MESSAGE =
 export const UNAUTHENTICATED_MESSAGE = 'gh is absent or unauthenticated — the issue-closed check was skipped';
 
 /**
- * What one issue lookup can answer. The three are deliberately distinct, and
- * the distinction is the point of #356: `state` is the record being checked,
- * `no-such-issue` is the record being wrong, and `unavailable` is the API
- * declining to answer — which says nothing about the record and must never be
- * reported as if it did. `gh` gives the last two the same shape (exit 1, one
- * `GraphQL: ...` line on stderr), so something has to tell them apart.
+ * What one issue lookup can answer, and the distinction that is the point of
+ * #356: `state` is the record being checked, `no-such-issue` is the record
+ * being wrong, and `unavailable` is the API declining to answer — which says
+ * nothing about the record and must never be reported as if it did. `gh` gives
+ * the last two the same shape (exit 1, one `GraphQL: ...` line on stderr).
  */
 type IssueLookup =
   | { kind: 'state'; state: string }
@@ -258,13 +251,12 @@ type IssueSource =
   | { kind: 'skipped'; reason: string };
 
 /**
- * `gh`'s wording when a number resolves to nothing. Taken from the real CLI
- * (`GraphQL: Could not resolve to an issue or pull request with the number of
- * N. (repository.issue)`), and loose enough for the older `an Issue with the
- * number N`. Everything else `gh` can fail with — a rate limit, a 5xx, no
- * network, a timeout — is the API declining to answer, so this is a list of
- * one and the default is `unavailable`: a wording that drifts costs a skip,
- * never a false red naming a closeout file.
+ * `gh`'s wording when a number resolves to nothing, taken from the real CLI:
+ * `GraphQL: Could not resolve to an issue or pull request with the number of
+ * N. (repository.issue)`. Everything else it can fail with — a rate limit, a
+ * 5xx, no network, a timeout — is the API declining to answer, so this is a
+ * list of one and the default is `unavailable`: a wording that drifts costs a
+ * skip, never a false red naming a closeout file.
  */
 const NO_SUCH_ISSUE = /could not resolve to an? (issue|pull ?request)/i;
 
@@ -275,15 +267,12 @@ export function classifyGhFailure(stderr: string): { kind: 'no-such-issue' | 'un
 }
 
 /** A source that answers nothing and says why, without spawning anything. */
-function skippedIssueSource(reason: string): IssueSource {
-  return { kind: 'skipped', reason };
-}
+const skippedIssueSource = (reason: string): IssueSource => ({ kind: 'skipped', reason });
 
 /**
  * A source backed by whatever `gh` is on PATH — the controlled fixture in the
  * synthetic cases below, the real CLI only where the opt-in asked for it. The
- * `gh auth status` probe happens here, once, so a skipped source spawns no
- * process at all.
+ * `gh auth status` probe happens here, so a skipped source spawns nothing.
  */
 function ghIssueSource(repo: string, env: Env): IssueSource {
   if (run('gh', ['auth', 'status'], repo, env).status !== 0) return skippedIssueSource(UNAUTHENTICATED_MESSAGE);
@@ -295,8 +284,8 @@ function ghIssueSource(repo: string, env: Env): IssueSource {
       try {
         return { kind: 'state', state: String(JSON.parse(r.stdout).state ?? '') };
       } catch {
-        // An exit of 0 carrying something that is not JSON is the CLI failing
-        // to answer, not the record failing: `unavailable`, like a rate limit.
+        // An exit of 0 carrying no JSON is the CLI failing to answer, not the
+        // record failing: `unavailable`, like a rate limit.
         return { kind: 'unavailable', detail: 'gh exited 0 but returned no JSON state' };
       }
     },
@@ -336,9 +325,9 @@ function ancestry(repo: string, sha: string, ref: string, env: Env): 'ancestor' 
  * Errors fail the build; notes say what could not be checked and why.
  *
  * `issues` is where the issue-closed half gets its answers. Left out, it is a
- * `gh` on PATH — which is the controlled fixture for every synthetic case
- * below, and is why they read unchanged. The real tree passes one explicitly
- * (#356), because there `gh` would be the live CLI.
+ * `gh` on PATH — the controlled fixture for every synthetic case below, which
+ * is why they read unchanged. The real tree passes one explicitly (#356),
+ * because there `gh` would be the live CLI.
  */
 function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audit {
   const errors: string[] = [];
@@ -388,9 +377,9 @@ function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audi
       else if (a === 'not-ancestor') errors.push(`${file}: merge commit ${row.sha} for #${row.issue} is not an ancestor of ${ref}`);
       if (source.kind !== 'lookup') continue;
       const answer = source.lookup(row.issue);
-      // The API declining to answer is not evidence about the record. It is a
-      // note naming the row it could not check and what was said, so the run
-      // reads as "this was not checked", never as "this closeout is wrong".
+      // The API declining to answer is not evidence about the record: a note
+      // naming the row and what was said, so the run reads as "this was not
+      // checked", never as "this closeout is wrong".
       if (answer.kind === 'unavailable') {
         notes.push(`${file}: the issue-closed check was skipped for #${row.issue} — ${answer.detail}`);
         continue;
@@ -461,12 +450,10 @@ check(`docs/closeout/M*.md is clean (${real.files.length} file(s))`, real.errors
 for (const note of real.notes) console.error(`note  provenance: ${note}`);
 
 // #356: the default run asks GitHub nothing. The issue-closed half used to
-// shell out to whatever `gh` was on PATH, once per row of every closeout --
-// 129 calls against a shared, exhaustible quota, from a unit test in the
-// required `test` suite. It is opt-in now, and the note says so by name.
-// The case is about the default, so it asserts the default -- and the opposite
-// when the run itself asked for the live check. A run that opted in is not the
-// suite's verdict on the opt-in being off.
+// shell out once per row of every closeout -- 129 calls against a shared,
+// exhaustible quota, from a unit test in the required `test` suite. It is
+// opt-in now and the note says so by name, so the case asserts the default --
+// and the opposite when the run itself asked for the live check.
 if ((process.env[LIVE_GH_ENV] ?? '') === '1') {
   check(
     `the real-tree audit runs the issue-closed check when ${LIVE_GH_ENV}=1`,
@@ -488,13 +475,12 @@ check(
 
 // --- synthetic repositories ------------------------------------------------
 // A fake `gh` first on PATH: every issue is CLOSED except the numbers in
-// FAKE_GH_OPEN, #9999999 does not exist -- a sentinel above every issue this
+// FAKE_GH_OPEN; #9999999 does not exist -- a sentinel above every issue this
 // repository has, because the real tree's own rows go through this fixture now
-// and a low number would collide with one (M6.md lists #99) --
-// FAKE_GH_AUTH=fail is the unauthenticated runner, and FAKE_GH_FAIL is the
-// message a refusing API answers with --
-// a rate limit, a network error, a 5xx -- on stderr with a non-zero exit,
-// which is the shape gh gives a missing issue too (#356).
+// and a low one would collide (M6.md lists #99); FAKE_GH_AUTH=fail is the
+// unauthenticated runner; and FAKE_GH_FAIL is the message a refusing API
+// answers with -- a rate limit, a 5xx, a network error -- on stderr with a
+// non-zero exit, the shape gh gives a missing issue too (#356).
 const FAKE_GH = `#!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
   "auth status")
@@ -521,9 +507,8 @@ chmodSync(join(bin, 'gh'), 0o755);
 const withGh: Env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
 
 // The opt-in half of #356, proved against the fixture rather than the network:
-// with LIVE_GH_ENV set, the source is a lookup, and the `gh` it looks up with
-// is whatever PATH offers -- here the fake above, in a run that asked for it
-// the real CLI.
+// with LIVE_GH_ENV set the source is a lookup against whatever PATH offers --
+// the fake above here, the real CLI in a run that asked for it.
 check(
   'with the opt-in set, the source is a lookup against the gh on PATH',
   issueSourceFor(ROOT, { ...withGh, [LIVE_GH_ENV]: '1' }).kind === 'lookup',
@@ -531,12 +516,11 @@ check(
 );
 
 // AC4 of #356: determinism must not cost the check its reach. These two run
-// the real tree's own closeout rows -- every one of them, the same rows the
-// live call used to read -- through the issue-closed check with the fixture
-// answering, so what is exercised is the real record and not a one-row
-// synthetic document. The first is the clean case; the second picks a real
-// row out of the real files and has the fixture call that issue open, which
-// is the defect the live call existed to catch.
+// the real tree's own closeout rows -- every one of them, the rows the live
+// call used to read -- through the issue-closed check with the fixture
+// answering, so the real record is exercised and not a one-row synthetic
+// document. The first is the clean case; the second picks a real row and has
+// the fixture call that issue open, the defect the live call existed to catch.
 const realWithFixture = audit(ROOT, withGh);
 check(
   "the real tree's closeout rows pass the issue-closed check against the fixture",
@@ -658,9 +642,9 @@ check(
 
 // #356: the two failures gh reports identically -- non-zero, one GraphQL line
 // on stderr -- are different answers, and the pin has to say which. A rate
-// limit is the API declining to answer: the record is not proved wrong by it,
-// so it is a note. A number that resolves to nothing is the record naming an
-// issue that does not exist: that is a defect in the closeout, so it stays red.
+// limit is the API declining to answer and proves nothing about the record, so
+// it is a note; a number that resolves to nothing is a defect in the closeout,
+// so it stays red.
 const RATE_LIMITED = 'GraphQL: API rate limit already exceeded';
 const rateLimited = fixtureRepo();
 writeCloseout(rateLimited.repo, 'M1.md', closeout('1', rateLimited.mainSha, [[1, 11, rateLimited.mainSha]]));
@@ -676,9 +660,9 @@ check(
   rateLimitedAudit.notes.join('\n'),
 );
 
-// The wording is gh's own, taken from `gh issue view <missing> --json state`
-// against this repository, not from the fixture above: the classifier is held
-// to what the real CLI prints (invariant 10 -- the pin writes the shape out).
+// The wording is gh's own, from `gh issue view <missing> --json state` against
+// this repository: the classifier is held to what the real CLI prints
+// (invariant 10 -- the pin writes the shape out rather than importing it).
 const NO_SUCH_ISSUE_STDERR =
   'GraphQL: Could not resolve to an issue or pull request with the number of 9999999. (repository.issue)';
 const noSuchIssue = fixtureRepo();
