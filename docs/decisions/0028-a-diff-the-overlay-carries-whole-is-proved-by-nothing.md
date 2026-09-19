@@ -27,20 +27,24 @@ red available to it, so there is nothing for an implementer to clear.
 
 What is in force, as `ci/negative-control.mts` implements it:
 
-- **The class is two facts, both read off `git diff`.** `ci/negative-control.mts:609-611`:
-  `withheld` is the changed files the overlay did not carry; `notATestFile` is the changed
-  files that are not test files. The verdict fires at `:722` only when the overlaid run
+- **The class is two facts, both read off `git diff`.** Two module-level constants in
+  `ci/negative-control.mts`, computed from `changed` beside `declaredPaths`: `withheld` is
+  the changed files the overlay did not carry, `notATestFile` the changed files that are
+  not test files. `runOnBase` reads both in its **first** branch on the overlaid run's
+  exit 0, the one ahead of the `vacuous` return: the verdict fires only when that run
   exited 0 **and** both lists are empty.
-- **The second fact is read from `TEST_FILE_GLOBS` as written in the file**
-  (`ci/negative-control.mts:210`) — *not* as extended by `AGENTIC_TEST_GLOBS`, and *not*
+- **The second fact is read from `TEST_FILE_GLOBS` as written in the file**, the constant
+  `ci/negative-control.mts` declares beside `SKIP_PATH_GLOBS` and `NEVER_SKIP_GLOBS` —
+  *not* as extended by `AGENTIC_TEST_GLOBS`, and *not*
   as replaced by a branch's `proof/<slug>.json` `tests` list. Those two decide what is
   **overlaid** and deliberately do not decide the **class**. The declaration's own path is
   the one addition, because a branch that declares its proof has still changed nothing but
   tests.
 - **Nothing a pull request writes is read.** No label, no body flag, no path convention,
   no commit subject. A branch cannot claim this class; it can only be in it.
-- **`test-only` is `ok`** (`ci/negative-control.mts:406`), so the check exits 0 and
-  `scripts/land.mts` reads its bucket as `pass`.
+- **`test-only` joins `skipped` and `pass` in the `ok` disjunction of `finish`**, the one
+  expression in `ci/negative-control.mts` that decides the exit status, so the check exits
+  0 and `scripts/land.mts` reads its bucket as `pass`.
 - **It is a third green, and the three say different things.** `vacuous`: *nothing
   depended on the change* — cleared by writing a test that bites. `unattributed` (item
   27): *something else was already broken* — cleared by fixing that other red.
