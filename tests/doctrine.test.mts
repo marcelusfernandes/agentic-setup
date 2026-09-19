@@ -784,4 +784,173 @@ check(
   knownLimits.slice(0, 1200),
 );
 
+// --- #336: when a correction goes in the body and when it goes in an update ---------
+// Two implementers on separate pull requests, never in contact, derived the same split
+// on 2026-09-19 and neither found it written, because the register carried only the
+// freeze half ("an update never rewrites the decision above it"). Applied literally to a
+// sentence that was false when written, that half preserves the falsehood at the top
+// where the next agent reads and cites it. The split now has a document; this block is
+// its consumer, the same way the blocks above are for prose nothing else reads.
+//
+// Invariant 10 — a pin states what it pins: every phrase below is written out here
+// rather than read back from the two documents or from a constant they share, so that
+// editing the split away fails here instead of being mirrored into the assertion.
+//
+// Two shapes this block is deliberate about:
+//  - Both spans are bounded on the `## ` heading that opens the section (via `section`),
+//    never on a blank line. The freeze sentence and the phrase `## Updates` both occur
+//    elsewhere in both files, so a whole-file read would pass on a document that states
+//    the split nowhere an author or a corrector would meet it.
+//  - Both files are read through `readNormalized`, because this prose wraps at ~90
+//    columns and every phrase below straddles a line break in at least one of them: a
+//    matcher reading the lines apart reports a clean that is not there.
+//  - Phrases that cross an emphasis boundary are matched by regex with the `**` optional,
+//    since `readNormalized` collapses whitespace but does not strip Markdown.
+
+const DECISIONS_README = join('docs', 'decisions', 'README.md');
+const DECISION_TEMPLATE = join('docs', 'decisions', '0000-template.md');
+const CORRECTION_HEADING = '## Correcting an item that is already written';
+
+const decisionsReadme = readNormalized(DECISIONS_README);
+const correction = section(decisionsReadme, CORRECTION_HEADING);
+check(
+  `#336 AC1 docs/decisions/README.md has a "${CORRECTION_HEADING.slice(3)}" section to read`,
+  correction.length > 0,
+  decisionsReadme.slice(0, 400),
+);
+
+// AC1: the two halves of the split, each stated in the section that owes it.
+
+check(
+  '#336 AC1 the section names the overtaken half — true when written, the ground moved',
+  /Overtaken — true when it was written/.test(correction),
+  correction.slice(0, 900),
+);
+check(
+  '#336 AC1 the overtaken half sends the movement to a dated `## Updates` line',
+  /dated `## Updates` line/.test(correction),
+  correction.slice(0, 900),
+);
+check(
+  '#336 AC1 the overtaken half freezes the body — the wording and the numbers it was written with',
+  /keeps the wording and the numbers it was written with/.test(correction),
+  correction.slice(0, 900),
+);
+check(
+  '#336 AC1 the section names the wrong-when-written half — false on its own date',
+  /Wrong when it was written — false on its own date/.test(correction),
+  correction.slice(0, 1400),
+);
+check(
+  '#336 AC1 the wrong-when-written half is corrected in the body, in place',
+  /corrected (?:\*\*)?in the body(?:\*\*)?, in place/.test(correction),
+  correction.slice(0, 1400),
+);
+check(
+  '#336 AC1 a sentence corrected in the body is rewritten whole, its citations with it',
+  /rewritten whole, its citations with it/.test(correction),
+  correction.slice(0, 1400),
+);
+
+// AC2: why an appended line cannot serve the second case. The argument that decides it
+// is the reviewer's — the acceptance criteria settle it independently of the template —
+// so the pin holds that one, not the weaker template-scope argument two implementers
+// reached for first.
+
+check(
+  '#336 AC2 the section says the acceptance criteria decide it on their own',
+  /acceptance criteria decide it on their own/.test(correction),
+  correction.slice(-1800),
+);
+check(
+  '#336 AC2 it says a criterion requiring an item to stop asserting something cannot be met by appending',
+  /requires an item to (?:\*\*)?stop asserting(?:\*\*)? something cannot be satisfied by appending a line/
+    .test(correction),
+  correction.slice(-1800),
+);
+check(
+  '#336 AC2 it gives the reason in one line: appending adds a sentence and removes none',
+  /Appending adds a sentence; it removes none\./.test(correction),
+  correction.slice(-1800),
+);
+check(
+  '#336 AC2 it says the body goes on making the claim above the correction',
+  /goes on making the claim, in the present tense, above the correction/.test(correction),
+  correction.slice(-1800),
+);
+check(
+  '#336 AC2 it says the reader stops at the section and never reaches the update',
+  /never reached/.test(correction) && /the sentence they read and cite is the false one/.test(correction),
+  correction.slice(-1800),
+);
+
+// AC3: the freeze is narrowed, not abandoned — the three things a body correction leaves
+// alone, each with the route that does change it.
+
+check(
+  '#336 AC3 the section says what a correction in the body may not touch',
+  /What a correction in the body may not touch/.test(correction),
+  correction.slice(-1400),
+);
+check(
+  '#336 AC3 the decision itself is out of reach — a different rule is a superseding item',
+  /the rule in force under `## Decision`/.test(correction) && /supersedes this one/.test(correction),
+  correction.slice(-1400),
+);
+check(
+  '#336 AC3 the `Status:` line is out of reach — acceptance and supersession have their own routes',
+  /its `Status:`/.test(correction) && /Silence never accepts/.test(correction),
+  correction.slice(-1400),
+);
+check(
+  '#336 AC3 the number is out of reach — other files cite items by number',
+  /its number/.test(correction) && /cite items by number/.test(correction),
+  correction.slice(-1400),
+);
+check(
+  '#336 AC3 it says the freeze is narrowed rather than lifted',
+  /narrowed here, not lifted/.test(correction),
+  correction.slice(-1400),
+);
+
+// AC4: the same split where an author writing an item meets it, bounded to the template's
+// own `## Updates` section rather than the file, and with the freeze sentence still there
+// — the point of this issue is that the freeze is narrowed, so a template that dropped it
+// would fail here too.
+
+const decisionTemplate = readNormalized(DECISION_TEMPLATE);
+const templateUpdates = section(decisionTemplate, '## Updates');
+check('#336 AC4 docs/decisions/0000-template.md still has an `## Updates` section to read', templateUpdates.length > 0);
+check(
+  '#336 AC4 the template keeps the freeze half — an update never rewrites the decision above it',
+  /an update never rewrites it/.test(templateUpdates),
+  templateUpdates,
+);
+check(
+  '#336 AC4 the template says the freeze is for a statement the ground moved under',
+  /freeze is for a statement the ground moved under/.test(templateUpdates),
+  templateUpdates,
+);
+check(
+  '#336 AC4 the template sends a statement false when written to the body instead',
+  /(?:\*\*)?false when it was written(?:\*\*)? is corrected in the body/.test(templateUpdates),
+  templateUpdates,
+);
+check(
+  '#336 AC4 the template gives the reason an appended line cannot serve it',
+  /cannot make the body stop asserting it/.test(templateUpdates)
+    && /never reaches the update/.test(templateUpdates),
+  templateUpdates,
+);
+check(
+  '#336 AC4 the template names the three a body correction never touches',
+  /never touches the decision itself, its `Status:` or its number/.test(templateUpdates),
+  templateUpdates,
+);
+check(
+  '#336 AC4 the template points at the readme section that states the split in full',
+  templateUpdates.includes(CORRECTION_HEADING.slice(3)) && templateUpdates.includes('README.md'),
+  templateUpdates,
+);
+
 finish();
