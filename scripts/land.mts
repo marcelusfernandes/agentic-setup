@@ -75,18 +75,69 @@
 //              ruleset does not require one leaves reviewDecision null
 //              forever and refuses every pull request with no way to satisfy
 //              it.
-//   'docs'     the `type:docs` exemption, which merges with no review at all
-//              and so has no reviewed head to compare and reads no marker. It
-//              is an exemption from the *review*, never from the checks.
+//   'docs'     the documentation exemption, which merges with no review at
+//              all and so has no reviewed head to compare and reads no
+//              marker. It is an exemption from the *review*, never from the
+//              checks. It is selected by the pull request's **changed paths
+//              and** the `type:docs` label, both (#308): every path in the
+//              diff must sit in a documentation class (DOCS_PATH_GLOBS
+//              below) and outside the carve-out (NEVER_DOCS_GLOBS), and the
+//              label must be on the pull request.
+//
+//              The label alone used to select it. A label is applied per
+//              issue and nothing consulted the paths, so the two disagreed
+//              whenever a docs issue touched anything else -- and because
+//              the selector puts this mode first, the label beat a base
+//              ruleset that *requires* a review. That is an override, not a
+//              relaxation. Measured on 2026-09-17: #189, #195, #200 and #218
+//              merged carrying `type:docs` with zero reviews and zero review
+//              comments, three of them changing `docs/decisions.md`, the
+//              register the review gate exists to protect. Measured again on
+//              2026-09-18/19: of four pull requests landed, three printed
+//              `mode: docs` -- #333, #334 and #346, one of them carrying
+//              eight milestone closeouts -- although every one of them had
+//              in fact been reviewed by an isolated reviewer and carried the
+//              marker. The gate was satisfied by the orchestrator's
+//              discipline, which had come to include stripping the label
+//              before landing; the mechanism never looked.
+//
+//              The paths are now necessary and the label stays necessary, so
+//              this takes the override away without handing a new exemption
+//              to every docs-only pull request: a docs-only diff with no
+//              label is mode 'agent' and owes its marker, exactly as before.
+//              A label on a diff that leaves those classes refuses with
+//              missing ['docs:label-mismatch'] instead of falling back to
+//              'agent' quietly -- an inert label would hide the disagreement
+//              as thoroughly as the override did, and the remedy is a person
+//              or the orchestrator deciding which the pull request is.
+//              Neither a file list that cannot be read nor one gh reports as
+//              empty is a docs-only diff: the first refuses with missing
+//              ['gh-pr-files'] before any mode is selected, the second with
+//              the mismatch above, because nothing in either shows the diff
+//              stays inside the documentation classes.
+//
+//              The classes are the negative control's own (#135 decided its
+//              skip by path class for the same reason), mirrored here rather
+//              than imported: `ci/negative-control.mts` runs its check on
+//              import, so nothing may import a constant out of it.
+//              `tests/land.test.mts` pins both copies against a list it
+//              writes out itself (invariant 10). What is deliberately *not*
+//              mirrored is AGENTIC_SKIP_GLOBS, the environment extension of
+//              that list: it widens what owes a failing test, and an
+//              environment variable that widened a *review* exemption would
+//              be a hole an operator could open from outside the repository.
 //
 // The mode is read before anything else is decided, because a refusal that
 // cannot name its mode says nothing: the base branch's effective rules are
 // fetched first (`gh api repos/{owner}/{repo}/rules/branches/<baseRefName>`,
 // flattened and enforcement-aware -- unlike the ruleset *list*, summaries
 // only, which cannot tell a required_status_checks ruleset from a
-// deletion-only one). A rules read that cannot answer refuses with missing
-// ['gh-rules'] and mode null rather than falling back to the mode left over
-// when a read fails: this file fails closed (invariant 3).
+// deletion-only one), then the pull request's changed paths
+// (`gh api repos/{owner}/{repo}/pulls/<pr>/files --paginate`). A rules read
+// that cannot answer refuses with missing ['gh-rules'] and a files read that
+// cannot answer with missing ['gh-pr-files'], both with mode null, rather
+// than falling back to the mode left over when a read fails: this file fails
+// closed (invariant 3).
 //
 // In modes 'agent' and 'approved' the commit the review was cast against is
 // the newest `<!-- agentic-reviewed-sha: <oid> -->` marker on the pull
@@ -195,6 +246,7 @@
 // know before running) and changes no output and makes no extra read. The
 // flag is about modes 'approved' and 'docs', the two that print { queued }.
 import { spawnSync } from 'node:child_process';
+import { matchesAny } from '../ci/lib/globs.mts';
 
 type Label = { name: string };
 type PRView = {
@@ -216,6 +268,26 @@ type Mode = 'agent' | 'approved' | 'docs';
 // 40-hex oid counts: anything else records no head this script can compare.
 const REVIEWED_SHA = /<!--\s*agentic-reviewed-sha:\s*([0-9a-f]{40})\s*-->/gi;
 const USAGE = 'usage: node scripts/land.mts <pr> [--require-review] [--wait [--timeout <seconds>]]';
+/**
+ * The documentation path classes: a diff confined to them owes no review.
+ * These mirror `SKIP_PATH_GLOBS` in `ci/negative-control.mts` glob for glob —
+ * the same question, asked of the same paths — and they are mirrored rather
+ * than imported because that file runs its check at import time. The two
+ * copies are held together by the pin in `tests/land.test.mts`, which writes
+ * the list out itself and reads both files from disk (invariant 10); the
+ * duplication is the thing the pin exists to catch, and consolidating the
+ * constant into `ci/lib/` is the change that removes it.
+ */
+const DOCS_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
+/**
+ * The carve-out no documentation class may cover, mirroring
+ * `NEVER_SKIP_GLOBS`. `scripts/init.mts` copies this repository's `ci/` into
+ * an adopting repository's `.github/scripts/agentic/`, which the `.github/**`
+ * class would otherwise swallow whole: a pull request rewriting the merge
+ * gate's own code would merge under the merge gate's own review exemption. A
+ * mechanism that can exempt a change to itself is not a gate.
+ */
+const NEVER_DOCS_GLOBS = ['.github/scripts/agentic/**'];
 /** How long `--wait` waits for the queue to fire when --timeout says nothing. */
 const DEFAULT_TIMEOUT_SECONDS = 900;
 /** How often it reads the state back — or a quarter of the budget, when that is shorter. */
@@ -277,6 +349,24 @@ function effectiveRules(base: string): Rule[] | null {
     return null;
   }
 }
+
+/**
+ * The paths the pull request changes, or null when the read could not answer.
+ * REST and paginated on purpose. `gh pr view <pr> --json files` is the
+ * shorter read, but it is GraphQL and asks for one page: a pull request whose
+ * first hundred entries are Markdown would read as docs-only however much
+ * code followed them, and this is the one read whose incompleteness silently
+ * *widens* an exemption. REST also answers when the shared GraphQL budget
+ * does not.
+ */
+function changedFiles(pr: number): string[] | null {
+  const out = gh(['api', `repos/{owner}/{repo}/pulls/${pr}/files`, '--paginate', '--jq', '.[].filename']);
+  if (out.status !== 0) return null;
+  return out.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+/** A path that owes no review: inside a documentation class and outside the carve-out. */
+const isDocsPath = (file: string): boolean => matchesAny(file, DOCS_PATH_GLOBS) && !matchesAny(file, NEVER_DOCS_GLOBS);
 
 // `state` carries the run's conclusion once it has one and its *status*
 // until then, so these are the values that mean "not completed". A run
@@ -424,22 +514,58 @@ if (!view || typeof view.headRefOid !== 'string' || !view.headRefOid) {
 // can name it. The rules are read here because one of the two selectors
 // lives in them — and because the gate does too, further down.
 const rules = effectiveRules(view.baseRefName);
+const files = changedFiles(pr);
 const isDocs = hasLabel(view.labels, 'type:docs');
+// An empty list is not a docs-only diff, and neither is a list that could not
+// be read: both mean nothing showed this diff stays inside the documentation
+// classes, and the exemption is granted on what was shown, never on what was
+// not contradicted.
+const docsOnly = files !== null && files.length > 0 && files.every(isDocsPath);
 const rulesRequireReview = (rules ?? []).some(
   (r) => r.type === 'pull_request' && Number(r.parameters?.required_approving_review_count ?? 0) > 0,
 );
-const mode: Mode | null = isDocs
-  ? 'docs'
-  : requireReview || rulesRequireReview
-    ? 'approved'
-    : rules === null
-      ? null
-      : 'agent';
+const mode: Mode | null =
+  isDocs && docsOnly
+    ? 'docs'
+    : requireReview || rulesRequireReview
+      ? 'approved'
+      : rules === null || files === null
+        ? null
+        : 'agent';
 if (rules === null) {
   fail({
     refused: `PR #${pr}: could not read the effective rules of base branch ${view.baseRefName}, so neither the review mode nor the gate is known.`,
     pr,
     missing: ['gh-rules'],
+    mode,
+  });
+}
+if (files === null) {
+  fail({
+    refused: `PR #${pr}: could not read its changed files from gh, so whether the diff stays inside the documentation paths is unknown. A file list that cannot be read is not a docs-only diff.`,
+    pr,
+    missing: ['gh-pr-files'],
+    mode,
+  });
+}
+
+// The label and the diff disagree. Refused here, at mode selection and before
+// any other condition is judged, because there is no mode this pull request
+// can be landed under until one of the two is changed: the label says the
+// review may be skipped and the paths say it may not. Falling back to 'agent'
+// silently would land it correctly and leave the wrong label in place, which
+// is how a `type:docs` pull request carrying tests and scripts stayed
+// plausible for long enough to matter (#308).
+if (isDocs && !docsOnly) {
+  const outside = files.filter((file) => !isDocsPath(file));
+  const why =
+    files.length === 0
+      ? 'gh reported no changed files on it, so nothing shows the diff is docs-only'
+      : `its diff also changes ${outside.join(', ')}`;
+  fail({
+    refused: `PR #${pr} carries type:docs but is not a docs-only change — ${why}. The paths decide the review exemption, not the label: drop type:docs and land it under mode ${mode}, or split the rest out.`,
+    pr,
+    missing: ['docs:label-mismatch'],
     mode,
   });
 }
@@ -449,7 +575,7 @@ if (view.state !== 'OPEN') missing.push(`state=${view.state}`);
 // The label is what an agent review leaves behind, in both reviewing modes;
 // mode 'approved' adds the server's own decision on top of it, and never
 // falls back to the label alone when that decision is missing.
-if (!isDocs && !hasLabel(view.labels, 'review:approved')) missing.push('review:not-approved');
+if (mode !== 'docs' && !hasLabel(view.labels, 'review:approved')) missing.push('review:not-approved');
 if (mode === 'approved' && view.reviewDecision !== 'APPROVED' && !missing.includes('review:not-approved')) {
   missing.push('review:not-approved');
 }
