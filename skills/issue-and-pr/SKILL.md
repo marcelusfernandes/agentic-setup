@@ -110,19 +110,33 @@ elapses. If CI or the reviewer sends it back, the implementer fixes in the same 
   next line, indented, and it is not a bullet. `issue-lint` holds a grant to the two rules
   it holds the bullet globs to — the glob resolves, and no other issue in flight claims the
   file — and names it as a grant when it fails (#232).
-- **One glob per grant line, and `issue-lint` refuses a line that carries two.** Every
-  backticked span on a grant line used to be a granted glob, so a justification that quoted
-  a path on the same line granted that path too — an over-grant, and an over-grant fails
-  **open**: the path enters the audited scope silently and `scope` passes on a file nobody
-  meant to grant. Writing it carefully is not a control; six such lines were written in one
-  day, by the orchestrator, on the day that defect was being fixed. So a line with more than
-  one backticked span is now **refused** — it grants none of them, and `issue-lint` fails the
-  issue at dispatch naming the line and every span on it (#316). It is refused rather than
-  narrowed to the first span: narrowing would swap a silent over-grant for a silent
-  under-grant, and a line with two spans is a line whose author meant something this format
-  cannot express. Fixing one is rewriting it, not deleting a backtick at random.
-  - One backticked span, and only one, is the grant.
+- **One glob per grant line, at the head of it, and `issue-lint` refuses the two shapes
+  that break that.** Every backticked span on a grant line used to be a granted glob, so a
+  justification that quoted a path on the same line granted that path too — an over-grant,
+  and an over-grant fails **open**: the path enters the audited scope silently and `scope`
+  passes on a file nobody meant to grant. Writing it carefully is not a control; six such
+  lines were written in one day, by the orchestrator, on the day that defect was being
+  fixed. Both refusals reach the writer at dispatch, naming the line:
+  - **More than one backticked span** grants none of them, and the failure names every
+    span on the line (#316).
+  - **A bare glob whose justification is backticked** grants neither, and the failure names
+    the bare token and the span (#357). Before it was refused, such a line granted the path
+    the author was *pointing at* and lost the glob they wrote: both halves wrong from one
+    line. The two refused shapes, side by side:
+
+    ```
+    - authorised: `a.ts` (needed alongside `b.ts`)   ← two spans (#316)
+    - authorised: a.ts (see `b.ts`)                  ← bare glob, backticked justification (#357)
+    ```
+  - Each is refused rather than narrowed to the glob that was probably meant: narrowing
+    would swap a silent over-grant for a silent under-grant, and a line of either shape is a
+    line whose author meant something this format cannot express. Fixing one is rewriting
+    it, not deleting a backtick at random. They are different mistakes and are reported in
+    different words — an author fixing one is never told the other.
+  - One backticked span at the head of the line, and only one, is the grant; with no span
+    the first whitespace-delimited token is.
   - A justification on the **same** line is allowed only unbackticked — it adds no span.
+    That is enforced now, not conventional (#357).
   - A justification on a **continuation** line (indented, not a bullet) is read by no
     parser at all, so give it no backticks of its own: the habit is what keeps it off the
     grant line, and a *bulleted* continuation line is a different hazard — bullets are

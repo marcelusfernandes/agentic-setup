@@ -77,7 +77,7 @@ not a detail of item 8:
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
   [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0031-<slug>.md`. The date lives inside the file, on its
+  the next free number is `0032-<slug>.md`. The date lives inside the file, on its
   `Date:` line. The number continues the register across both files: items 16, 18, 19 and
   20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
   number is the one after the highest in the index below, not the one after the
@@ -181,3 +181,4 @@ that was false when it was written, and what may not is the decision it sits und
 | 28 | [A diff the overlay carries whole is proved by nothing, and passes](0028-a-diff-the-overlay-carries-whole-is-proved-by-nothing.md) | proposed |
 | 29 | [A file over the line limit is reported, not silently exempt](0029-a-file-over-the-line-limit-is-reported.md) | proposed |
 | 30 | [The structural signature sees this repository's own harness output](0030-the-structural-signature-sees-this-repositorys-own-output.md) | proposed |
+| 31 | [A bare glob with a backticked justification is refused](0031-a-bare-glob-with-a-backticked-justification-is-refused.md) | proposed |
