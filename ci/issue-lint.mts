@@ -4,9 +4,7 @@
 // `proof/<slug>.json` path, globs that parse and match something (or are
 // `new`), the `authorised:` grants of `## Files` held to those same two
 // rules — a grant resolves like a glob and is compared for overlap like one,
-// because it is what widens the scope check (#232) — one glob per grant line,
-// so a line carrying more than one backticked span is refused by name here at
-// dispatch rather than quietly granting all of them (#316), globs disjoint from the
+// because it is what widens the scope check (#232) — globs disjoint from the
 // issues already in flight in the same milestone, a `Blocked by:` graph with
 // no cycle in it, and every
 // `Blocked by: #N` number in the issue actually
@@ -20,6 +18,19 @@
 // it fired on every ordinary import, doc, or workflow mention of a covered
 // path (audit finding 3); that check, and its `--strict` flag (already
 // retired from the card by #45 for the same reason), are gone.
+//
+// One rule of that contract is enforced here and nowhere else: an
+// `authorised:` line grants one glob, so a line carrying more than one
+// backticked span is refused by name — it grants none of them, and the
+// failure names the line and every span (#316). Refusing beats narrowing to
+// the first span, which would trade a silent over-grant for a silent
+// under-grant. Dispatch is where it has to be said, because that is where
+// the line is written.
+//
+// This paragraph sits below the entry-point sentence above, not inside the
+// enumeration at the top, so the header's first twenty lines keep the
+// numbering `.github/workflows/issue-lint.yml` cites. A comment that moves a
+// cited line is the same defect as a stale citation, one step earlier.
 //
 //   node ci/issue-lint.mts <n> [--markdown] [--root <path>]
 //   node ci/issue-lint.mts --issue <n> --issue-body-file <path> \
