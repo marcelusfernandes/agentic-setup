@@ -136,7 +136,7 @@ The script is idempotent. It:
    It also sends `require_code_owner_review` and `required_review_thread_resolution` — the
    other two parameters the API documents as required on a `pull_request` rule — as `false`
    on a create and at the fetched value on an update, exactly the way the two stale-approval
-   fields beside them are carried. GitHub refuses a create that omits either, which is why
+   fields beside them are carried. GitHub refuses a create that omits them, which is why
    they are sent at all (#373); they are **not** part of `--require-review`'s opt-in, which
    owns the three fields above. So those two are the review-gate parameters still left to
    you: raise them in the GitHub UI, and `--rules` carries them through rather than lowering
