@@ -46,16 +46,45 @@
 // AC5 (`Blocked by:` numbers exist) always calls `gh issue view` for each
 // number, in both modes — a fake `gh` on PATH covers it in tests.
 //
-// Output: JSON `{ issue, ok, failures, globs, sequenced }` on stdout by
-// default — no `warnings` key any more. `globs`/`sequenced` are additive to
-// the four keys the contract names, reporting AC2's `new` status and AC3's
-// blocked-by exception. That exception is transitive (#258): the milestone's
+// What a run without that list can and cannot check (#299). Every rule
+// decided by reading this issue's body alone — the sections, the
+// `Declaration:` line, the two grant refusals, each glob's matched/new
+// classification, and AC5's existence check on every `Blocked by:` number —
+// runs either way. The two that read more than one issue do not: AC3's glob
+// disjointness, and the `Blocked by:` cycle scan. There are two ways to run
+// without the list — `--issue-body-file` with no `--milestone-issues-file`,
+// and a `gh`-mode run on an issue that carries no milestone — and neither is
+// reported as a pass: `disjointness.checked` is `false` with the reason in
+// it, and the Markdown heading reads `PASS (disjointness not checked)`. The
+// field is named for the check an orchestrator acts on; both checks are
+// gone, so the Markdown section says the cycle scan was equally blind (the
+// graph such a run builds holds the linted issue alone). The
+// verdict itself is left alone. A run that could not look found nothing, and
+// `ok: false` here would refuse every milestone-less claim
+// `scripts/claim.mts` makes today over a check that never ran — a different
+// decision, for whoever wants to require the milestone at claim time.
+//
+// Output: JSON `{ issue, ok, failures, globs, sequenced, disjointness }` on
+// stdout by default — no `warnings` key any more.
+// `globs`/`sequenced`/`disjointness` are additive to the four keys the
+// contract names, reporting AC2's `new` status, AC3's blocked-by exception,
+// and whether AC3 ran at all (`{ checked, compared, reason }`: `compared` is
+// the number of issues in flight this run held the globs against, and
+// `reason` says why it could not when `checked` is `false`).
+// That exception is transitive (#258): the milestone's
 // open issues form a `Blocked by:` graph, and an overlap is `sequenced` when
 // either issue reaches the other through it, at any depth and in either
-// direction, so a chain A -> B -> C needs no restated predecessor. A shared
+// direction, so a chain A -> B -> C needs no restated predecessor. The graph
+// spans every open issue of the milestone, whatever its labels and whether
+// or not it declares a `## Files` section of its own: an intermediate of a
+// chain orders its two ends without being in flight itself. A shared
 // blocker orders nothing — the edges are followed in their own direction —
 // and a cycle in that graph is a failure naming the issues in it, never a
-// hang. `failures` entries are either a plain string or,
+// hang. The cycle scan starts from every issue in the graph, not only from
+// the linted one (#299), so a cycle between two siblings this issue does not
+// reach is reported too, worded as one this issue is not part of; each
+// cycle is named once however many walks find it.
+// `failures` entries are either a plain string or,
 // for AC3 (glob overlap), the object shape the issue's acceptance criteria
 // name. Each `globs` entry carries `grant: true` when it came from an
 // `authorised:` line and `grant: false` when it came from a bullet, so a
@@ -65,7 +94,12 @@
 // the bullet glob it already is — the grant widens nothing there.
 // --markdown prints a Markdown rendering instead (for the workflow's
 // issue comment), starting with the `<!-- agentic-issue-lint -->` marker
-// the workflow greps for; it no longer has a Warnings section. Exit 0 when
+// the workflow greps for; it no longer has a Warnings section, and it
+// carries a **Disjointness not checked** section, with the heading
+// qualified to match, on a run that could not make that check — or a
+// **Disjointness: nothing to compare** line when the list was read and held
+// no issue in flight with a scope (`checked: true, compared: 0`), which a
+// plain PASS renders the same as a run that compared against a dozen. Exit 0 when
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
 // answer for the issue/milestone lookups themselves (not for a single
 // missing `Blocked by:` number, which is a normal failure entry). Any flag
@@ -88,12 +122,19 @@ const GH_LIST_LIMIT = '500'; // gh defaults to 30; a milestone can hold more in-
 type Failure = string | { issue: number; files: string[] };
 type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number; grant: boolean };
 type Sequenced = { issue: number; files: string[] };
+/** Whether AC3 (glob disjointness against the issues in flight) ran at all,
+ * how many issues it held this one against, and — when it could not run —
+ * why not. A run with no list of other issues reports `checked: false`
+ * rather than letting `ok: true` be read as "the globs are disjoint"
+ * (#299). */
+type DisjointnessReport = { checked: boolean; compared: number; reason: string | null };
 type Result = {
   issue: number | null;
   ok: boolean;
   failures: Failure[];
   globs: GlobReport[];
   sequenced: Sequenced[];
+  disjointness: DisjointnessReport;
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -143,11 +184,20 @@ type OtherIssue = { number: number; labels: string[]; body: string };
 
 let body: string;
 let others: OtherIssue[];
+// Null once a list of the other issues in the milestone has been obtained —
+// including an empty one, which is an answer ("nothing else is in flight"),
+// not a missing input. A string while there is no such list: it names, for
+// the report and for the reader of the comment, why the disjointness check
+// and the cycle scan below could not be made (#299).
+let noOthersReason: string | null = null;
 
 if (typeof args['issue-body-file'] === 'string') {
   body = readFileSync(args['issue-body-file'], 'utf8');
   others = [];
-  if (typeof args['milestone-issues-file'] === 'string') {
+  if (typeof args['milestone-issues-file'] !== 'string') {
+    noOthersReason =
+      '--issue-body-file was given without --milestone-issues-file, so this run never saw the other issues of the milestone';
+  } else {
     let raw: unknown;
     try {
       raw = JSON.parse(readFileSync(args['milestone-issues-file'], 'utf8'));
@@ -175,6 +225,7 @@ if (typeof args['issue-body-file'] === 'string') {
   const milestoneTitle = parsed.milestone?.title;
   if (!milestoneTitle) {
     others = [];
+    noOthersReason = 'the issue carries no milestone, so there is no set of issues in flight to hold its globs against';
   } else {
     const listRaw = gh(['issue', 'list', '--milestone', milestoneTitle, '--state', 'open', '--limit', GH_LIST_LIMIT, '--json', 'number,labels,body']);
     let list: any[];
@@ -408,9 +459,11 @@ function reaches(from: number, to: number): boolean {
  * closing one repeated at the end (`[A, B, A]`), or `null` when there is
  * none. Depth first over an explicit path, so the first back edge ends the
  * walk; `done` keeps an already-cleared subtree from being walked twice.
+ * `done` is the caller's, so it carries across the starts `findCycles`
+ * walks: a node it holds had no cycle below it, because a walk that finds
+ * one returns before marking anything.
  */
-function findCycle(start: number): number[] | null {
-  const done = new Set<number>();
+function findCycle(start: number, done: Set<number>): number[] | null {
   function walk(n: number, path: number[]): number[] | null {
     const at = path.indexOf(n);
     if (at !== -1) return [...path.slice(at), n];
@@ -426,9 +479,41 @@ function findCycle(start: number): number[] | null {
   return walk(start, []);
 }
 
-const blockedByCycle = findCycle(issueNumber);
-if (blockedByCycle !== null) {
-  failures.push(`"Blocked by:" forms a cycle: ${blockedByCycle.map((n) => `#${n}`).join(' -> ')} — a cycle is no order at all, so none of these issues can be dispatched`);
+// `issueNumber` is a number from the guard above down, but that narrowing
+// does not reach inside a function body; this const carries it there.
+const lintedIssue: number = issueNumber;
+/**
+ * Every distinct cycle in the graph, the walk starting from each issue in
+ * turn — the linted one first, so a cycle it is part of keeps the wording
+ * and the position in `failures` it had when that was the only start
+ * (#299). A cycle between two siblings this issue does not reach is a
+ * cycle all the same: it orders nothing, and the milestone cannot be
+ * dispatched out of it either. Two starts that reach the same cycle report
+ * it once — the key is its set of issues, so `[A, B, A]` and `[B, A, B]`
+ * are the one cycle they are.
+ */
+function findCycles(): number[][] {
+  const done = new Set<number>();
+  const seen = new Set<string>();
+  const cycles: number[][] = [];
+  for (const start of [lintedIssue, ...others.map((other) => other.number)]) {
+    const cycle = findCycle(start, done);
+    if (cycle === null) continue;
+    const key = [...new Set(cycle)].sort((a, b) => a - b).join(',');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cycles.push(cycle);
+  }
+  return cycles;
+}
+
+for (const cycle of findCycles()) {
+  const path = cycle.map((n) => `#${n}`).join(' -> ');
+  failures.push(
+    cycle.includes(lintedIssue)
+      ? `"Blocked by:" forms a cycle: ${path} — a cycle is no order at all, so none of these issues can be dispatched`
+      : `"Blocked by:" forms a cycle among other issues of this milestone, one #${lintedIssue} is not part of: ${path} — a cycle is no order at all, so none of those issues can be dispatched, and the milestone's graph stays wrong until one of those lines is fixed`,
+  );
 }
 
 // --- AC3: disjointness against issues in flight in the same milestone -----
@@ -443,10 +528,16 @@ const selfMatchedFiles = trackedFiles.filter((f) => matchesAny(f, selfScope));
 const selfNewPaths = newLiteralPaths(selfScope);
 const selfNewPrefixes = newWildcardPrefixes(selfScope);
 const sequenced: Sequenced[] = [];
+// The issues this run actually held the globs against — the ones in flight
+// that declare a scope of their own. Reported as `disjointness.compared`, so
+// a reader can tell "nothing else claims these files" from "nothing was
+// compared" (#299).
+const comparedIssues: number[] = [];
 for (const other of others) {
   if (!other.labels.some((l) => RELEVANT_STATES.includes(l))) continue;
   const otherScope = [...parseIssueGlobs(other.body), ...parseIssueAuthorisedGlobs(other.body)];
   if (otherScope.length === 0) continue;
+  comparedIssues.push(other.number);
   const otherNewPaths = newLiteralPaths(otherScope);
   const otherNewPrefixes = newWildcardPrefixes(otherScope);
   const overlapTrackedFiles = selfMatchedFiles.filter((f) => matchesAny(f, otherScope));
@@ -492,7 +583,13 @@ if (selfBlockedBy) {
 }
 
 function renderMarkdown(result: Result): string {
-  const lines = [MARKER, `### issue-lint for #${result.issue}: ${result.ok ? 'PASS' : 'FAIL'}`, ''];
+  // A run that could not make the disjointness check says so in the heading
+  // too: "PASS" on its own is read as "nothing else claims these files",
+  // which is exactly what this run does not know (#299). A FAIL heading is
+  // left plain — it already sends the reader to the failures below, and the
+  // section under it says what was not checked.
+  const verdict = result.ok ? (result.disjointness.checked ? 'PASS' : 'PASS (disjointness not checked)') : 'FAIL';
+  const lines = [MARKER, `### issue-lint for #${result.issue}: ${verdict}`, ''];
   if (result.failures.length === 0) {
     lines.push('No failures.');
   } else {
@@ -502,6 +599,31 @@ function renderMarkdown(result: Result): string {
     }
   }
   lines.push('');
+  if (!result.disjointness.checked) {
+    lines.push(
+      '**Disjointness not checked** — the globs of this issue were held against no other issue:',
+      '',
+      `- ${result.disjointness.reason}`,
+      '- Two issues in flight may claim the same file without this run seeing it. Rerun with `--milestone-issues-file`, or on an issue that carries a milestone, to make the check.',
+      // The key is named for the check an orchestrator acts on, but it is not
+      // the only one the missing list takes away: the `Blocked by:` graph is
+      // this issue's own line and nothing else, so the cycle scan saw one
+      // node. Said here rather than left for a reader to infer from the
+      // absence of a failure that could not have been raised.
+      '- The `Blocked by:` cycle scan is equally blind: the graph this run built holds this issue alone, so a cycle among the milestone\'s other issues would not have been reported either.',
+      '',
+    );
+  } else if (result.disjointness.compared === 0) {
+    // `checked: true, compared: 0` is an answer — the list was read and held
+    // no issue in flight declaring a scope — and a plain PASS renders it
+    // identically to a run that compared against a dozen. That is exactly
+    // the distinction `compared` was added to make, so the Markdown says it
+    // too and does not leave it to the JSON alone.
+    lines.push(
+      '**Disjointness: nothing to compare** — the milestone\'s other issues were read, and none of them is in flight with a scope of its own, so these globs were held against no issue. Nothing else claims these files, as far as that list goes.',
+      '',
+    );
+  }
   if (result.sequenced.length > 0) {
     lines.push('**Sequenced** (overlap accepted — a Blocked-by relation orders these issues):', '');
     for (const s of result.sequenced) lines.push(`- #${s.issue}: ${s.files.map((x) => `\`${x}\``).join(', ')}`);
@@ -523,4 +645,9 @@ function renderMarkdown(result: Result): string {
 }
 
 const ok = failures.length === 0;
-output({ issue: issueNumber, ok, failures, globs, sequenced });
+const disjointness: DisjointnessReport = {
+  checked: noOthersReason === null,
+  compared: comparedIssues.length,
+  reason: noOthersReason,
+};
+output({ issue: issueNumber, ok, failures, globs, sequenced, disjointness });

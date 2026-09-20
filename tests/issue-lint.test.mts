@@ -14,11 +14,21 @@
 // than one — is tests/issue-lint-disjointness.test.mts (#352). The fake
 // `gh`, the throwaway repository and the body builder both files spawn the
 // script with are tests/lib/issue-lint-harness.mts.
+//
+// One block at the foot of this file is the exception (#299). What a run
+// *without* `--milestone-issues-file` reports, and how far the `Blocked by:`
+// graph is scanned when it has one, are cases about this script's own output
+// and its graph rather than about a pair of overlapping globs — and #299's
+// `## Files` names this file and `ci/issue-lint.mts` alone, so they are
+// written here. They carry the only `milestoneFile(` calls outside
+// tests/issue-lint-disjointness.test.mts, whose header still names that call
+// the mechanical boundary between the two files; correcting that sentence is
+// outside this issue's scope.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, ci, finish, ROOT, RUNTIME } from './lib/harness.mts';
-import { bodyFile, issueBody, lint, nextSeq, parse, PATH_WITH_FAKE_GH, repo } from './lib/issue-lint-harness.mts';
+import { bodyFile, issueBody, lint, milestoneFile, nextSeq, parse, PATH_WITH_FAKE_GH, repo } from './lib/issue-lint-harness.mts';
 
 // --- happy path -------------------------------------------------------------
 const valid = lint(100, issueBody());
@@ -459,6 +469,151 @@ check(
   'a legacy --strict flag is noted on stderr, not silently dropped',
   /--strict/.test(strictSpawn.stderr),
   strictSpawn.stderr,
+);
+
+// --- #299: what a run that could not look reports, and how far the
+// `Blocked by:` graph is scanned ---------------------------------------------
+// The three blocks below are the exception this file's header names: they
+// need `milestoneFile(` because what they assert is what a run *without*
+// that list cannot do, and what the graph spans when it has one.
+
+// AC1: the same issue body, run twice. With the list, the overlap against
+// the sibling in flight is a failure. Without it, the run never sees the
+// sibling — and says so, instead of reporting the disjointness check as
+// passed. On the base the second run prints `ok: true` and no
+// `disjointness` key at all, so these cases are red there on behaviour.
+const unseenSiblingMilestone = milestoneFile([{ number: 2991, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n' }]);
+const overlapSeen = lint(2990, issueBody(), { milestone: unseenSiblingMilestone });
+const overlapSeenOut = parse(overlapSeen.out);
+check(
+  'with --milestone-issues-file the overlap against the sibling in flight is a failure',
+  overlapSeen.status === 1 && overlapSeenOut?.ok === false && (overlapSeenOut?.failures ?? []).some((f: any) => f?.issue === 2991),
+  overlapSeen.out,
+);
+check('a run that had the list reports the disjointness check as run', overlapSeenOut?.disjointness?.checked === true, overlapSeen.out);
+check('a run that had the list reports how many issues in flight it compared against', overlapSeenOut?.disjointness?.compared === 1, overlapSeen.out);
+check('a run that had the list carries no not-run reason', overlapSeenOut?.disjointness?.reason === null, overlapSeen.out);
+
+const overlapUnseen = lint(2990, issueBody());
+const overlapUnseenOut = parse(overlapUnseen.out);
+check(
+  'the same body with no --milestone-issues-file reports the disjointness check as not run',
+  overlapUnseenOut?.disjointness?.checked === false,
+  overlapUnseen.out,
+);
+check(
+  'the not-run report names the missing --milestone-issues-file as the reason',
+  typeof overlapUnseenOut?.disjointness?.reason === 'string' && overlapUnseenOut.disjointness.reason.includes('--milestone-issues-file'),
+  overlapUnseen.out,
+);
+check('a run that could not check disjointness compared against nothing', overlapUnseenOut?.disjointness?.compared === 0, overlapUnseen.out);
+// The verdict itself is deliberately left alone: a run that could not look
+// found nothing, and `ok: false` here would refuse every milestone-less
+// claim `scripts/claim.mts` makes today (a gh-mode run on an issue with no
+// milestone is the same blind spot, reported the same way). The reader is
+// told in the report instead — which is what this case pins.
+check(
+  'a run that could not check disjointness still exits 0 with ok: true — it found nothing, it only could not look',
+  overlapUnseen.status === 0 && overlapUnseenOut?.ok === true,
+  overlapUnseen.out,
+);
+
+const notRunMd = lint(2990, issueBody(), { markdown: true });
+check(
+  '--markdown does not report a run that could not check disjointness as a plain PASS',
+  /issue-lint for #2990: PASS \(disjointness not checked\)/.test(notRunMd.out),
+  notRunMd.out,
+);
+check('--markdown carries a Disjointness not checked section naming the reason', /\*\*Disjointness not checked\*\*/.test(notRunMd.out) && /--milestone-issues-file/.test(notRunMd.out), notRunMd.out);
+// The missing list takes two checks away, not one: the `Blocked by:` graph
+// such a run builds holds the linted issue alone, so the cycle scan is as
+// blind as the glob comparison. The key is named for the check an
+// orchestrator acts on; the section says the rest.
+check(
+  '--markdown says the Blocked-by cycle scan was equally blind, not just the glob comparison',
+  /cycle scan/i.test(notRunMd.out),
+  notRunMd.out,
+);
+
+// `checked: true, compared: 0` is an answer, not a blind spot — the list was
+// read and held no issue in flight with a scope of its own. A plain PASS
+// renders it identically to a run that compared against a dozen, which is
+// the distinction `compared` exists to make, so the Markdown makes it too.
+const nothingToCompareMd = lint(2992, issueBody(), { markdown: true, milestone: milestoneFile([]) });
+const nothingToCompareOut = parse(lint(2992, issueBody(), { milestone: milestoneFile([]) }).out);
+check('an empty list is still a check that ran, against nothing', nothingToCompareOut?.disjointness?.checked === true && nothingToCompareOut?.disjointness?.compared === 0, JSON.stringify(nothingToCompareOut));
+check(
+  '--markdown does not render "held against nothing" as a plain PASS',
+  /issue-lint for #2992: PASS$/m.test(nothingToCompareMd.out) &&
+    !/Disjointness not checked/.test(nothingToCompareMd.out) &&
+    /\*\*Disjointness: nothing to compare\*\*/.test(nothingToCompareMd.out),
+  nothingToCompareMd.out,
+);
+
+// A run that did compare against an issue in flight says nothing extra: the
+// plain PASS is the whole report, as it was before #299.
+const comparedMd = lint(2999, issueBody(), { markdown: true, milestone: milestoneFile([{ number: 29990, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n' }]) });
+check(
+  '--markdown reports a plain PASS, with no disjointness section, when the globs were held against an issue in flight',
+  /issue-lint for #2999: PASS$/m.test(comparedMd.out) && !/Disjointness/.test(comparedMd.out),
+  comparedMd.out,
+);
+
+// AC2: the chain's intermediate carries no `state:ready` label and no
+// `## Files` section at all — it is in flight in no sense and declares no
+// scope, and it is still the only thing that orders #2994 and #2995. An
+// implementation that built the graph from the issues in flight, or from
+// the ones with globs, would drop #2993 and report the overlap as a
+// failure. Green on the base: the graph already spans every open issue of
+// the milestone. It is a pin on that span, not a fix — nothing in the
+// suite held it before (#299).
+const unlabelledIntermediateMilestone = milestoneFile([
+  { number: 2993, labels: [], body: '## Dependencies\nBlocked by: #2995\n' },
+  { number: 2995, labels: ['state:ready'], body: '## Files\n- `tests/smoke.mts`\n\n## Dependencies\nBlocked by: none\n' },
+]);
+const throughUnlabelled = lint(2994, issueBody({ deps: '## Dependencies\nBlocked by: #2993\n' }), { milestone: unlabelledIntermediateMilestone });
+const throughUnlabelledOut = parse(throughUnlabelled.out);
+check(
+  'a chain through an intermediate with no state: label and no ## Files still sequences the two ends',
+  throughUnlabelled.status === 0 && throughUnlabelledOut?.ok === true,
+  throughUnlabelled.out,
+);
+check(
+  'the overlap ordered by that intermediate is reported in sequenced: [{ issue, files }]',
+  (throughUnlabelledOut?.sequenced ?? []).some((s: any) => s?.issue === 2995 && s?.files?.includes('tests/smoke.mts')),
+  throughUnlabelled.out,
+);
+
+// AC3: a cycle between two siblings this issue does not reach. Nothing
+// overlaps here — #2996 and #2997 declare globs of their own and neither
+// is reachable from #2998 — so the cycle is the only thing to report. On
+// the base the walk starts at the linted issue and never touches them:
+// `ok: true`, no mention of a cycle. Red there on behaviour.
+const unreachableCycleMilestone = milestoneFile([
+  { number: 2996, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n\n## Dependencies\nBlocked by: #2997\n' },
+  { number: 2997, labels: ['state:ready'], body: '## Files\n- `docs/**`\n\n## Dependencies\nBlocked by: #2996\n' },
+]);
+const unreachableCycle = lint(2998, issueBody(), { milestone: unreachableCycleMilestone });
+const unreachableCycleOut = parse(unreachableCycle.out);
+check(
+  'a cycle among issues this one does not reach fails the lint with ok: false',
+  unreachableCycle.status === 1 && unreachableCycleOut?.ok === false,
+  unreachableCycle.out,
+);
+check(
+  'the unreachable cycle names every issue in it',
+  (unreachableCycleOut?.failures ?? []).some((f: any) => typeof f === 'string' && /cycle/i.test(f) && f.includes('#2996') && f.includes('#2997')),
+  unreachableCycle.out,
+);
+check(
+  'the unreachable cycle is worded as one this issue is not part of',
+  (unreachableCycleOut?.failures ?? []).some((f: any) => typeof f === 'string' && /cycle/i.test(f) && /not in it|not part of/.test(f)),
+  unreachableCycle.out,
+);
+check(
+  'the unreachable cycle is reported once, not once per issue that reaches it',
+  (unreachableCycleOut?.failures ?? []).filter((f: any) => typeof f === 'string' && /cycle/i.test(f)).length === 1,
+  unreachableCycle.out,
 );
 
 finish();

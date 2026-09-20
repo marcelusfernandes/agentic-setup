@@ -210,7 +210,7 @@ LINT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/ci/issue-lint.mts}"
 node "$LINT" <n>
 ```
 
-Prints `{ issue, ok, failures, globs, sequenced }`; dispatch only `ok: true`. issue-lint
+Prints `{ issue, ok, failures, globs, sequenced, disjointness }`; dispatch only `ok: true`. issue-lint
 checks the issue's contract only — sections present, globs that parse and match
 something (or are `new`), the `authorised:` grants of `## Files` held to those same two
 rules (each `globs` entry says which it was, `grant: true` or `grant: false`), globs
@@ -227,6 +227,13 @@ expected to create it), and so is a wildcard glob whose fixed prefix (the part b
 first `*` or `?`) names a directory with no tracked file anywhere — the way an issue
 declares a whole new directory. A `sequenced` overlap is not a failure either, it means the
 two issues are already ordered by a `Blocked by:` relation.
+`disjointness.checked: false` — the run held this issue's globs against no other issue at
+all, because the issue carries no milestone (or the lint was given no list of the
+milestone's other issues) — means `ok: true` here says the contract is well formed and
+says nothing about overlap, so two issues in flight may be claiming the same file and
+this run cannot tell: give the issue a milestone and lint it again before dispatching it,
+and until you do, treat step 2's "no undeclared overlap left to find by hand" as not
+holding for this candidate.
 
 ## 2. Pick up to 4 with disjoint globs
 
