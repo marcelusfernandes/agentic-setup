@@ -399,7 +399,7 @@ check('the happy path kept the existing description', kDescription.startsWith(DE
 const kBlock = CLOSING_BLOCK.exec(kDescription);
 check('the happy path appended a dated closing block naming main and the evidence', kBlock !== null, kDescription);
 check('the closing block names the tip of origin/main', kBlock?.[1] === kTip, `${kBlock?.[1]} != ${kTip}`);
-check('the closing block is the last thing in the description', kDescription.trimEnd().endsWith(kBlock?.[0] ?? ' '), kDescription);
+check('the closing block is the last thing in the description', kDescription.trimEnd().endsWith(kBlock?.[0] ?? '\u0000'), kDescription);
 
 // --- L: closing never opens anything ----------------------------------------
 check(
