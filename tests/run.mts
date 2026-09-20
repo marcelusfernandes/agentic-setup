@@ -18,6 +18,62 @@
 // with the file that said it. What a file marks is what it prints, so the
 // volume is the suite's own choice and not this file's to cap.
 //
+// Where a child's summary may appear, stated here because a note author who
+// does not know the rule pays for it in a wrong count (#439). A summary is
+// `N passed, M failed` on the child's stdout, and of the several a file may
+// write, the one read is the one that is most of its own line — a whole line
+// first, then one that ends a line, then one that starts a line, then, only
+// if nothing better exists, summary-shaped text sitting inside a line. `rank`
+// below is that order; the last match of the winning rank is taken, since a
+// file's summary is its last line. A child that terminates its lines prints a
+// whole line and never leaves that top rank, so text it quotes in a note, in
+// an expectation, or from another run's result loses to it and is not read as
+// its result.
+//
+// Before this rule the last summary-shaped text anywhere won, so a file that
+// passed one case and mentioned `3 passed, 0 failed` afterwards was reported
+// as passing three, and one that quoted a non-zero count was reported as
+// failing that many: counts nobody had, in the aggregate below and in
+// ci/negative-control.mts, which reads this log. Ranking rather than
+// anchoring is what the lower ranks are for. A file that writes a note
+// without terminating the line leaves its summary in the middle of that line
+// — the `e` and `g` fixtures in tests/run.test.mts. Anchoring alone reports
+// `e` as CRASHED and `g` by its stray, and hands the summary back to the
+// printed note in both, which is the #429 defect. `g` is why the ranks are
+// ordered this way and not by anchoring first: it holds a stray that starts a
+// line *and* a real summary that only ends one, and the real summary has to
+// win. `p` is why the whole-line rank sits above ends-a-line: its stray ends
+// its line with the runtime parenthetical too, so nothing below that rank
+// separates them. `n` is why a rank asks whether the summary ends its line
+// rather than whether the line ends there: a file whose own summary line
+// carries trailing whitespace is still writing a summary, and demanding a
+// bare end of line drops it under any stray that ends one cleanly.
+//
+// What keeps this suite's own files clear of the lower ranks is not luck:
+// tests/lib/harness.mts writes exactly one thing to stdout, its summary
+// line. A `FAIL` and its indented detail go to stderr, and this file never
+// reads a summary from stderr (the `c` fixture pins that). So a case name or
+// a detail quoting a runner log cannot reach the ranking at all, whatever it
+// quotes. Under the rule this replaced — last match anywhere on stdout — the
+// same files were safe only because none of them happened to print one.
+//
+// Three things the rule still lets through, and one of them is half new. A
+// stray that is a whole line of its own is indistinguishable from the
+// protocol line, and is read instead of the real summary whether written
+// before or after it — after, because the last match of the top rank wins,
+// which is what the rule this replaced did too; before, when the real summary
+// is glued onto an unterminated note and so cannot reach the top rank, which
+// is new here and is the price of ranking over position. Position is the only
+// thing that could tell the two apart, and position is the rule that loses
+// the `g`, `j`, `k` and `p` fixtures, so this is a trade and not an
+// oversight. A file that prints no summary at all but does write
+// summary-shaped text is reported by that text, as a *passing* file if the
+// text says `0 failed`, where it would otherwise be `CRASHED`. And whichever
+// match is read is cut out of the note scan below from the match to the end
+// of its line, so on the lowest rank that cut lands inside a note and
+// truncates it there. All three
+// end at the same place: terminate the line, and the top rank applies.
+//
 // A note is everything the file marked, not its first line. A line that
 // begins with whitespace and follows a note line, or another such line, is
 // that note's continuation and is printed under the same file name; the note
@@ -92,7 +148,19 @@ const files = readdirSync(dir)
   .filter((name) => name.endsWith('.test.mts'))
   .sort();
 
+/** Summary-shaped text, wherever in a child's output it sits. */
 const SUMMARY = /(\d+) passed, (\d+) failed/g;
+
+/**
+ * What a summary may be followed by and still be the end of its line: the
+ * runtime parenthetical this protocol's own line carries, or nothing, and
+ * then whitespace. The trailing `\s*` is not cosmetic — a file whose summary
+ * line ends with a space is writing a summary, and a rule that demanded a
+ * bare end of line would drop it below any stray that ended one cleanly.
+ * `\s` cannot run past the line here: it is tested against a slice already
+ * cut at the next newline.
+ */
+const SUMMARY_TAIL = /^(?: \([^()\n]*\))?\s*$/;
 
 /**
  * A line a test file means an operator to read even when the file passes:
@@ -104,11 +172,42 @@ const NOTE = /^note\s/;
 /** A note's continuation: an indented, non-empty line under the note it belongs to. */
 const CONTINUATION = /^\s+\S/;
 
-/** Returns the last "N passed, M failed" match in text, or null if there is none. */
+/**
+ * How much of its own line a summary-shaped match is, which is the whole of
+ * what this file knows about whether the child printed it as a summary:
+ *
+ *   3  the line is the summary, and nothing else but the runtime parenthetical
+ *   2  the summary ends the line — something unterminated runs into it
+ *   1  the summary starts the line — something quoted follows it
+ *   0  neither: summary-shaped text sitting inside a line
+ *
+ * The protocol line is printed by `console.log`, so a child that ends its
+ * lines scores 3 every time. The lower ranks exist for the child that does
+ * not, and are ordered by how little of the line is someone else's text.
+ */
+function rank(text: string, match: RegExpExecArray): number {
+  const startsLine = match.index === 0 || text[match.index - 1] === '\n';
+  const after = match.index + match[0].length;
+  const eol = text.indexOf('\n', after);
+  const endsLine = SUMMARY_TAIL.test(text.slice(after, eol < 0 ? undefined : eol));
+  return (startsLine ? 1 : 0) + (endsLine ? 2 : 0);
+}
+
+/**
+ * The match this file reads a child's result from: of the summary-shaped text
+ * in `text`, the highest-ranked, and the last of those; or null if there is
+ * none. See the header for what each rank admits and what it lets through.
+ */
 function lastSummary(text: string): RegExpExecArray | null {
-  let last: RegExpExecArray | null = null;
-  for (const m of text.matchAll(SUMMARY)) last = m;
-  return last;
+  let best: RegExpExecArray | null = null;
+  let bestRank = -1;
+  for (const m of text.matchAll(SUMMARY)) {
+    const r = rank(text, m);
+    if (r < bestRank) continue;
+    best = m;
+    bestRank = r;
+  }
+  return best;
 }
 
 /**
