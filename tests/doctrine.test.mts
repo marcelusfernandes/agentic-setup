@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // Pin test for the doctrine prose this repository repeats across files. Prose with no consumer
-// drifts; this file is the consumer. Three pins live here, each under its own header below: the
-// content-is-data doctrine (#179) — one identical sentence in CLAUDE.md, AGENTS.md and the three
-// agent cards, with the Codex route's own wording in .agents/skills/autonomous-loop/references/
-// contract.md pinned as the reference and left unedited; docs/orchestration.md's account of the
-// loop (#205), whose step 0 names `milestoneLint` and whose "The reviewer" lists all six checks
-// the card carries; and the implementer card's gates and machine-level rules (#417). The Markdown
-// pins collapse whitespace to single spaces on both sides, because these files wrap at ~90 columns
-// — identical modulo line breaks, otherwise character for character — and read each file from its
-// source path, the byte-identical Codex snapshot under plugins/agentic-setup/ being held by
-// `npm run check:codex-plugin`.
+// drifts; this file is the consumer. Eleven pins live here. Ten sit under a `// --- #<n>` header
+// below — #146, #205, #148, #209, #212, #264, #266, #336, #448 and #417, in file order — and each
+// of those headers states its own subject, so this sentence is a count and not a summary of them.
+// A count goes wrong the moment a block is added or removed without it, and this one had: it said
+// four while there were eleven, then three while there were ten. The eleventh pin is the one this
+// file opens with, under `AC` headers rather than a numbered one: the content-is-data doctrine
+// (#179), one identical sentence in CLAUDE.md, AGENTS.md and the three agent cards, with the Codex
+// route's own wording in .agents/skills/autonomous-loop/references/contract.md pinned as the
+// reference and left unedited. The Markdown pins collapse whitespace to single spaces on both
+// sides, because these files wrap at ~90 columns — identical modulo line breaks, otherwise
+// character for character — and read each file from its source path, the byte-identical Codex
+// snapshot under plugins/agentic-setup/ being held by `npm run check:codex-plugin`.
 //
 // This file is pure-read throughout: every case below reads a tracked file and asserts on its
 // text, and nothing here spawns anything (invariant 6). The one block that did — the decision
@@ -17,6 +19,11 @@
 // `ci/issue-lint.mts` — is tests/register.test.mts (#448), and that file's header states the
 // boundary in full rather than it being restated here in a second version. The register prose
 // #336 pins stays here, because reading it is all it does.
+//
+// Headroom: this file is 622 of the 800 lines `scope` allows, measured with `wc -l` at the commit
+// that writes this line. It stood at 800 of 800 until #448 moved the register block out. The
+// number lives here, and not only in that pull request's body, because a body does not reach
+// `main` and the next person to edit this file reads the file.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';

@@ -24,6 +24,10 @@
 // Invariant 10 is held in the block's own comments below: every expectation is written out
 // here rather than read back from the thing it pins.
 //
+// Headroom: this file is 299 of the 800 lines `scope` allows, measured with `wc -l` at the commit
+// that writes this line. The number lives here rather than only in the pull request that made the
+// file, because a pull-request body does not reach `main`.
+//
 // Negative control: there is no red for the move itself, and none is offered. Nothing here
 // changed — every case below passed at the base inside tests/doctrine.test.mts and passes
 // here — and a red would mean weakening a pin in order to re-strengthen it. The pull request
