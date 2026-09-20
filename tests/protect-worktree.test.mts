@@ -13,7 +13,7 @@
 // throwaway home and get a deterministic path to assert on.
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { check, cleanup, commit, finish, git, hook, tempRepo } from './lib/harness.mts';
 
 const repo = tempRepo();
@@ -83,6 +83,34 @@ check('protect-worktree does not call a scratch file durable', !scratch.stderr.i
 // protect, and a memory there is no more durable than any other file in it.
 const insideHome = write(join(projectMemory(repo), 'implementer', 'MEMORY.md'), {}, wt, { HOME: repo });
 check('protect-worktree denies the memory root when it resolves inside the main checkout', insideHome.status === 2);
-check('protect-worktree does not offer a durable location it is itself refusing', /no durable location is reachable/i.test(insideHome.stderr));
+check('protect-worktree does not offer a durable location it is itself refusing', /no durable location/i.test(insideHome.stderr));
+
+// An ordinary main-checkout mistake is the refusal an agent meets most, and
+// it is the half of this hook the model actually reads. It stays a redirect
+// to the worktree, and the durable location it now mentions carries the same
+// caveat the agent-memory branch carries: the scope is set in the card, so
+// this is not an invitation to hand-write into a directory Claude Code owns.
+const ordinary = write(join(repo, 'src', 'foo.ts'), {}, wt, { HOME: home });
+check('protect-worktree keeps an ordinary main-checkout refusal a redirect to the worktree', ordinary.status === 2 && ordinary.stderr.includes('Use the path under') && ordinary.stderr.includes(realpathSync.native(wt)));
+check('protect-worktree carries the card caveat on an ordinary main-checkout refusal', /not by the agent, and not at write time/.test(ordinary.stderr));
+
+// The layout `worktree-create.mts` actually produces: the worktree lives
+// outside the checkout (`<tmpdir>/agentic-worktrees/<name>`), so a guard that
+// tests containment against the main checkout alone does not hold here.
+// `os.homedir()` returns `''` for an empty `$HOME`, which makes the memory
+// path relative and `realish` resolve it against the hook's own cwd — the
+// worktree. A location that dies with the worktree is not a durable one and
+// must not be named as "outside every checkout".
+const outsideWt = join(realpathSync.native(mkdtempSync(join(tmpdir(), 'agentic-wt-'))), 'agent-2');
+cleanup(() => rmSync(dirname(outsideWt), { recursive: true, force: true }));
+git(['worktree', 'add', '-q', '-b', 'feat/2-x', outsideWt], repo);
+
+const fromOutside = write(join(userMemory, 'implementer', 'MEMORY.md'), {}, outsideWt, { HOME: home });
+check('protect-worktree allows and names the durable location from a worktree outside the checkout', fromOutside.status === 0 && fromOutside.stderr.includes('durable memory'));
+
+const emptyHome = write(join(repo, 'a.txt'), {}, outsideWt, { HOME: '' });
+check('protect-worktree still denies a main-checkout write when $HOME resolves to nothing', emptyHome.status === 2);
+check('protect-worktree offers no durable location when $HOME resolves to nothing', /no durable location/i.test(emptyHome.stderr));
+check('protect-worktree never calls a path inside the worktree outside every checkout', !emptyHome.stderr.includes('outside every checkout'));
 
 finish();
