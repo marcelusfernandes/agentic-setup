@@ -55,10 +55,25 @@
 //                          issue that closed without a PR did not ship — which
 //                          the parent spec issue and the closeout issue itself
 //                          always are). *Any* `#N` in a `## Left out` bullet
-//                          counts, including the "where it went" trailer, so
-//                          the check is deliberately generous: it catches an
-//                          issue nobody wrote down, not a bullet worded
-//                          loosely.
+//                          counts, its continuation lines included and the
+//                          "where it went" trailer included, so the check is
+//                          deliberately generous: it catches an issue nobody
+//                          wrote down, not a bullet worded loosely (#341).
+//   evidence:left-out-shipped a `## Left out` bullet *accounts for* an issue —
+//                          its `#N` opens the bullet — that shipped inside the
+//                          history this closeout snapshots. The three questions
+//                          are different and so are the three codes:
+//                          `evidence:issue-missing` asks "is every closed issue
+//                          written down somewhere"; this one asks "does a
+//                          bullet claim something did not ship when it did";
+//                          `evidence:row-open` asks "does a row claim something
+//                          shipped when its issue is not closed".
+//   evidence:row-open      a row of `## Issues` names an issue that is not
+//                          closed, or names no issue of this repository at all
+//                          (#381). The opposite direction of
+//                          `evidence:issue-missing`: that one reads the
+//                          milestone and looks for it in the file, this one
+//                          reads the file and looks it up.
 //   dogfood                a pull request merged into the phase changed the
 //                          mechanism the loop runs on — `hooks/`, `ci/`,
 //                          `scripts/` or a `skills/**/SKILL.md` — and the
@@ -119,9 +134,20 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const ISSUE_CELL = /^#(\d+)$/;
 const ISSUE_REF = /#(\d+)/g;
+// The run of `#N` that *opens* a `## Left out` bullet, separated by nothing but
+// `,`, `and` or `&`: the issues the bullet is about, as opposed to the ones it
+// merely mentions further on. `docs/closeout/README.md`, "Format", states this
+// sentence; the regex is that sentence. Deliberately unbroken — `- #125 (a) and
+// #126 (b)` claims #125 only, because the parenthesis ends the run, and a
+// grammar that guessed would be a grammar nobody could write against.
+const LEFT_OUT_CLAIM = /^-\s+((?:#\d+(?:\s*(?:,|and|&)\s*)?)+)/;
 const DELIMITER = /^:?-{3,}:?$/;
 const TABLE_HEADER = ['issue', 'title', 'PR', 'merge commit'];
 const SECTIONS = ['## Issues', '## Left out', '## Dogfood'];
+// `gh api graphql` takes every issue of one close in one call rather than one
+// call per row (#298). Chunked so a long phase cannot hit GraphQL's node
+// budget; seventeen phases of this repository's size fit in four chunks.
+const GH_GRAPHQL_BATCH = 50;
 
 // --- the milestone description format (.github/MILESTONE_TEMPLATE.md) -------
 const MILESTONE_LABELS = [
@@ -133,7 +159,17 @@ const CHECKBOX_ITEM = /^\s*[-*+]\s*\[([ xX])\]/;
 const HEADING_LINE = /^\s{0,3}#{1,6}\s/;
 
 type Row = { issue: number; sha: string };
-type Closeout = { errors: string[]; phase: string; sha: string; rows: Row[]; leftOut: number[]; dogfood: string[] };
+type Closeout = {
+  errors: string[];
+  phase: string;
+  sha: string;
+  rows: Row[];
+  /** Every `#N` mentioned anywhere in a `## Left out` bullet — the generous set. */
+  leftOut: number[];
+  /** The `#N` that open a `## Left out` bullet — the issues a bullet claims did not ship. */
+  leftOutClaims: number[];
+  dogfood: string[];
+};
 
 function out(shape: Record<string, unknown>, code: number): never {
   console.log(JSON.stringify(shape));
@@ -166,6 +202,25 @@ function safeParse<T>(text: string): T | null {
 /** gh's own wording when the resource is not there, as opposed to any other failure. */
 const isNotFound = (r: Run): boolean => /HTTP 404|Not Found \(HTTP/.test(r.stderr);
 
+/**
+ * The bullets of a prose section: each `- ` line joined with the indented
+ * continuation lines under it, one space between them. A `#N` on a
+ * continuation line is plainly part of that bullet to a reader, and the header
+ * above has always said so; until #341 the code read the bullet's first line
+ * and the two disagreed. The indentation is required, so an unindented
+ * paragraph after a bullet still ends it and the parser stays strict
+ * (invariant 5).
+ */
+function bulletsOf(lines: string[]): string[] {
+  const bullets: string[] = [];
+  for (const line of lines) {
+    const text = line.trim();
+    if (text.startsWith('- ')) bullets.push(text);
+    else if (text !== '' && bullets.length > 0 && /^\s/.test(line)) bullets[bullets.length - 1] += ` ${text}`;
+  }
+  return bullets;
+}
+
 /** Splits one markdown table line into trimmed cells, or null if it is not one. */
 function cells(line: string): string[] | null {
   const t = line.trim();
@@ -183,7 +238,7 @@ function cells(line: string): string[] | null {
 function parseCloseout(raw: string): Closeout {
   const errors: string[] = [];
   const lines = raw.replace(/<!--[\s\S]*?-->/g, '').split('\n');
-  const parsed: Closeout = { errors, phase: '', sha: '', rows: [], leftOut: [], dogfood: [] };
+  const parsed: Closeout = { errors, phase: '', sha: '', rows: [], leftOut: [], leftOutClaims: [], dogfood: [] };
 
   const headingIndex = lines.findIndex((l) => l.trim() !== '');
   const heading = headingIndex === -1 ? '' : lines[headingIndex].trim();
@@ -229,17 +284,24 @@ function parseCloseout(raw: string): Closeout {
     }
   }
 
-  const leftOut = lines.slice(at[1] + 1, at[2]).filter((l) => l.trim().startsWith('- '));
-  const dogfood = lines.slice(at[2] + 1).filter((l) => l.trim().startsWith('- '));
+  const leftOut = bulletsOf(lines.slice(at[1] + 1, at[2]));
+  const dogfood = bulletsOf(lines.slice(at[2] + 1));
   if (leftOut.length === 0) errors.push('`## Left out` needs at least one bullet (`- None — <why>` when nothing was left out)');
   if (dogfood.length === 0) errors.push('`## Dogfood` needs at least one bullet (`- None needed — <why>` when no report was)');
   for (const bullet of leftOut) {
     for (const ref of bullet.matchAll(ISSUE_REF)) parsed.leftOut.push(Number(ref[1]));
+    const claim = LEFT_OUT_CLAIM.exec(bullet);
+    if (claim) for (const ref of claim[1].matchAll(ISSUE_REF)) parsed.leftOutClaims.push(Number(ref[1]));
   }
-  parsed.dogfood = dogfood.map((b) => b.trim());
+  parsed.dogfood = dogfood;
 
   if (parsed.rows.length === 0 && errors.length === 0) {
-    errors.push('a closeout must be filled in: no row in `## Issues` means it is still the empty template');
+    // One sentence, mirrored verbatim in `tests/provenance.test.mts`'s
+    // EMPTY_TEMPLATE_MESSAGE, which reads this file and holds it to it. Neither
+    // may import the other (invariants 6 and 10), so the reconciliation is the
+    // wording plus that pin. The half-filled error next door is a different
+    // fact and keeps its own words.
+    errors.push("still the empty template — a milestone's closeout must be filled in");
   }
   return parsed;
 }
@@ -343,6 +405,74 @@ function stage(text: string): { dir: string; file: string } {
   } catch (e) {
     fail({ error: `could not stage the milestone description: ${(e as Error).message}` });
   }
+}
+
+/**
+ * What one issue lookup answers, and the distinction `tests/provenance.test.mts`
+ * built `classifyGhFailure` for, restated here because a script may not import
+ * from `tests/` (invariant 6): "the API declined" and "the record is wrong" are
+ * different facts and only the second is a verdict on the closeout. The first
+ * is `{ error }` and exits without writing; the second is a refusal.
+ */
+type Facts = { state: string; pr: number | null; prSha: string | null };
+type Answer = Facts | 'no-such-issue';
+
+const ISSUE_FIELDS =
+  '__typename ... on Issue { state closedByPullRequestsReferences(first: 1, includeClosedPrs: true) ' +
+  '{ nodes { number state mergeCommit { oid } } } }';
+
+/**
+ * Every issue of one close in `ceil(n / GH_GRAPHQL_BATCH)` calls rather than
+ * one call per row (#298). `{owner}` and `{repo}` are `gh`'s own placeholders,
+ * filled from the repository this runs in.
+ *
+ * The exit status is deliberately not read: a number that resolves to nothing
+ * makes `gh` exit 1 while still printing every other alias's answer, so the
+ * body is what is read. A body that does not parse, or one carrying an error
+ * that is not a `NOT_FOUND`, is the API declining to answer — `{ error }`,
+ * never a refusal, because it says nothing about the closeout.
+ */
+function issueFacts(numbers: number[]): Map<number, Answer> {
+  type Node = {
+    __typename?: unknown;
+    state?: unknown;
+    closedByPullRequestsReferences?: { nodes?: Array<{ number?: unknown; state?: unknown; mergeCommit?: { oid?: unknown } | null }> };
+  };
+  type Body = { data?: { repository?: Record<string, Node | null> }; errors?: Array<{ type?: unknown; message?: unknown }> };
+  const answers = new Map<number, Answer>();
+  for (let i = 0; i < numbers.length; i += GH_GRAPHQL_BATCH) {
+    const chunk = numbers.slice(i, i + GH_GRAPHQL_BATCH);
+    const aliases = chunk.map((n) => `i${n}: issueOrPullRequest(number: ${n}) { ${ISSUE_FIELDS} }`).join(' ');
+    const r = gh([
+      'api',
+      'graphql',
+      '-F',
+      'owner={owner}',
+      '-F',
+      'name={repo}',
+      '-f',
+      `query=query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${aliases} } }`,
+    ]);
+    const body = safeParse<Body>(r.stdout);
+    const repository = body?.data?.repository;
+    if (!repository) fail({ error: why(r, 'gh api graphql failed') });
+    const declined = (body?.errors ?? []).filter((e) => e.type !== 'NOT_FOUND');
+    if (declined.length > 0) fail({ error: `gh api graphql could not answer: ${String(declined[0].message ?? 'no message')}` });
+    for (const n of chunk) {
+      const node = repository[`i${n}`];
+      if (!node || node.__typename !== 'Issue') {
+        answers.set(n, 'no-such-issue');
+        continue;
+      }
+      const merged = (node.closedByPullRequestsReferences?.nodes ?? []).find((pull) => pull.state === 'MERGED');
+      answers.set(n, {
+        state: String(node.state ?? ''),
+        pr: merged ? Number(merged.number) : null,
+        prSha: merged && typeof merged.mergeCommit?.oid === 'string' ? merged.mergeCommit.oid : null,
+      });
+    }
+  }
+  return answers;
 }
 
 /** At most `MAX_NAMED_PATHS` paths, the rest counted, so one reason stays readable. */
@@ -483,6 +613,51 @@ if (closeout && closeout.errors.length === 0) {
       'evidence:issue-missing',
       `${evidence} does not account for ${unaccounted.map((n) => `#${n}`).join(', ')} — ` +
         'every closed issue of the milestone is a row in `## Issues` or a bullet in `## Left out`',
+    );
+  }
+
+  // #381 and #298: the two questions the file's own contents raise, asked in
+  // one `gh` call. Note that "names a closed issue" cannot be the wording of
+  // either: `milestone:open-issues` above already requires the milestone to
+  // hold none, so by the time this runs every correctly written `## Left out`
+  // bullet names a closed issue.
+  const rowIssues = closeout.rows.map((row) => row.issue);
+  const onTheTable = new Set(rowIssues);
+  // A number that is both a row and a bullet is the file cross-referencing its
+  // own table — `## Issues` is the stronger statement and wins.
+  const claims = [...new Set(closeout.leftOutClaims)].filter((n) => !onTheTable.has(n));
+  const facts = issueFacts([...new Set([...rowIssues, ...claims])].sort((a, b) => a - b));
+
+  // #381, table → state: the row says the issue shipped, so the issue is closed.
+  const wrongRows = closeout.rows
+    .map((row) => {
+      const answer = facts.get(row.issue);
+      if (answer === 'no-such-issue') return `#${row.issue} names no issue of this repository`;
+      if (answer && answer.state !== 'CLOSED') return `#${row.issue} is ${answer.state}`;
+      return null;
+    })
+    .filter((reason): reason is string => reason !== null);
+  if (wrongRows.length > 0) {
+    refuse(
+      'evidence:row-open',
+      `${evidence}: ${wrongRows.join(', ')} — a row of \`## Issues\` says the issue shipped, so it must be closed`,
+    );
+  }
+
+  // #298, bullet → state: the bullet says the issue did not ship, so no merged
+  // pull request of it may already be in the history this file snapshots. The
+  // snapshot clause is what makes the rule honest about a dated record, and it
+  // is why the closeout issue itself may head a bullet: the pull request that
+  // closes it is the one landing this file, which cannot be its own ancestor.
+  const shipped = claims
+    .map((n) => ({ n, answer: facts.get(n) }))
+    .filter((c) => c.answer !== undefined && c.answer !== 'no-such-issue' && c.answer.prSha !== null)
+    .filter((c) => git(['merge-base', '--is-ancestor', (c.answer as Facts).prSha as string, closeout.sha]).status === 0);
+  if (shipped.length > 0) {
+    refuse(
+      'evidence:left-out-shipped',
+      `${evidence}: \`## Left out\` accounts for ${shipped.map((c) => `#${c.n} (shipped in PR #${(c.answer as Facts).pr})`).join(', ')} — ` +
+        'a bullet that opens with an issue number says it did not ship, and that one had already merged at the `main SHA` above',
     );
   }
 }

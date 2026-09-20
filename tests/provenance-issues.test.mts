@@ -322,18 +322,22 @@ check(
   String(m17?.claims.join(',')),
 );
 
-// Every claim is also a mention: the strict set is a subset of the generous
-// one, in every tracked closeout, which is what makes `evidence:issue-missing`
-// strictly more generous than the shipped rule rather than differently shaped.
-const tracked = readdirSync(closeoutDir).filter((f) => /^M\d+\.md$/.test(f)).sort();
+// The 26 of those 55 that name a row of M17's own `## Issues` table: the
+// measurement the separation exists for. Widen the parser without separating
+// "mentions" from "accounts for" and every one of these becomes a bullet
+// claiming that an issue with a merge commit two sections above did not ship.
+const M17_ROW_CROSS_REFERENCES = [
+  203, 205, 206, 209, 212, 214, 229, 230, 231, 232, 237, 238, 239, 297, 308,
+  310, 316, 324, 326, 336, 339, 352, 354, 355, 356, 357,
+];
 check(
-  `every \`## Left out\` claim is also a mention, in all ${tracked.length} closeouts`,
-  tracked.every((f) => {
-    const p = parseCloseout(readFileSync(join(closeoutDir, f), 'utf8'));
-    return p !== null && p.claims.every((n) => p.leftOut.includes(n));
-  }),
-  tracked.join(','),
+  'the 26 references that name a row of M17.md\'s own table are mentions, and none of them is a claim',
+  M17_ROW_CROSS_REFERENCES.every((n) => m17?.leftOut.includes(n) && !m17.claims.includes(n)),
+  M17_ROW_CROSS_REFERENCES.filter((n) => !m17?.leftOut.includes(n) || m17.claims.includes(n)).join(','),
 );
+
+const tracked = readdirSync(closeoutDir).filter((f) => /^M\d+\.md$/.test(f)).sort();
+check(`all ${tracked.length} tracked closeouts parse far enough to be asked about`, tracked.every((f) => parseCloseout(readFileSync(join(closeoutDir, f), 'utf8')) !== null), tracked.join(','));
 
 const real = audit(ROOT, process.env, issueSourceFor(ROOT, process.env));
 check(`docs/closeout/M*.md holds up against GitHub (${real.files.length} file(s))`, real.errors.length === 0, real.errors.join('\n'));
