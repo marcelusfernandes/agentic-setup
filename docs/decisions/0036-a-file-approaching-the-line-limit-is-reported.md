@@ -279,10 +279,19 @@ whole of its line, before it counts.
 
 ## Supersedes
 
-Nothing. This item **stands beside item 0029** and does not replace it. Everything 0029
-put in force stays in force: the four length relations it named keep their names and their
-meanings, `pushed-over` is still the only one that fails, and the inherited report is
-untouched. What this item adds is a fifth name below them and a report of its own.
+Nothing. This item **stands beside item 0029** and does not replace it. `pushed-over` is
+still the only relation that fails, and the inherited report is untouched. What this item
+adds is a fifth name below them and a report of its own.
+
+Of the four relations 0029 named, **three keep their names and their meanings** —
+`exempt-generated`, `pushed-over` and `inherited-over`. **`under-limit` keeps its name and
+not its meaning.** At 0029 it meant *at or below `FILE_LINE_LIMIT` at the head*; here it
+means *more than `FILE_LINE_APPROACH_BAND` lines below `FILE_LINE_LIMIT` at the head*, and
+the band it gave up is `approaching-limit`. Nothing consumes the name outside the
+classifier that answers it — `withOutcome` is only ever asked for the other relations — so
+there is no behavioural consequence, which is why it is a change of meaning and not a
+change of rule. It is named here because this section is what a reader consults instead of
+diffing the two items.
 
 It answers 0029 rather than superseding it. 0029 declined the approach report with a
 reason — a different rule, a threshold to argue, a warning on every large file — and this
