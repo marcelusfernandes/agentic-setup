@@ -82,8 +82,8 @@ reported, and is not over the limit.**
 - One consequence of making a line number reportable: `stripCode` now blanks code in
   place instead of deleting it, so an offset in the stripped text is an offset in the
   body. That also stops an inline span splicing the text either side of it together, so
-  ``clo`X`ses #1`` no longer reads as `closes #1` and links nothing. The parser gets
-  stricter, never looser (invariant 5), and `tests/scope-linked.test.mts` holds that
+  ``clo`X`ses #1`` no longer reads as `closes #1` and links nothing. The splice can no
+  longer invent a keyword (invariant 5), and `tests/scope-linked.test.mts` holds that
   exact prose as a case that is red on the base.
 
   **What the inline pattern does not do, because a draft of this change made it do it
