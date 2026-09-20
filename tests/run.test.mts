@@ -23,6 +23,16 @@
 // present and the bare shape absent — because the marker is what a filter
 // over this log keys on (#428), and a pin that only asked for the text would
 // pass against a runner that printed the line bare.
+//
+// The `i`, `j` and `k` fixtures pin #439: a file's reported result comes from
+// the summary line it printed as such, not from summary-shaped text it
+// happened to write somewhere else. Each of the three really passes one case
+// and writes one stray count — before its real summary, after it, and inside
+// a note — and each is pinned twice: the real count present and the stray
+// count absent under that file's name, because a pin that only asked for the
+// real count would pass against a runner that printed both. The aggregate is
+// pinned as literal text for the same reason: it is built from the per-file
+// counts, so a stray one of them reaches it.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,6 +108,37 @@ writeFileSync(
     'process.exit(0);\n',
 );
 
+// Passes one case, and writes a summary-shaped line of its own *before* it —
+// a quoted count at the very start of a line, which is the one place the
+// runner's own summaries appear. Only "the last one" tells the two apart
+// here, so this file pins that anchoring did not become "the first one".
+writeFileSync(
+  join(dir, 'i.test.mts'),
+  "console.log('3 passed, 0 failed  <- the count this file is not reporting');\n" +
+    "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()})`);\n" +
+    'process.exit(0);\n',
+);
+// Passes one case, and writes a summary-shaped line *after* it: an indented
+// quoted expectation, the shape a test writes when it says what some other
+// run should print. A runner taking the last summary-shaped text anywhere in
+// stdout reports this file as `3 passed, 0 failed`.
+writeFileSync(
+  join(dir, 'j.test.mts'),
+  "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()})`);\n" +
+    "console.log('  expected 3 passed, 0 failed from the run this file read');\n" +
+    'process.exit(0);\n',
+);
+// Passes one case, and says so in a note that quotes *another* run's counts,
+// on stdout and after its own summary. The stray count is non-zero, so a
+// runner reading it as this file's result also reports failures nobody had,
+// and removing that "summary" from the note truncates the note at it.
+writeFileSync(
+  join(dir, 'k.test.mts'),
+  "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()})`);\n" +
+    "console.log('note  k: the run it read reported 2 passed, 3 failed, which is not this result');\n" +
+    'process.exit(0);\n',
+);
+
 const r = spawnSync(RUNTIME, [join(ROOT, 'tests', 'run.mts'), dir], { encoding: 'utf8' });
 const out = `${r.stdout}${r.stderr}`;
 
@@ -106,7 +147,7 @@ check('run.mts runs the passing file', /b\.test\.mts[\s\S]*3 passed, 0 failed/.t
 check('run.mts runs the failing file', /a\.test\.mts[\s\S]*1 passed, 1 failed/.test(out), out);
 check('run.mts discovers files in sorted order (a before b)', out.indexOf('a.test.mts') < out.indexOf('b.test.mts'), out);
 check('run.mts ignores files that are not *.test.mts', !/helper\.mts/.test(out), out);
-check('run.mts prints an aggregate line summing all files (10 passed, 1 failed)', /\b10 passed, 1 failed\b/.test(out), out);
+check('run.mts prints an aggregate line summing all files (13 passed, 1 failed)', /\b13 passed, 1 failed\b/.test(out), out);
 check('run.mts spawns test files with the runtime that launched it', out.includes(`1 passed, 1 failed (${RUNTIME.split('/').pop()})`), out);
 check(
   'run.mts parses the summary from stdout only, ignoring a look-alike line on stderr',
@@ -168,4 +209,24 @@ check(
   out,
 );
 
+check(
+  'run.mts reports a file by its own summary, not by a summary-shaped line it wrote before it',
+  out.includes('i.test.mts: 1 passed, 0 failed') && !out.includes('i.test.mts: 3 passed, 0 failed'),
+  out,
+);
+check(
+  'run.mts reports a file by its own summary, not by a summary-shaped line it wrote after it',
+  out.includes('j.test.mts: 1 passed, 0 failed') && !out.includes('j.test.mts: 3 passed, 0 failed'),
+  out,
+);
+check(
+  'run.mts reports a file by its own summary, not by a summary-shaped fragment inside its note',
+  out.includes('k.test.mts: 1 passed, 0 failed') && !out.includes('k.test.mts: 2 passed, 3 failed'),
+  out,
+);
+check(
+  "run.mts leaves a note whole when the note's own text is summary-shaped",
+  out.includes('k.test.mts: note  k: the run it read reported 2 passed, 3 failed, which is not this result'),
+  out,
+);
 finish();
