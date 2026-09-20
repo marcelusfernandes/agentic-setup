@@ -18,6 +18,11 @@
 // shapes are written out here as literal text rather than imported from
 // run.mts, so a change to the runner's marker, its prefix, its continuation
 // rule or its summary handling fails this file.
+//
+// The marked continuation is pinned in both directions — the marked shape
+// present and the bare shape absent — because the marker is what a filter
+// over this log keys on (#428), and a pin that only asked for the text would
+// pass against a runner that printed the line bare.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,7 +137,13 @@ check(
 check(
   "run.mts prints a multi-line note whole, every line carrying the same file's name",
   out.includes('f.test.mts: note  multi: first line\n') &&
-    out.includes('f.test.mts:       continuation with the detail that matters'),
+    out.includes('f.test.mts: note      continuation with the detail that matters'),
+  out,
+);
+check(
+  'run.mts keeps the note marker on a continuation line, so no line it adds to the log is unmarked',
+  out.includes('f.test.mts: note      continuation with the detail that matters') &&
+    !out.includes('f.test.mts:       continuation with the detail that matters'),
   out,
 );
 check(
