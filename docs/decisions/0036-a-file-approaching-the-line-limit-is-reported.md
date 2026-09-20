@@ -193,6 +193,14 @@ whole of its line, before it counts.
   landings rather than on the rare inherited file — measured, 28 of the last 80. That is
   the real cost of this item and nothing here mitigates it beyond the wording. If the band
   is turned down later, this bullet is the reason and the numbers above are the data.
+- **A file can jump into the band and past it in one landing, and the report says nothing
+  first.** The band warns the pull request *after* the one that used the room, not the one
+  that used it. Measured on this tree: #360 took `scripts/reconcile.mts` from 743 to
+  exactly 800 in a single landing, and #437 took `tests/close-milestone.test.mts` from 650
+  to 798. No band narrower than 60 and 150 respectively would have spoken before either,
+  and a band that wide is a warning on most of the suite. This report is a floor under the
+  silence, not a guarantee of notice; what it does buy is that the landing after each of
+  those two is told, which is the case #229 and #310 both met by counting lines by hand.
 - **A threshold to argue about.** 50 is defended by a measurement of this repository's own
   landings, which is a measurement of *this* tree at *this* size. An adopting repository
   with different file sizes inherits the number without the argument. `FILE_LINE_LIMIT` has
