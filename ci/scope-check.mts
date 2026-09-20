@@ -120,7 +120,13 @@ function gh(ghArgs: string[]): string {
 // guessed here would guess in the direction of passing.
 function mergeBaseOf(base: string, head: string): string {
   const r = spawnSync('git', ['merge-base', base, head], { cwd: root, encoding: 'utf8' });
-  if (r.status !== 0) fail(`git merge-base ${base} ${head} failed (is the checkout deep enough?): ${(r.stderr || r.stdout).trim()}`);
+  // `git merge-base` exits 1 with no output at all when the two commits share
+  // no ancestor, so the reason has to be supplied here or the refusal reads as
+  // a blank one.
+  if (r.status !== 0) {
+    const why = (r.stderr || r.stdout).trim();
+    fail(`git merge-base ${base} ${head} found no common commit${why ? `: ${why}` : ' and said nothing'} — the two have unrelated histories, or the checkout is too shallow to hold both (this workflow sets fetch-depth: 0 so that it is not).`);
+  }
   const sha = r.stdout.trim();
   if (!sha) fail(`git merge-base ${base} ${head} named no commit.`);
   return sha;

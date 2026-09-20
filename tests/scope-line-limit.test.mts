@@ -352,4 +352,20 @@ check(
   rBase.out,
 );
 
+// The refusal path of the new base computation, tested like the happy path:
+// a base and a head that share no ancestor. `git merge-base` exits 1 with no
+// output at all for that, so the reason has to come from `scope` or the
+// refusal reads as a blank one. Before #413 this failed too, on `git diff`'s
+// own "no merge base" — it is not a new refusal, it is a named one.
+git(['checkout', '-q', '--orphan', 'orphan'], growthRepo);
+const orphanHead = commit(growthRepo, { 'src/big.ts': linesOf(700) }, 'chore: an unrelated history');
+const rOrphan = scopeGrowth(growthBase, orphanHead, growthRepo);
+check(
+  'scope refuses a base and a head with no common commit, and says why rather than nothing',
+  rOrphan.status === 1
+    && /found no common commit and said nothing/.test(rOrphan.out)
+    && /unrelated histories, or the checkout is too shallow/.test(rOrphan.out),
+  rOrphan.out,
+);
+
 finish();
