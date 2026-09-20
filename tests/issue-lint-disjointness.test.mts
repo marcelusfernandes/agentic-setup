@@ -724,4 +724,51 @@ check(
   doneSibling.out,
 );
 
+// The list the run now reads is the whole repository's, and `gh()` reads it
+// through `spawnSync`, whose `maxBuffer` defaults to 1 MiB. Widening the
+// candidate set moved that ceiling from "one milestone's issues" to "every
+// open issue", which is a ceiling the loop can actually reach: the 31 open
+// issues of 2026-09-20 serialise to 347 KB in this exact shape, a third of
+// the default, so roughly ninety would cross it — and three milestones live
+// at once is the case #338 exists for.
+//
+// Past the ceiling the read is truncated, and it surfaces as one of two
+// `{ error }` shapes depending on whether the child had already exited when
+// the buffer filled: `status: null` with truncated `stdout`, which `gh()`
+// reads as a failed command (what the real `gh` does), or a clean exit whose
+// output no longer parses, which is what the fake below produces. The pin
+// does not care which — `scripts/claim.mts` fails closed on `{ error }`
+// either way, so the consequence is not a bad verdict on one issue: it is
+// every claim in the repository refused until someone closes issues. So this
+// asserts that a verdict came back at all, rather than which verdict it is.
+//
+// 100 issues, each body padded to ~12 KB — about 1.2 MB in the
+// `--json number,labels,body` shape, comfortably past 1 MiB and far under
+// the 64 MiB the fix allows. The padding is a fenced block so it stays inert
+// to every parser: `parseIssueGlobs` reads bullets, and a fence is not one.
+const PADDING = `\n\`\`\`\n${'buffer padding. '.repeat(750)}\n\`\`\`\n`;
+const bigCorpus: GhIssue[] = [{ number: 5100, labels: [{ name: 'state:in-progress' }], body: issueBody() + PADDING, milestone: { title: 'M-A' } }];
+for (let i = 1; i < 100; i++) {
+  bigCorpus.push({
+    number: 5100 + i,
+    labels: [{ name: 'state:ready' }],
+    // Disjoint from this issue's `tests/**` and from each other, so the
+    // verdict stays clean and the only thing under test is the read.
+    body: `## Files\n- \`docs/pad-${i}.md\`\n${PADDING}`,
+    milestone: { title: `M-${i % 3}` },
+  });
+}
+const bigList = ghLint(5100, bigCorpus);
+const bigListOut = parse(bigList.out);
+check(
+  'a repository-wide list larger than spawnSync\'s default 1 MiB buffer is read, not reported as a failed `gh`',
+  bigListOut !== null && bigListOut.error === undefined,
+  bigList.out.slice(0, 400),
+);
+check(
+  'the run past that ceiling reaches a verdict and compares against the whole corpus',
+  bigListOut?.ok === true && bigListOut?.disjointness?.checked === true && bigListOut?.disjointness?.compared === 99,
+  bigList.out.slice(0, 400),
+);
+
 finish();
