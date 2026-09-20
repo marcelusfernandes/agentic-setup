@@ -25,7 +25,7 @@
 //    the cross-file check asserts the five copies match each other exactly.
 //  - The five files are read from their source paths; the byte-identical Codex snapshot
 //    under plugins/agentic-setup/ is held by `npm run check:codex-plugin`, not here.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -573,6 +573,26 @@ check('#336 AC4 the template points at the readme section that states the split 
 // against come from a scan written here in TypeScript, not from the commands' own output.
 // No case names a literal item number: a pin that did would itself have to be edited by
 // every pull request that adds an item, which is the lock this issue removes.
+//
+// What that cross-check does and does not catch, stated rather than left to be
+// rediscovered. The awk and the TypeScript are two implementations, so one drifting from
+// the other reds. They are not two *assumptions*: both read "an item is a `#` or `##`
+// heading whose first word is a number, outside a fenced block", and a register that
+// stopped being shaped that way would be misread by both in the same direction, with no
+// case to notice. That is the same bound the closeout grammar's three copies have. The
+// fixture-register cases below are the answer to it for the two shapes that bit first: a
+// heading inside a fence and a numbered `###` sub-heading are run against a register
+// written here for the purpose, so they are cases about the command rather than about
+// whatever this repository's own text happens to contain today.
+//
+// Which case pins the two-file read: the next-free-number case. It is discriminating
+// only because item 35 lives in `docs/decisions.md` — a derivation over the directory
+// alone returns 0035, which item 35 holds, and the case reds. On the commit before it
+// the highest number was 34 and its file was also the highest-numbered file in the
+// directory, so the same case passed against a one-file derivation. The
+// "carries numbers no directory file carries" case below is deliberately not the pin: it
+// is satisfied forever by items 1 to 13 and cannot fail. It is there to say what the
+// arrangement is, not to catch it changing.
 
 /** The register's two sources. The numbering spans both, which is the whole difficulty:
  *  items 1 to 13 and a handful of later exceptions live in the first. */
@@ -587,9 +607,9 @@ const NEXT_NUMBER_COMMAND =
 const STATUS_VIEW_COMMAND =
   `awk 'FNR==1{h=""} /^#+ [0-9]+\\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md`;
 
-/** Runs a documented command the way a reader would, from the repository root. */
-function shell(command: string): { status: number | null; out: string } {
-  const r = spawnSync('sh', ['-c', command], { cwd: ROOT, encoding: 'utf8' });
+/** Runs a documented command the way a reader would: `sh -c`, from a repository root. */
+function shell(command: string, cwd: string = ROOT): { status: number | null; out: string } {
+  const r = spawnSync('sh', ['-c', command], { cwd, encoding: 'utf8' });
   return { status: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -644,6 +664,68 @@ check('#411 AC2 the README no longer sends a decision PR to an index row in the 
 check('#411 AC2 the README says such a pull request touches its own file and nothing else', /touches its own file and nothing else/.test(decisionsReadme), decisionsReadme.slice(0, 600));
 check('#411 AC2 the README resolves a number to a file by name rather than by a row', /resolves to a file by name/.test(decisionsReadme), decisionsReadme.slice(0, 600));
 check('#411 AC2 the README says what the reader loses', /What a reader loses/.test(decisionsReadme), decisionsReadme.slice(0, 600));
+
+// AC2: what is left of the race is stated as it behaves under this repository's own
+// configuration, not as the catch a strict policy would give. `.github/workflows/test.yml`
+// fires on `pull_request` and the main ruleset sets
+// `strict_required_status_checks_policy: false`, so a green recorded before a sibling
+// merged still counts and nothing re-runs the check against the updated base.
+
+for (const [name, text] of [['docs/decisions/README.md', decisionsReadme], ['docs/decisions.md item 35', decisions]] as const) {
+  check(`#411 AC2 ${name} does not claim the duplicate is caught before the second lands`, !/rename before/.test(text), text.slice(-1500));
+  check(`#411 AC2 ${name} names the precondition the catch assumes`, /strict_required_status_checks_policy/.test(text), text.slice(-1500));
+  check(`#411 AC2 ${name} says the case catches the duplicate only when it runs after the sibling landed`, /only when that case runs after the sibling landed/.test(text), text.slice(-1500));
+  check(`#411 AC2 ${name} says an earlier green can land the duplicate and red main afterwards`, /reds `main`/.test(text) && /every pull request/.test(text), text.slice(-1500));
+}
+
+// AC1: the same two commands, run against a register written here — the cases that are
+// about the command rather than about this repository's current text. Two shapes a
+// heading-matching derivation gets wrong: a heading inside a fenced block is not an item,
+// and a numbered `###` sub-heading is not one either, because the register documents two
+// depths (`# <nnnn>.` in a dated file, `## <n>.` in `docs/decisions.md`) and no more.
+
+const fixtureRoot = mkdtempSync(join(tmpdir(), 'agentic-register-fixture-'));
+cleanup(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+mkdirSync(join(fixtureRoot, 'docs', 'decisions'), { recursive: true });
+writeFileSync(join(fixtureRoot, 'docs', 'decisions.md'), [
+  '# Decisions',
+  '',
+  '## 7. A real item, in the file that holds the exceptions',
+  '',
+  'Status: accepted',
+  '',
+  '### 8. A numbered sub-heading, which is not an item',
+  '',
+  'Prose under it.',
+  '',
+  '```md',
+  '## 900. A heading quoted inside a fence, which is not an item either',
+  '',
+  'Status: proposed',
+  '```',
+  '',
+].join('\n'));
+writeFileSync(join(fixtureRoot, 'docs', 'decisions', '0000-template.md'), '# NNNN. The shape\n\nStatus: proposed\n');
+writeFileSync(join(fixtureRoot, 'docs', 'decisions', '0009-a-dated-file.md'), '# 0009. A real item, in a dated file\n\nStatus: proposed\n');
+
+const fixtureNext = shell(NEXT_NUMBER_COMMAND, fixtureRoot);
+check('#411 AC1 the next-free-number command counts neither a fenced heading nor a numbered sub-heading', fixtureNext.status === 0 && fixtureNext.out.trim() === '0010', `printed ${fixtureNext.out.trim()}, expected 0010`);
+const fixtureStatus = shell(STATUS_VIEW_COMMAND, fixtureRoot);
+const fixtureLines = fixtureStatus.out.trim().split('\n').filter(Boolean);
+check('#411 AC2 the status view prints the two real items of the fixture register and nothing else', fixtureStatus.status === 0 && fixtureLines.length === 2, fixtureStatus.out);
+check('#411 AC2 it prints the item from each file, and neither the fence nor the sub-heading', fixtureLines.some((l) => l.includes('## 7.')) && fixtureLines.some((l) => l.includes('# 0009.')) && !fixtureStatus.out.includes('900.') && !fixtureStatus.out.includes('### 8.'), fixtureStatus.out);
+
+// AC1: the naming rule the README states — `<nnnn>-<slug>.md`, four digits — is what
+// makes "a number resolves to a file by name" true, so it is held here rather than
+// assumed. A file whose heading and filename disagree resolves to the wrong file.
+
+for (const name of datedFiles) {
+  const prefix = /^(\d{4})-[a-z0-9-]+\.md$/.exec(name);
+  check(`#411 AC1 docs/decisions/${name} is named <nnnn>-<slug>.md with four digits`, name === '0000-template.md' || prefix !== null, name);
+  if (prefix === null || name === '0000-template.md') continue;
+  const heading = numbersIn(readFileSync(join(DECISIONS_DIR, name), 'utf8'));
+  check(`#411 AC1 docs/decisions/${name} heads with the number its name carries`, heading.length === 1 && heading[0] === Number(prefix[1]), `${name}: heading ${heading.join(',')}`);
+}
 
 // AC3: the property this issue exists for, held against the mechanism that enforced the
 // lock. Two issues that each add a numbered decision declare their own file and nothing
