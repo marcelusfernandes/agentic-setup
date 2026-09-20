@@ -19,9 +19,10 @@
 // `milestoneFile(` here, because its own `## Files` named this file and
 // `ci/issue-lint.mts` alone, and left a paragraph saying so; #338 moved them
 // across and deleted the paragraph, so the boundary that other header states
-// holds again. One `--milestone-issues-file` spelled out by hand stays here,
-// and belongs here: it feeds the flag a file that is not JSON, which is a
-// case about this script's argument handling and compares nothing.
+// holds again. Two `--milestone-issues-file` spellings stay here, and belong
+// here: both halves of one case feed the flag a file that is not JSON, which
+// is about this script's argument handling and compares nothing. Neither
+// goes through the `lint(..., { milestone })` helper that header names.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -385,10 +386,18 @@ const noNumber = ci('issue-lint.mts', [], { cwd: repo, env: { PATH: PATH_WITH_FA
 const noNumberOut = parse(noNumber.out);
 check('no issue number given exits 1 with { error }', noNumber.status === 1 && typeof noNumberOut?.error === 'string', noNumber.out);
 
-// { error }: an unparseable --milestone-issues-file.
+// { error }: an unparseable --milestone-issues-file. The flag is spelled out
+// rather than passed through `lint(..., { milestone })`, as the `--markdown`
+// half of the same case below already does: this is a case about the flag's
+// error handling, which compares nothing, and the disjointness file's header
+// declares every `lint(..., { milestone })` call in the suite to be over
+// there.
 const badMilestoneFile = join(repo, `bad-milestone-${nextSeq()}.json`);
 writeFileSync(badMilestoneFile, 'not valid json');
-const badMilestone = lint(119, issueBody(), { milestone: badMilestoneFile });
+const badMilestone = ci('issue-lint.mts', ['--issue', '119', '--issue-body-file', bodyFile(issueBody()), '--milestone-issues-file', badMilestoneFile], {
+  cwd: repo,
+  env: { PATH: PATH_WITH_FAKE_GH },
+});
 const badMilestoneOut = parse(badMilestone.out);
 check('an unparseable --milestone-issues-file exits 1 with { error }, not a crash', badMilestone.status === 1 && typeof badMilestoneOut?.error === 'string', badMilestone.out);
 
