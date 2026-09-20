@@ -4,8 +4,9 @@
 loop, each item a decision, its reason and what it costs. This file is the rule the
 register runs by: what earns a number, what the three statuses mean, who may move an
 item between them, where a new decision lands, and how an item already written is
-corrected. The index below is the authority on
-which item lives in which file, because some later material has not been relocated yet.
+corrected. Which item lives in which file is a rule rather than a row — see **Where a
+decision lives** — and **Reading the register** gives the one command that prints every
+item, with its file and its status, over both files at once.
 
 ## What becomes a numbered decision
 
@@ -76,20 +77,38 @@ not a detail of item 8:
 - **Every decision after them is one dated file** in this directory, named
   `<nnnn>-<slug>.md` — the number zero-padded to four digits and continuing the
   register's numbering, so "item 14" resolves to
-  [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md) and
-  the next free number is `0034-<slug>.md`. The date lives inside the file, on its
-  `Date:` line. The number continues the register across both files: items 16, 18, 19 and
-  20 hold their numbers inside [`../decisions.md`](../decisions.md), so the next free
-  number is the one after the highest in the index below, not the one after the
-  highest-numbered file in this directory.
-- **Four exceptions exist today, recorded in the index rather than hidden.** Items 16,
-  18, 19 and 20 — and the dated note under item 13, which holds no number of its own —
-  were written into `../decisions.md` and still live there, each because its issue's
-  `## Files` listed `../decisions.md` and no path in this directory, and an implementer
-  never widens its own globs. Relocating them is its own issue.
+  [`0014-hand-typed-gh-pr-merge-denied.md`](0014-hand-typed-gh-pr-merge-denied.md). The
+  date lives inside the file, on its `Date:` line.
+- **A number resolves to a file by name, not through a table.** Item *n* is the file in
+  this directory whose name begins with its four digits, when one exists; otherwise it is
+  the `## n.` heading in [`../decisions.md`](../decisions.md). `ls docs/decisions` answers
+  the first half and the command under **Reading the register** answers both.
+- **Some later items were written into `../decisions.md` and still live there**, each
+  because its issue's `## Files` listed that path and no path in this directory, and an
+  implementer never widens its own globs. The same is true of the dated note under item
+  13, which holds no number of its own. This file does not list which items those are:
+  such a list is one more line every exception has to come back and edit, and the command
+  under **Reading the register** prints the file each item lives in anyway. Relocating
+  them is its own issue.
+- **The next free number is computed, never written down here.** It is one past the
+  highest number *either* file carries, which is why the command under **Reading the
+  register** reads both: items 1 to 13 and the exceptions above hold numbers no file in
+  this directory carries, so a derivation that reads only this directory can hand out a
+  number already taken. A sentence in this file naming the next number would be the same
+  hazard by another route — every item that landed would leave it one behind, as the
+  register's own history shows.
 - [`0000-template.md`](0000-template.md) is the shape such a file takes. It is a
-  template, not a decision, and holds no number of its own.
-- A PR that adds a decision file adds its line to the index below in the same diff.
+  template, not a decision, and holds no number of its own; its heading carries `NNNN`
+  rather than digits, which is why neither command below counts it as an item.
+- **A pull request that adds a numbered decision touches its own file and nothing else in
+  this directory.** There is no index row to add and no next-number sentence to advance,
+  so two such pull requests never need the same file and `ci/issue-lint.mts` has no
+  overlap to refuse (item 35 of [`../decisions.md`](../decisions.md);
+  `tests/doctrine.test.mts` holds it against the lint itself). What is left is narrower:
+  two pull requests that compute the number in the same window compute the same number.
+  Nothing here orders them — the duplicate is caught instead, by the case in
+  `tests/doctrine.test.mts` that fails when two items carry one number, so the collision
+  is a rename before the second lands rather than a duplicate after it.
 
 ## Correcting an item that is already written
 
@@ -141,47 +160,40 @@ the item. Three things are not statements, and each has a route of its own:
 - **its `Status:`** — `accepted` comes only from an explicit written OK (**Silence never
   accepts**), and `superseded by item <n>` is written by the pull request that lands the
   replacement, on both sides. Neither is a correction.
-- **its number** — other files cite items by number and the index resolves the number to
-  the file, so renumbering moves every citation without touching one of them.
+- **its number** — other files cite items by number and the number resolves to a file by
+  name, so renumbering moves every citation without touching one of them.
 
 So the freeze is narrowed here, not lifted: what may be corrected in place is a sentence
 that was false when it was written, and what may not is the decision it sits under.
 
-## Index
+## Reading the register
 
-| item | decision | status |
-|---|---|---|
-| 1 | [Unit of work: a GitHub sub-issue](../decisions.md#1-unit-of-work-a-github-sub-issue) | accepted |
-| 2 | [Claiming: the remote branch is the lock](../decisions.md#2-claiming-the-remote-branch-is-the-lock) | accepted |
-| 3 | [Isolation: one worktree per issue](../decisions.md#3-isolation-one-worktree-per-issue) | accepted |
-| 4 | [Merge without a human](../decisions.md#4-merge-without-a-human) | accepted |
-| 5 | [Parallelism](../decisions.md#5-parallelism) | accepted |
-| 6 | [PR classes](../decisions.md#6-pr-classes) | accepted |
-| 7 | [Restart](../decisions.md#7-restart) | accepted |
-| 8 | [Explicit human points](../decisions.md#8-explicit-human-points) | accepted |
-| 9 | [Single trunk, and how `main` is protected](../decisions.md#9-single-trunk-and-how-main-is-protected) | accepted |
-| 10 | [Negative control is the load-bearing check](../decisions.md#10-negative-control-is-the-load-bearing-check) | accepted |
-| 11 | [Every mutating orchestrator step is a script with a refusal path](../decisions.md#11-every-mutating-orchestrator-step-is-a-script-with-a-refusal-path) | accepted |
-| 12 | [Issue-time entry-point warnings are advisory, not a gate](../decisions.md#12-issue-time-entry-point-warnings-are-advisory-not-a-gate-superseded--see-item-13) | superseded by item 13 |
-| 13 | [The 2026-09-06 audit: trim to the core, and a separate reviewer identity](../decisions.md#13-the-2026-09-06-audit-trim-to-the-core-and-a-separate-reviewer-identity) | accepted |
-| 14 | [A hand-typed `gh pr merge` is denied, not discouraged](0014-hand-typed-gh-pr-merge-denied.md) | accepted |
-| 15 | [One generated adoption record, and `adopt` calls `init`](0015-generated-adoption-record-and-adopt-calls-init.md) | accepted |
-| 16 | [One label dictionary, a union with a per-route marker](../decisions.md#16-2026-09-17-one-label-dictionary-a-union-with-a-per-route-marker) — still in `../decisions.md`, not yet relocated | accepted |
-| 17 | [The decision nudge stays a warning, over five mechanism globs](0017-decision-nudge-strength.md) | accepted |
-| 18 | [One review mode: an isolated agent, a label the orchestrator writes](../decisions.md#18-2026-09-17-one-review-mode--an-isolated-agent-a-label-the-orchestrator-writes) — still in `../decisions.md`, not yet relocated | accepted |
-| 19 | [The M9 discipline agent catalogue is retired](../decisions.md#19-2026-09-17-the-m9-discipline-agent-catalogue-is-retired) — still in `../decisions.md`, not yet relocated | accepted |
-| 20 | [`land` declares its review mode — `agent` by default, `approved` opt-in](../decisions.md#20-2026-09-17-land-declares-its-review-mode--agent-by-default-approved-opt-in) — still in `../decisions.md`, not yet relocated | accepted |
-| 21 | [The negative control never exempts a change to its own installed code](0021-the-gate-does-not-exempt-its-own-code.md) | proposed |
-| 22 | [A grant bullet is read once, as a grant, and never as a glob of the issue](0022-a-grant-bullet-is-never-also-a-glob.md) | proposed |
-| 23 | [A `--ruleset-name` that matches nothing refuses, and no failed read reaches the create path](0023-a-ruleset-name-that-matches-nothing-refuses.md) | proposed |
-| 24 | [An `authorised:` grant is never written from inside the worktree it would exempt](0024-a-grant-is-never-written-from-a-worktree.md) | proposed |
-| 25 | [In mode `approved`, the server's review pins the commit it was cast against](0025-a-review-pins-the-commit-it-was-cast-against.md) | proposed |
-| 26 | [The changed paths decide the review exemption; the `type:docs` label no longer does](0026-the-paths-decide-the-review-exemption-not-the-label.md) | proposed |
-| 27 | [A `negative-control` pass names the file the overlay placed](0027-a-pass-names-the-file-the-overlay-placed.md) | proposed |
-| 28 | [A diff the overlay carries whole is proved by nothing, and passes](0028-a-diff-the-overlay-carries-whole-is-proved-by-nothing.md) | proposed |
-| 29 | [A file over the line limit is reported, not silently exempt](0029-a-file-over-the-line-limit-is-reported.md) | proposed |
-| 30 | [The structural signature sees this repository's own harness output](0030-the-structural-signature-sees-this-repositorys-own-output.md) | proposed |
-| 31 | [A bare glob with a backticked justification is refused](0031-a-bare-glob-with-a-backticked-justification-is-refused.md) | proposed |
-| 32 | [A refused ruleset write exits 1; a failed read still exits 0](0032-a-refused-ruleset-write-exits-1.md) | proposed |
-| 33 | [A tick is what adoption acts on; `human:decided` alone authorises nothing](0033-a-tick-is-what-adoption-acts-on.md) | proposed |
-| 34 | [A `structural` verdict rests on a diagnostic that owns the red, not on one that mentions a path](0034-the-control-ranks-what-owns-a-red.md) | proposed |
+Both commands below read the register's two files and nothing else, from the repository
+root. They replace a table this file used to carry: every item is already in one of those
+two files, headed `# <nnnn>.` or `## <n>.` with its `Status:` on the third line, so the
+table was a copy of data that was never anywhere else.
+
+**Every item, with the file it lives in and its status** — what the index gave a reader:
+
+```sh
+awk 'FNR==1{h=""} /^#+ [0-9]+\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md
+```
+
+**The next free number**, one past the highest either file carries:
+
+```sh
+awk '/^#+ [0-9]+\. /{n=$0; sub(/^#+ +/,"",n); sub(/\..*/,"",n); if (n+0>m) m=n+0} END{printf "%04d\n", m+1}' docs/decisions.md docs/decisions/[0-9]*.md
+```
+
+`tests/doctrine.test.mts` runs both commands on every `npm test`, against a scan of the
+same two files written out separately: the number they print is one past the highest, is
+free, and the view reaches both files. It holds no item number of its own, so adding an
+item never edits it.
+
+**What a reader loses.** The table rendered on github.com; these commands need a checkout
+and a shell. A reader who wants the whole register at a glance from a browser now opens
+the directory listing, which gives every item's number and title in its filename but not
+its status, and `../decisions.md`, which gives the rest. That is the cost this change
+accepts, and item 35 of [`../decisions.md`](../decisions.md) says why it is the smaller
+one: a view reachable without a checkout cost, measured, five serialised landings in one
+day, with nineteen open issues still owing an item behind it.

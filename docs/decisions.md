@@ -7,9 +7,11 @@ what it costs.
 becomes a numbered decision rather than a note, what the three `Status:` values mean
 and who may move an item between them (silence never accepts one), and where a new
 decision lands — items 1 to 13 keep their numbers here, and a decision after them is one
-dated file under `decisions/`. Five pieces of later material are still in this file and
-are not what the rule prescribes: items 16, 18, 19 and 20, and the dated note under item
-13. The index in [`decisions/README.md`](decisions/README.md) says which item lives where.
+dated file under `decisions/`. Some later material is still in this file and is not what
+the rule prescribes, each piece because its issue's `## Files` listed this path and no
+path under `decisions/`. Which items those are is not enumerated, here or there:
+"Reading the register" in [`decisions/README.md`](decisions/README.md) gives the command
+that prints every item with the file it lives in, over both files at once.
 
 ## 1. Unit of work: a GitHub sub-issue
 
@@ -641,3 +643,96 @@ implementer never widens its own globs — nor its own `authorised:` grants, so 
 19 this one writes no index row in [`decisions/README.md`](decisions/README.md). It takes
 the `0020-<slug>.md` item 19 named as the register's next free number, leaving
 `0021-<slug>.md`. Relocating it, with them, is the job of #211's successor.
+
+## 35. 2026-09-20: the register has no index table, and its next free number is computed
+
+Status: proposed
+
+**The decision.** [`decisions/README.md`](decisions/README.md) carries no index table and
+no sentence naming the next free number. Item *n* resolves to a file **by name** — the
+file under `decisions/` whose name begins with its four digits, or the `## n.` heading in
+this file when no such file exists. Both things the table was read for are computed from
+the register's two files by the two commands under "Reading the register": every item
+with its file and its `Status:`, and the next free number, one past the highest number
+*either* file carries. `tests/doctrine.test.mts` runs both commands on every `npm test`
+against a scan of the same two files written out separately, and holds no item number of
+its own, so adding an item never edits it either. The rule that follows, and the point of
+this item: **a pull request that adds a numbered decision touches its own file and
+nothing else in the register.**
+
+**Reason.** The old rule was one line of that README — "A PR that adds a decision file
+adds its line to the index below in the same diff" — and it made the file a lock on every
+change to a gate. `ci/issue-lint.mts` refuses a claim whose globs overlap an open
+sibling's, so two issues that owed an item could not both hold a grant. Measured on
+2026-09-19: it serialised work five times in one day (#297 waited on #310 and held its
+item outside the tree for hours; #357 waited for 0031; #368 waited for 0033 and asked for
+0032, which #373 had taken while its item was held, so the number it wrote was not the
+number it asked for). Measured again on 2026-09-20, on this commit's tree: of M18's 29
+open issues, **19** declare a path under `hooks/`, `ci/`, `scripts/`, `.github/workflows/`
+or a `skills/**/SKILL.md` — `MECHANISM_GLOBS` in `ci/lib/scope.mts`, the same list this
+register's "What becomes a numbered decision" describes — and so owe an item, and **9**
+already declare `docs/decisions/README.md` in their `## Files`. Nineteen owers under the
+old rule is at least nineteen serial landings. Under this item it is none: the 19 still
+owe an item and each writes it in a file no other issue names.
+
+**The numbering spans two files, and the computation reads both.** Items 1 to 13 hold
+their numbers here, and so do items 16, 18, 19, 20 and this one, each because its issue's
+`## Files` listed `docs/decisions.md` and no path under `decisions/`. A derivation that
+reads only the directory therefore reads a partial register. On the commit this item was
+written against that gap did not yet show in the maximum — the highest number was 34 and
+its file, `decisions/0034-the-control-ranks-what-owns-a-red.md`, was also the
+highest-numbered file in the directory, so a directory-only maximum happened to give the
+right answer. This item restores the gap: 35 is the highest number and it is in *this*
+file, so a directory-only derivation now returns 35 — a number already taken. The
+commands read both files for that reason, and `tests/doctrine.test.mts` pins the property
+that outlives any one arrangement: this file carries numbers no file in that directory
+carries, and no number is carried twice.
+
+**Why not a script.** A script under `scripts/` holding the same two derivations would be
+the better home for them, and #411's `## Files` does not list one — it lists
+`docs/decisions/README.md`, `docs/decisions.md` and `tests/doctrine.test.mts`, and an
+implementer never widens its own globs. That bounds the *form*, not the rule: the rule
+above is "a number resolves by name, and the next number is computed from both files",
+and a later issue that moves the derivation into a script changes where it is written and
+nothing else. The two commands are executable and tested rather than prose, which is what
+the criterion asked for.
+
+**Why not keep the table with a test that regenerates and compares it.** #411 names that
+option and rejects it, and the rejection holds: a comparison test still requires the table
+to be in the tree, so the pull request that adds an item still edits the shared file. It
+removes the drift and leaves the queue — the check would fail the pull request that forgot
+the row rather than the one that had to wait for it.
+
+**Cost accepted.** A reader loses the table on github.com. Every item's status in one
+view now needs a checkout and a shell; from a browser, the directory listing gives each
+item's number and title in its filename but not its status, and this file gives the rest.
+That is a real affordance traded for a real one, and the trade is the decision rather than
+an assumption: a view reachable without a checkout cost five serialised landings in one
+day, with nineteen open issues still owing an item behind it.
+
+**What is left.** The lock is gone; a race is not. Two pull requests that compute the
+number in the same window compute the same number, and nothing in a register of flat files
+can order them without being the shared file again. It is caught rather than ordered: the
+case in `tests/doctrine.test.mts` that fails when two items carry one number reds on the
+second pull request's own merge commit, so the collision is a rename before it lands
+instead of a duplicate after it.
+
+**What this item does not change.** `ci/issue-lint.mts` is untouched, in behaviour and in
+diff. Its disjointness refusal is protecting against a clean merge silently invalidating a
+paragraph another pull request was written against, which this milestone recorded three
+times; the fix here is to stop needing the shared file, not to stop noticing. Nor does it
+change what earns a number ("What becomes a numbered decision"), who may move a `Status:`
+("Silence never accepts"), or how a written item is corrected.
+
+**Overtaken by this item.** Items 18, 19 and 20 above each say, correctly for their own
+date, whether they wrote an index row in `decisions/README.md`. There is no index to write
+a row in from 2026-09-20; their wording stands as the record of what was true when they
+landed, which is what this register's correction rule prescribes for a sentence the ground
+moved under.
+
+Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
+under `decisions/`. This item lives here for the same reason items 16, 18, 19 and 20 do:
+#411's `## Files` lists `docs/decisions.md` and no path under `decisions/`, and an
+implementer never widens its own globs — nor its own `authorised:` grants, of which #411
+has none. It writes no index row, because after it there is none to write. Relocating it,
+with them, is the job of #211's successor.
