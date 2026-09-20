@@ -263,8 +263,10 @@ whole of its line, before it counts.
   and will be warned about; the remedy is a backtick, which costs one character and is
   already what the cards ask for a quoted example.
 - **`stripCode` changed shape.** The issue numbers it yields are unchanged over all 178
-  merged bodies, measured before landing, and the change is a tightening. It is still a
-  parser that behaves differently than it did.
+  merged bodies, measured before landing. It is a correction that runs both ways rather
+  than a tightening: it removes a link the splice invented and reveals one the splice hid,
+  both towards what GitHub does. It is still a parser that behaves differently than it
+  did.
 - **A measurement over merged bodies did not catch the one thing that went wrong with
   it.** All 178 agreed either side of the newline-excluding draft, and that draft widened
   the gate. The corpus was real and the inference from it was not: no merged body of this
