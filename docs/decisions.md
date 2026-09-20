@@ -486,6 +486,8 @@ note under item 13 do: #148's `## Files` lists `docs/decisions.md` and no path u
 `authorised:` grant on that file; relocating this item and item 16 to dated files is its
 own issue, as it was for items 14 and 15 (#211).
 
+*2026-09-20 (#411, PR #442):* there is no index in [`decisions/README.md`](decisions/README.md) to hold the row this paragraph names — item 35 removed the table and the rule that required it, so that a pull request adding a numbered decision touches its own file and nothing else. The paragraph above keeps its wording: it was true on this item's date.
+
 ## 19. 2026-09-17: the M9 discipline agent catalogue is retired
 
 Status: accepted — written OK: issue #150 (the owner's decision comment of 2026-09-17,
@@ -574,6 +576,8 @@ orchestrator added to that list; the register's next free number is therefore
 `0020-<slug>.md`, with `0019-<slug>.md` reserved for this item. Only the move itself is
 still owed, as it is for items 16 and 18 (#211).
 
+*2026-09-20 (#411, PR #442):* there is no index in [`decisions/README.md`](decisions/README.md) to hold the row this paragraph names — item 35 removed the table and the rule that required it, so that a pull request adding a numbered decision touches its own file and nothing else. The paragraph above keeps its wording: it was true on this item's date.
+
 ## 20. 2026-09-17: `land` declares its review mode — `agent` by default, `approved` opt-in
 
 Status: accepted — written OK: #156 under the standing M11–M16 delegation recorded on #161,
@@ -643,6 +647,8 @@ implementer never widens its own globs — nor its own `authorised:` grants, so 
 19 this one writes no index row in [`decisions/README.md`](decisions/README.md). It takes
 the `0020-<slug>.md` item 19 named as the register's next free number, leaving
 `0021-<slug>.md`. Relocating it, with them, is the job of #211's successor.
+
+*2026-09-20 (#411, PR #442):* there is no index in [`decisions/README.md`](decisions/README.md) to hold the row this paragraph names — item 35 removed the table and the rule that required it, so that a pull request adding a numbered decision touches its own file and nothing else. The paragraph above keeps its wording: it was true on this item's date.
 
 ## 35. 2026-09-20: the register has no index table, and its next free number is computed
 
@@ -726,9 +732,9 @@ change what earns a number ("What becomes a numbered decision"), who may move a 
 
 **Overtaken by this item.** Items 18, 19 and 20 above each say, correctly for their own
 date, whether they wrote an index row in `decisions/README.md`. There is no index to write
-a row in from 2026-09-20; their wording stands as the record of what was true when they
-landed, which is what this register's correction rule prescribes for a sentence the ground
-moved under.
+a row in from 2026-09-20. Their wording stands as the record of what was true when they
+landed and each carries a dated line saying what moved, which is both halves of what this
+register's correction rule prescribes for a sentence the ground moved under.
 
 Where a decision lands, per [`decisions/README.md`](decisions/README.md), is a dated file
 under `decisions/`. This item lives here for the same reason items 16, 18, 19 and 20 do:
