@@ -26,10 +26,15 @@
 //
 // Negative control: there is no red for the move itself, and none is offered. Nothing here
 // changed — every case below passed at the base inside tests/doctrine.test.mts and passes
-// here — and a red would mean weakening a pin in order to re-strengthen it. The diff is
-// confined to `tests/**`, so the verdict is `test-only` (docs/workflow.md, #355), which
-// passes. The base-commit red the #411 block's own comment records is that issue's history
-// and is left as it was written.
+// here — and a red would mean weakening a pin in order to re-strengthen it. The pull request
+// that made this file does carry one, elsewhere: moving the block falsified the seven
+// sentences in `docs/decisions.md` and `docs/decisions/README.md` that named the old file as
+// the consumer of the two commands, and correcting them under a grant took the diff outside
+// the test globs, so the control asked for a consumer and refused it as `vacuous` until it
+// had one. That consumer is tests/doctrine.test.mts's `#448` block — pure-read prose, so it
+// belongs on that side of the split — and nine of its ten cases are red against the base.
+// The base-commit red the #411 block's own comment records below is that issue's history and
+// is left as it was written.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
