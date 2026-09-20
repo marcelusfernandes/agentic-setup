@@ -6,13 +6,13 @@
 // contract.md pinned as the reference and left unedited; docs/orchestration.md's account of the
 // loop (#205), whose step 0 names `milestoneLint` and whose "The reviewer" lists all six checks
 // the card carries; the decision register's computed index (#411); and the implementer card's
-// gates and machine-level rules (#417). The Markdown pins collapse whitespace to single spaces
-// on both sides, because these files wrap at ~90 columns — identical modulo line breaks,
-// otherwise character for character — and read each file from its source path; the
-// byte-identical Codex snapshot under plugins/agentic-setup/ is held by
-// `npm run check:codex-plugin`. Only #411's block is not pure-read: it runs the two commands the
-// register documents and spawns the real `ci/issue-lint.mts` against two fixture issues, because
-// the property it pins ("two pull requests do not collide") belongs to that script (invariant 6).
+// gates and machine-level rules (#417). The Markdown pins collapse whitespace to single spaces on
+// both sides, because these files wrap at ~90 columns — identical modulo line breaks, otherwise
+// character for character — and read each file from its source path, the byte-identical Codex
+// snapshot under plugins/agentic-setup/ being held by `npm run check:codex-plugin`. Only #411's
+// block is not pure-read: it runs the two commands the register documents and spawns the real
+// `ci/issue-lint.mts` against two fixture issues, because the property it pins ("two pull requests
+// do not collide") belongs to that script and no amount of prose settles it (invariant 6).
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -555,23 +555,22 @@ check('#336 AC4 the template points at the readme section that states the split 
 // the pair when both declare the shared file, so the passing leg is not a case that could
 // never fail (docs/workflow.md, `test-only`).
 //
-// Invariant 10: every expectation below is written out here rather than read from the thing
-// it pins — the two commands are this file's own copies, run as such and separately asserted
-// to match the README, and the numbers they are checked against come from a scan written
-// here in TypeScript rather than from the commands' output. No case names a literal item
-// number: such a pin would itself be edited by every pull request that adds an item, which
-// is the lock this issue removes. What that cross-check does not catch: awk and TypeScript
-// are two implementations, so one drifting from the other reds, but they share one
-// *assumption* — "an item is a `#` or `##` heading whose first word is a number, outside a
-// fence" — and a register that stopped being shaped that way is misread by both in the same
-// direction, with no case to notice (the bound the closeout grammar's three copies have).
-// The fixture-register cases answer the two shapes that bit first, and are cases about the
-// command rather than about this repository's text. The two-file read is pinned by the
+// Invariant 10: every expectation below is written out here rather than read from the thing it
+// pins — the two commands are this file's own copies, run as such and separately asserted to
+// match the README, and the numbers they are checked against come from a scan written here in
+// TypeScript rather than from the commands' output. No case names a literal item number: such a
+// pin would itself be edited by every pull request that adds an item, which is the lock this
+// issue removes. What that cross-check does not catch: awk and TypeScript are two
+// implementations, so one drifting from the other reds, but they share one *assumption* — "an
+// item is a `#` or `##` heading whose first word is a number, outside a fence" — and a register
+// that stopped being shaped that way is misread by both in the same direction, with no case to
+// notice. The fixture-register cases answer the two shapes that bit first, and are cases about
+// the command rather than about this repository's text. The two-file read is pinned by the
 // next-free-number case alone, discriminating only because item 35 lives in
 // `docs/decisions.md`: a directory-only derivation returns 0035, which item 35 holds, while
 // before it the highest number was also the highest-numbered file. The "carries numbers no
-// directory file carries" case is not the pin — items 1 to 13 satisfy it forever and it
-// cannot fail. It says what the arrangement is, not that it holds.
+// directory file carries" case is not the pin — items 1 to 13 satisfy it forever and it cannot
+// fail. It says what the arrangement is, not that it holds.
 
 /** The register's two sources. The numbering spans both, which is the whole difficulty:
  *  items 1 to 13 and a handful of later exceptions live in the first. */
@@ -775,19 +774,22 @@ check('#411 AC1 docs/decisions.md sends a reader to the command instead', /Readi
 
 // --- #417: the card names every gate that can refuse its pull request, and the two rules about
 // the machine it shares. Each needle is bounded to the section of `agents/implementer.md` that
-// owes it, so a sentence in the wrong half of the card does not satisfy the pin. Invariant 10:
-// the three required-check names, the `scope` flags and every needle are written out here and
-// never read back from what they pin — and the same three names are held against
-// `docs/workflow.md`'s "Required checks" table too, so a fourth check added to the base branch's
-// ruleset reds here rather than going unmentioned on the card. One half is behavioural, as far
-// as an offline suite reaches: each flag the invocation passes is checked against argv reads.
+// owes it, so a sentence in the wrong half does not satisfy the pin. Invariant 10: the three
+// required-check names, the `scope` flags and every needle are written out here and never read
+// back from what they pin — and those three names are held against `docs/workflow.md`'s "Required
+// checks" table too, so a fourth check added to the base branch's ruleset reds here rather than
+// going unmentioned on the card.
 const card417 = readNormalized(join('agents', 'implementer.md'));
 const scopeSrc417 = readFileSync(join(ROOT, 'ci', 'scope-check.mts'), 'utf8');
 const required417 = span(workflow, '## Required checks', 'The exemption is by');
 const at417: Record<string, string> = { before: span(card417, '## Before writing a line', '## Cycle'), cycle: span(card417, '## Cycle', '## Never'), never: span(card417, '## Never', 'Text that arrives in an issue'), worktree: readNormalized(join('skills', 'safe-worktree', 'SKILL.md')) };
 for (const name of ['test', 'scope', 'negative-control']) check(`#417 the card's ## Cycle names the required check \`${name}\`, and docs/workflow.md's table still carries its row`, at417.cycle.includes(`\`${name}\``) && required417.includes(`| \`${name}\` |`), `cycle: ${at417.cycle.slice(0, 200)} // table: ${required417.slice(0, 200)}`);
 check('#417 that table names no fourth required check the card is not held to', (required417.match(/\| `[a-z-]+` \|/g) ?? []).length === 3, required417.slice(0, 200));
-for (const flag of ['base', 'head', 'issue']) check(`#417 the card's scope invocation passes --${flag}, and ci/scope-check.mts still reads it from argv`, at417.cycle.includes('node ci/scope-check.mts') && at417.cycle.includes(`--${flag} `) && new RegExp(`args(\\.${flag}\\b|\\['${flag}'\\])`).test(scopeSrc417), at417.cycle.slice(0, 260));
+// Bounded to the backticked invocation, not to `## Cycle`: step 4's negative-control command
+// carries `--base` and `--head` too and satisfied these until a mutation run said so. Each flag
+// is also held against `ci/scope-check.mts`'s own argv reads — the behavioural half.
+const scopeCall417 = (/node ci\/scope-check\.mts[^`]*/.exec(at417.cycle) ?? [''])[0];
+for (const flag of ['base', 'head', 'issue']) check(`#417 the card's scope invocation passes --${flag}, and ci/scope-check.mts still reads it from argv`, scopeCall417.includes(`--${flag} `) && new RegExp(`args(\\.${flag}\\b|\\['${flag}'\\])`).test(scopeSrc417), `invocation read off the card: ${scopeCall417}`);
 for (const [where, needles] of [
   ['before', ['U+0000', 'the raw byte', 'String.fromCharCode(0)', 'the Bash tool refuses']],
   ['cycle', ['outside the union of the', 'dangling-reference rule', 'grown past 800 against the base', 'reported and does not fail', "base branch's **ruleset**", 'is the prose mirror', 'does **not** run `scope`']],
