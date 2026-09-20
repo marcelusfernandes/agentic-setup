@@ -477,20 +477,13 @@ git(['commit', '-q', '-m', 'feat: declare unreadable'], cmdRepo);
 const unreadableHead = git(['rev-parse', 'HEAD'], cmdRepo);
 // The precondition this case rests on, asserted rather than assumed: the path
 // is in the head tree and its content cannot be read.
-check(
-  'the unreadable declaration is present in the head tree',
-  git(['ls-tree', '--name-only', unreadableHead, '--', 'proof/unreadable.json'], cmdRepo) === 'proof/unreadable.json',
-);
-check(
-  'the unreadable declaration cannot be read out of the head commit',
-  spawnSync('git', ['show', `${unreadableHead}:proof/unreadable.json`], { cwd: cmdRepo, encoding: 'utf8' }).status !== 0,
-);
+check('the unreadable declaration is present in the head tree',
+  git(['ls-tree', '--name-only', unreadableHead, '--', 'proof/unreadable.json'], cmdRepo) === 'proof/unreadable.json');
+check('the unreadable declaration cannot be read out of the head commit',
+  spawnSync('git', ['show', `${unreadableHead}:proof/unreadable.json`], { cwd: cmdRepo, encoding: 'utf8' }).status !== 0);
 r = declRun('feat/22-unreadable', unreadableHead);
-check(
-  'a declaration present at head that cannot be read is cannot-run, not a fallback to the diff globs',
-  r.status === 1 && /cannot-run/.test(r.out) && /proof\/unreadable\.json/.test(r.out),
-  r.out,
-);
+check('a declaration present at head that cannot be read is cannot-run, not a fallback to the diff globs',
+  r.status === 1 && /cannot-run/.test(r.out) && /proof\/unreadable\.json/.test(r.out), r.out);
 
 check('negative-control leaves no worktree behind in the declaration repos', !/negative-control-/.test(git(['worktree', 'list'], cmdRepo)));
 
@@ -511,16 +504,10 @@ const undetectedHead = commit(undetectedRepo, {
 }, 'feat: v2');
 
 r = ci('negative-control.mts', ['--base', undetectedBase, '--head', undetectedHead], { cwd: undetectedRepo });
-check(
-  'a stack with no detected test command is cannot-run',
-  r.status === 1 && /cannot-run/.test(r.out),
-  r.out,
-);
-check(
-  'the cannot-run detail names the `Makefile` with a `test:` target as the escape',
-  /Makefile/.test(r.out) && /`test:` target/.test(r.out) && /ci\/lib\/detect\.mts/.test(r.out),
-  r.out,
-);
+check('a stack with no detected test command is cannot-run',
+  r.status === 1 && /cannot-run/.test(r.out), r.out);
+check('the cannot-run detail names the `Makefile` with a `test:` target as the escape',
+  /Makefile/.test(r.out) && /`test:` target/.test(r.out) && /ci\/lib\/detect\.mts/.test(r.out), r.out);
 
 // --- a red the overlay did not cause is not the overlay's red (#354) -------
 // The false pass this section exists for: run `35405433899`, job
@@ -767,9 +754,9 @@ check('a `proof/<slug>.json` naming a production file cannot buy `test-only`',
 const noteLog = (note: string) =>
   `console.log(${JSON.stringify(`a.case.mts: CRASHED (exit 1)\ncheck.mts: 49 passed, 0 failed\n${note}2738 passed, 1 failed (node)`)});\nprocess.exit(1);\n`;
 let noteFixture = 50;
-const notedVerdict = (note: string, subject: string): string => {
+const notedVerdict = (note: string, subject: string, log = noteLog): string => {
   git(['checkout', '-q', '-b', `fix/${noteFixture++}-note`, base], repo);
-  const noteHead = commit(repo, { 'lib.mts': 'export const v = 9;\n', 'tests/check.mts': noteLog(note) }, subject);
+  const noteHead = commit(repo, { 'lib.mts': 'export const v = 9;\n', 'tests/check.mts': log(note) }, subject);
   git(['checkout', '-q', 'feat/1-x'], repo);
   const out = nc(noteHead).out;
   return `${out.match(/negative-control: (\S+)/)?.[1] ?? 'no verdict'}${/warning:/.test(out) ? ' +warning' : ''}`;
@@ -788,6 +775,20 @@ for (const subject of ['feat: a red the overlay did not cause', 'test(red): a re
     check(`a passing file's note that ${what} does not move the verdict (${kind})`, got === bare, `${got}, without the note ${bare}`);
   }
 }
+
+// A fourth path, fail-closed and so never surfaced by a red of its own: a note
+// quoting another run's non-zero count *is* a file-shaped token followed by a
+// count, so FILE_VERDICT holds and the line lands in `elsewhere`, where it
+// contradicts an honest mention. The listing has to differ — the overlay must
+// be mentioned for a contradiction to have anything to contradict.
+const mentionLog = (note: string) =>
+  `console.log(${JSON.stringify(`FAIL  check.mts is listed in the pin table\n${note}9 passed, 1 failed (node)`)});\nprocess.exit(1);\n`;
+const COUNT_NOTE = 'k.test.mts: note  k: the live half reports 2 passed, 3 failed and carried on\n';
+const mentionBare = notedVerdict('', 'feat: a red only a mention names', mentionLog);
+check('the mention-only listing without a note is `pass`', mentionBare === 'pass', mentionBare);
+const mentionNoted = notedVerdict(COUNT_NOTE, 'feat: a red only a mention names', mentionLog);
+check("a passing file's note quoting another run's failure count does not move the verdict",
+  mentionNoted === mentionBare, `${mentionNoted}, without the note ${mentionBare}`);
 
 check(
   'negative-control leaves no worktree behind in the attribution repo',

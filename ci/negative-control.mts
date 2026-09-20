@@ -120,23 +120,40 @@
 // no attribution test at all. And a note *continuation* carrying a source
 // location reached `locatesOverlay`, which owns every other failure in its
 // block and empties `elsewhere`: `unattributed` became a `pass` that had also
-// lost the warning naming the unrelated red, which is the strongest of the
-// three. All four were measured by running this check over one captured
-// listing with and without the line; `tests/negative-control.test.mts` holds
-// that listing and six pairs — each of the three notes against both a `feat:`
-// and a `test(red):` subject, because the vouch decides the third move.
+// lost the warning naming the unrelated red, which is the strongest of those
+// three.
+//
+// The fourth reading runs the other way, and is the reason this rule drops
+// the line rather than teaching any one predicate to distrust it. A note
+// quoting *another* run's non-zero count — `k.test.mts: note  k: … 2 passed,
+// 3 failed …` — is a file-shaped token followed by a count, so FILE_VERDICT
+// holds on it as it holds on a real per-file verdict, and the line lands in
+// `elsewhere`. There it contradicts an honest mention (`pass` became
+// `unattributed`) or puts a `warning:` on a `pass` naming a file that never
+// failed. That one is fail-closed, which is why no red would ever surface it:
+// it costs honest work a refusal, quietly, and a refusal gets re-run rather
+// than investigated. All five moves were measured by running this check over
+// two captured listings with and without the line;
+// `tests/negative-control.test.mts` holds both listings, six pairs for the
+// first three — each note against a `feat:` and a `test(red):` subject,
+// because the vouch decides the structural one — and a pair for this fourth.
 //
 // So every such line is dropped from what the two predicates read
 // (`NOTE_LINE` below), and from nothing else: a verdict's detail still prints
 // the run's output whole, notes and all, because an operator reading why a
 // run was refused wants the line the file meant them to see.
 //
-// Why the marker and not the block. Attributing only within a failing file's
-// block cannot discriminate here, for the reason the paragraph above gives —
-// the listing is one block, so every overlaid name is already in it, note or
-// no note. The marker is the only thing in the line that says a *passing*
-// file wrote it, which is why #432 put it on continuation lines too: the
-// whole exposure then sits inside one discriminator. Nothing here reads
+// Why the marker, and not the block or any one predicate. Attributing only
+// within a failing file's block cannot discriminate here, for the reason the
+// paragraph above gives — the listing is one block, so every overlaid name is
+// already in it, note or no note. Nor does narrowing a predicate help: the
+// fourth path's line satisfies FILE_VERDICT honestly, because it really does
+// start with a file-shaped token followed by a count, and anchoring that
+// pattern buys nothing against a line that starts one. The marker is the only
+// thing in the line that says a *passing* file wrote it, which is why #432
+// put it on continuation lines too: the whole exposure then sits inside one
+// discriminator, ahead of every predicate, which is why a rule written
+// against the first three paths closes the fourth as well. Nothing here reads
 // blocks, so a blank line appearing in that listing changes none of it, and
 // dropping a line never merges two blocks either, because the blank lines
 // around it stay where they were. Blanking the line instead of dropping it
