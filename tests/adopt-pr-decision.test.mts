@@ -733,4 +733,25 @@ check(
   JSON.stringify(read('- [x] `labels:missing` — create `state:ready` too')),
 );
 
+// --- I: the documentation says what the flag now does (invariant 8) ---------
+// Both adoption documents are read as text and held to the names #368
+// introduced — the subject these cases prove. Written out here rather than
+// imported from the module that produces them: a pin reading the source it
+// pins cannot catch either drifting. The examples `docs/adopt-pr.md` shows of
+// the decision *report* are pinned in `tests/adopt-pr-vocabulary.test.mts`,
+// beside the cases that prove the report.
+const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
+const prDoc = readFileSync(join(ROOT, 'docs', 'adopt-pr.md'), 'utf8');
+const docs = `${adoptDoc}\n${prDoc}`;
+check('the documentation says what a tick does and what leaving one empty does', /What a tick does/.test(adoptDoc) && /ticks decide/i.test(prDoc), 'tick prose');
+check('it names the refusal a decided plan with nothing ticked gets', docs.includes('pr:plan-nothing-ticked') && docs.includes('plan:nothing-ticked'), 'nothing-ticked');
+check('it names the two failures the decision record can have', docs.includes('pr:timeline-unreadable') && docs.includes('pr:decision-not-recorded'), 'named failures');
+check('it says the decision is commented on the plan issue before the pull request is opened', /before .{0,40}pull request/i.test(prDoc) && /timeline/.test(prDoc), 'comment order');
+check(
+  'the bolded sentence about an existing label is narrowed to the label the inventory read saw',
+  adoptDoc.includes('**A label the inventory read saw is left exactly as it is.**') &&
+    !adoptDoc.includes('**A label the repository already has is left exactly as it is.**'),
+  adoptDoc.split('\n').find((line) => line.startsWith('**A label')) ?? '(no such sentence)',
+);
+
 finish();

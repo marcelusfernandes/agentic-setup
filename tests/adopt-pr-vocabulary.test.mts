@@ -10,9 +10,8 @@
 // branch. Both are the report of a decision saying something true-sounding
 // about a state that is not the state.
 //
-// This file is the split target `tests/adopt-pr-decision.test.mts` declares:
-// that file stood at 785 lines of the 800 this repository holds every file to,
-// and the two findings name nine outcomes between them.
+// This file is the split target `tests/adopt-pr-decision.test.mts` declares,
+// which stood at 785 of the 800 lines every file here is held to.
 //
 // **The rule the split follows is what a case needs to run**, and it is stated
 // in both files. A case that spawns the real script stays there, with the four
@@ -20,10 +19,14 @@
 // moving those would have duplicated the bodies rather than the budget. A case
 // that proves a module by importing it lives here: who decided, the gap
 // vocabulary, the report the JSON carries, the planner's reading of a declined
-// box, and the prose pins of both adoption documents. Invariant 6's "spawn the
-// real script" is answered by the sibling file, which carries an end-to-end
-// case for every rendering this one reads directly — the mistyped tick, and
-// the base that already holds the workflows.
+// box, and the examples `docs/adopt-pr.md` shows of the report itself. A pin
+// over prose lives with the cases whose subject that prose describes, which is
+// why the five #368 sentences went back to the sibling file.
+//
+// **This file now sits where that one did, and the next change splits again.**
+// A pin that writes out the shape it expects costs more lines than a grep for
+// a token, and it is worth them; the price is that there is no third declared
+// test path, so the issue that next changes this subject has to declare one.
 //
 // Invariant 10: the gap vocabulary, the remedies and every expected sentence
 // are written out here as literals. Nothing is imported from
@@ -413,11 +416,10 @@ check(
 
 // --- E: the phrase for a decision nobody is named for -----------------------
 // Both shapes of `decidedBy: null` are by design (item 33, Decision point 5):
-// a timeline that names no such event, and a standing event that carries no
-// actor. The old sentence — "no `labeled` event in this issue's timeline names
-// who applied it" — is false about the second, which PR #396 introduced, and
-// sends a reader looking for a missing event that is sitting there. The
-// timeline never reaches this function, so the wording has to be true of both.
+// a timeline naming no such event, and a standing event carrying no actor. The
+// old sentence was false about the second, which PR #396 introduced, and sent a
+// reader looking for a missing event that was sitting there. The timeline never
+// reaches this function, so the wording has to be true of both.
 const phrase = (decidedBy: string | null): string => {
   if (!mod?.decidedByPhrase) return '';
   try {
@@ -529,31 +531,41 @@ check(
 // --- the examples are held to being producible, not to containing a word ----
 // The pin this replaced was `includes('"state": "carried"')`, and a fabricated
 // row pasted into the fence satisfied it: a grep for a token does not write out
-// the shape it expects. These properties are written out here and read off the
-// document.
+// the shape it expects. These properties are written out here.
 const STATES = ['carried', 'not-in-diff', 'recorded', 'unrecognised'];
 const parsed = [...prDoc.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => {
-  try {
-    return JSON.parse(match[1] ?? '');
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(match[1] ?? ''); } catch { return null; }
 });
 check('every fenced JSON example of the document parses', parsed.length > 0 && parsed.every((v) => v !== null), String(parsed.length));
 
+// What each documented gap must say, written out here: a shape check cannot see
+// content, and a fabricated remedy or a `nearest` pointing at the wrong gap is
+// the same substitution one level down. A gap the document shows and these maps
+// do not name fails, which is the direction that cannot pass by omission.
+const DOC_REMEDY: Record<string, string> = {
+  'ruleset:absent': 'node scripts/init.mts --rules',
+  [RECORDED_GAP]: RECORDED_REMEDY,
+  [FILE_GAP]: 'node scripts/adopt.mts --workflows',
+};
+const DOC_PATHS: Record<string, string> = { [FILE_GAP]: '.github/workflows/' };
+const DOC_NEAREST: Record<string, string> = { [TYPO]: FILE_GAP };
+
 const shaped = (tick: any): boolean =>
   tick?.state === 'unrecognised'
-    ? tick.remedy === null && tick.paths.length === 0
+    ? tick.remedy === null && tick.paths.length === 0 && tick.nearest === (DOC_NEAREST[tick.gap] ?? '(unpinned)')
     : tick?.state === 'recorded'
-      ? typeof tick.remedy === 'string' && tick.paths.length === 0
-      : STATES.includes(tick?.state) && tick.paths.length > 0 && typeof tick.remedy === 'string';
+      ? tick.remedy === DOC_REMEDY[tick.gap] && tick.paths.length === 0 && tick.nearest === null
+      : STATES.includes(tick?.state) &&
+        tick.paths.join(',') === DOC_PATHS[tick.gap] &&
+        tick.remedy === DOC_REMEDY[tick.gap] &&
+        tick.nearest === null;
 const producible = (shown: any): boolean =>
   shown.ticks.map((tick: any) => tick.gap).join(',') === shown.accepted.join(',') &&
   shown.ticks.every((tick: any) => !shown.declined.includes(tick.gap) && shaped(tick)) &&
   shown.shadowed.every((pair: any) => shown.declined.includes(pair.gap) && shown.accepted.includes(pair.tick));
 const examples: any[] = parsed.map((value: any) => value?.decision).filter((value: any) => value);
 check(
-  'every documented decision is one the code could have produced',
+  'every documented decision is one the code could have produced, remedies and near-misses included',
   examples.length > 0 && examples.every(producible),
   JSON.stringify(examples.find((shown) => !producible(shown)) ?? '(all producible)'),
 );
@@ -584,8 +596,8 @@ check(
 // --- G2: the object the `--pr` JSON carries -------------------------------
 // `decisionReport` is what `scripts/lib/adopt/pr-run.mts` emits under
 // `decision`. It adds rather than reshapes: `accepted` and `declined` stay the
-// names the person ticked, in their order, because that is what
-// `docs/adopt-pr.md` documents and what any existing consumer reads.
+// names the person ticked, in their order, which is what the document promises
+// and what any existing consumer reads.
 type Reported = DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
 const report = (record: DecisionRecord, carried: string[] = WITH_WORKFLOWS): Reported => {
   if (!mod?.decisionReport) return { accepted: ['(not exported)'], declined: [], decidedBy: null };
@@ -763,23 +775,6 @@ check(
   'and its body says so, as one unbroken sentence rather than three loose words',
   declinedBody.includes(CLAIM),
   declinedBody.slice(0, 600),
-);
-
-// --- H: what the flag does, said in both adoption documents (invariant 8) ---
-// Moved here from `tests/adopt-pr-decision.test.mts` with the sweep that split
-// that file: the prose pins of both adoption documents sit beside the ones
-// above rather than in two places, and that file keeps the spawn cases.
-const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
-const docs = `${adoptDoc}\n${prDoc}`;
-check('the documentation says what a tick does and what leaving one empty does', /What a tick does/.test(adoptDoc) && /ticks decide/i.test(prDoc), 'tick prose');
-check('it names the refusal a decided plan with nothing ticked gets', docs.includes('pr:plan-nothing-ticked') && docs.includes('plan:nothing-ticked'), 'nothing-ticked');
-check('it names the two failures the decision record can have', docs.includes('pr:timeline-unreadable') && docs.includes('pr:decision-not-recorded'), 'named failures');
-check('it says the decision is commented on the plan issue before the pull request is opened', /before .{0,40}pull request/i.test(prDoc) && /timeline/.test(prDoc), 'comment order');
-check(
-  'the bolded sentence about an existing label is narrowed to the label the inventory read saw',
-  adoptDoc.includes('**A label the inventory read saw is left exactly as it is.**') &&
-    !adoptDoc.includes('**A label the repository already has is left exactly as it is.**'),
-  adoptDoc.split('\n').find((line) => line.startsWith('**A label')) ?? '(no such sentence)',
 );
 
 finish();
