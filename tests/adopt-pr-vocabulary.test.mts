@@ -115,7 +115,6 @@ type Module = {
   GAP_REMEDIES?: Record<string, string>;
   nearestGap?: (name: string) => string | null;
   classifyAccepted?: (accepted: readonly string[], carried: readonly string[]) => AcceptedGap[];
-  tickShadowing?: (gap: string, accepted: readonly string[]) => string | null;
   unrecognisedNotes?: (record: DecisionRecord) => string[];
   ticksShadowing?: (gap: string, accepted: readonly string[]) => string[];
   decidedByPhrase?: (record: DecisionRecord, label: string) => string;
@@ -277,6 +276,17 @@ check(
   lineFor(nothingCarried, FILE_GAP),
 );
 check(
+  'the comment points at no list above it: the plan issue has none, and a dangling pointer is the same defect one artefact down',
+  !/above/.test(lineFor(nothingCarried, FILE_GAP)),
+  lineFor(nothingCarried, FILE_GAP),
+);
+check(
+  'neither artefact says a declined gap has a remedy that is not a file, which is false for two of the six',
+  !comment({ accepted: [FILE_GAP], declined: ['ruleset:absent', RECORDED_GAP], decidedBy: null }).includes('whose remedy is not a file') &&
+    !comment({ accepted: [FILE_GAP], declined: ['ruleset:absent', RECORDED_GAP], decidedBy: null }).includes('its remedy is not a file'),
+  comment({ accepted: [FILE_GAP], declined: ['ruleset:absent', RECORDED_GAP], decidedBy: null }).slice(0, 700),
+);
+check(
   'the recorded bullet says no file of the diff closes the gap, and does not claim the remedy writes none',
   !lineFor(carriedAndRecorded, RECORDED_GAP).includes('its remedy is not a file') &&
     lineFor(carriedAndRecorded, RECORDED_GAP).includes('no file of this diff closes it'),
@@ -392,6 +402,12 @@ check(
   'the pull request body names the untouched near-miss beside the tick that missed it',
   unwrap(lineFor(prBodyShadow, FILE_GAP)).includes(TYPO),
   lineFor(prBodyShadow, FILE_GAP) || unwrap(prBodyShadow).slice(0, 800),
+);
+const prBodyDeclined = body({ accepted: [FILE_GAP], declined: ['ruleset:absent'], decidedBy: DECIDED_BY });
+check(
+  'the body says of a declined gap what the accepted side says: no file of this diff closes it',
+  !prBodyDeclined.includes('its remedy is not a file') && lineFor(prBodyDeclined, 'ruleset:absent').includes('no file of this diff'),
+  lineFor(prBodyDeclined, 'ruleset:absent') || prBodyDeclined.slice(0, 400),
 );
 check(
   'the body still closes the plan issue on its first line',
@@ -509,14 +525,79 @@ check(
   unwrap(prDoc).split('```json')[1]?.slice(0, 300) ?? '(no JSON example)',
 );
 check(
-  'it says a gap is carried because this diff carries its files, and names the state for when it does not',
-  unwrap(prDoc).includes('"state": "carried"') && unwrap(prDoc).includes('not-in-diff'),
-  unwrap(prDoc).split('"ticks"')[1]?.slice(0, 400) ?? '(no ticks example)',
-);
-check(
   'and it says what `paths` holds, since a prefix is not the glob the table shows',
   /path prefix, not a glob/.test(unwrap(prDoc)),
   '(paths prose)',
+);
+
+// --- the examples are held to being producible, not to containing a word ----
+// The pin this replaced was `includes('"state": "carried"')`, and a fabricated
+// row pasted into the fence satisfied it: a substring grep does not write out
+// the shape it expects, so it cannot tell an example the code produces from
+// one it never could. The properties below are written out here — one tick per
+// accepted box in that order, nothing ticked that the same object declines,
+// every shadowed pair pointing at boxes the object carries, and a state drawn
+// from the four this version has — and the documented example is read against
+// them. It is the same defect the document describes, committed in the
+// document: a report saying something true-sounding about a state that is not
+// the state.
+const STATES = ['carried', 'not-in-diff', 'recorded', 'unrecognised'];
+
+/** Every fenced JSON example of the document, with its text for the failure line. */
+const fencesOf = (doc: string): { text: string; value: any }[] =>
+  [...doc.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => {
+    const text = match[1] ?? '';
+    try {
+      return { text, value: JSON.parse(text) };
+    } catch {
+      return { text, value: null };
+    }
+  });
+
+const fences = fencesOf(prDoc);
+check('the document carries fenced JSON examples at all', fences.length > 0, String(fences.length));
+check(
+  'every one of them is JSON, so a reader can paste it into a parser',
+  fences.every((fence) => fence.value !== null),
+  fences.find((fence) => fence.value === null)?.text.slice(0, 200) ?? '(all parse)',
+);
+
+const decisions = fences.map((fence) => fence.value?.decision).filter((value) => value !== undefined && value !== null);
+check('at least one example shows a decision object', decisions.length > 0, String(decisions.length));
+check(
+  'every documented decision has one tick per accepted box, in that order, and ticks nothing it declines',
+  decisions.every(
+    (decision: any) =>
+      (decision.ticks ?? []).map((tick: any) => tick?.gap).join(',') === (decision.accepted ?? []).join(',') &&
+      (decision.ticks ?? []).every((tick: any) => !(decision.declined ?? []).includes(tick?.gap)),
+  ),
+  JSON.stringify(decisions.map((decision: any) => ({ accepted: decision.accepted, declined: decision.declined, ticks: (decision.ticks ?? []).map((tick: any) => tick?.gap) }))),
+);
+check(
+  'every shadowed pair names a box that object declines and a tick it accepts',
+  decisions.every((decision: any) =>
+    (decision.shadowed ?? []).every(
+      (entry: any) => (decision.declined ?? []).includes(entry?.gap) && (decision.accepted ?? []).includes(entry?.tick),
+    ),
+  ),
+  JSON.stringify(decisions.map((decision: any) => decision.shadowed)),
+);
+check(
+  'every documented state is one of the four this version has, and each state is shaped as this version shapes it',
+  decisions.every((decision: any) =>
+    (decision.ticks ?? []).every((tick: any) => {
+      if (!STATES.includes(tick?.state)) return false;
+      if (tick.state === 'unrecognised') return tick.remedy === null && (tick.paths ?? []).length === 0;
+      if (tick.state === 'recorded') return typeof tick.remedy === 'string' && (tick.paths ?? []).length === 0;
+      return (tick.paths ?? []).length > 0 && typeof tick.remedy === 'string';
+    }),
+  ),
+  JSON.stringify(decisions.flatMap((decision: any) => decision.ticks ?? [])),
+);
+check(
+  'all four states appear in the examples, including the one word that is new to a consumer',
+  STATES.every((state) => decisions.some((decision: any) => (decision.ticks ?? []).some((tick: any) => tick?.state === state))),
+  STATES.filter((state) => !decisions.some((decision: any) => (decision.ticks ?? []).some((tick: any) => tick?.state === state))).join(',') || '(all four)',
 );
 check(
   'it says what a second entry in GAP_PATHS would do to the same typo',
