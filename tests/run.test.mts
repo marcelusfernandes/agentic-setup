@@ -44,7 +44,11 @@
 // its stray ends its line with the runtime parenthetical, exactly as the
 // protocol line does, so only "the line is nothing but the summary"
 // separates them. Without `p`, a runner ranking by ends-a-line alone passes
-// every other case here.
+// every other case here. The `n` fixture is the trailing-whitespace boundary
+// of the rank above that: its own summary line ends with a space, so a rule
+// that asked for a bare end-of-line would drop it under the rank-2 stray
+// above it. Base reports `n` correctly, so a runner that fails this check
+// has regressed against the rule it replaced.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -165,6 +169,17 @@ writeFileSync(
     'process.exit(0);\n',
 );
 
+// Passes one case, and ends its own summary line with a trailing space —
+// which the protocol does not ask for and does not forbid. A runner that
+// asks whether a summary ends its line has to allow that whitespace, or the
+// file's real summary drops below a stray that ends its line cleanly. The
+// trailing space is the case: do not tidy it.
+writeFileSync(
+  join(dir, 'n.test.mts'),
+  "console.log('note  n: the run it read reported 3 passed, 0 failed (node)');\n" +
+    "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()}) `);\n" +
+    'process.exit(0);\n',
+);
 // Passes one case, and quotes another run's count in a note *carrying the
 // runtime parenthetical*, so the stray ends its line exactly as the protocol
 // line does. Only "the line is nothing but the summary" tells the two apart:
@@ -185,7 +200,7 @@ check('run.mts runs the passing file', /b\.test\.mts[\s\S]*3 passed, 0 failed/.t
 check('run.mts runs the failing file', /a\.test\.mts[\s\S]*1 passed, 1 failed/.test(out), out);
 check('run.mts discovers files in sorted order (a before b)', out.indexOf('a.test.mts') < out.indexOf('b.test.mts'), out);
 check('run.mts ignores files that are not *.test.mts', !/helper\.mts/.test(out), out);
-check('run.mts prints an aggregate line summing all files (15 passed, 1 failed)', /\b15 passed, 1 failed\b/.test(out), out);
+check('run.mts prints an aggregate line summing all files (16 passed, 1 failed)', /\b16 passed, 1 failed\b/.test(out), out);
 check('run.mts spawns test files with the runtime that launched it', out.includes(`1 passed, 1 failed (${RUNTIME.split('/').pop()})`), out);
 check(
   'run.mts parses the summary from stdout only, ignoring a look-alike line on stderr',
@@ -286,6 +301,16 @@ check(
 check(
   'run.mts leaves a note whole when its stray count carries the runtime parenthetical',
   out.includes('p.test.mts: note  p: the run it read reported 3 passed, 0 failed (node)'),
+  out,
+);
+check(
+  "run.mts reads a file's own summary even when that line ends with trailing whitespace",
+  out.includes('n.test.mts: 1 passed, 0 failed') && !out.includes('n.test.mts: 3 passed, 0 failed'),
+  out,
+);
+check(
+  'run.mts leaves a note whole when the summary line after it carries trailing whitespace',
+  out.includes('n.test.mts: note  n: the run it read reported 3 passed, 0 failed (node)'),
   out,
 );
 finish();
