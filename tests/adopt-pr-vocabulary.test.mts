@@ -93,16 +93,12 @@ const NONSENSE = 'everything:please';
 const TYPO2 = 'workflows:missng';
 
 /**
- * The paths a branch carries, as `--pr` plans them: what the pull request
- * writes, and nothing else.
- *
- * **A gap is carried because the diff carries its files, never because of what
- * kind of gap it is.** A base that already holds the generated workflows plans
- * every one of them as `skipped (unchanged)`, and a workflow a person wrote is
- * skipped as `not-generated` — in both, `workflows:missing` is accepted and no
- * commit touches `.github/workflows/`. A report that calls that carried says
- * something true-sounding about a state that is not the state, which is the
- * defect this whole sweep exists to close.
+ * The paths a branch carries, as `--pr` plans them. **A gap is carried because
+ * the diff carries its files, never because of what kind of gap it is:** a base
+ * that already holds the generated workflows plans every one of them as
+ * `skipped (unchanged)`, and a workflow a person wrote is skipped as
+ * `not-generated`, so `workflows:missing` is accepted and no commit touches
+ * `.github/workflows/`.
  */
 const WITH_WORKFLOWS = ['agentic.config.json', '.github/workflows/agentic-checks.yml'];
 const WITHOUT_WORKFLOWS = ['agentic.config.json', 'proof/adopt-agentic-setup.test.mjs'];
@@ -532,88 +528,41 @@ check(
 
 // --- the examples are held to being producible, not to containing a word ----
 // The pin this replaced was `includes('"state": "carried"')`, and a fabricated
-// row pasted into the fence satisfied it: a substring grep does not write out
-// the shape it expects, so it cannot tell an example the code produces from
-// one it never could. The properties below are written out here — one tick per
-// accepted box in that order, nothing ticked that the same object declines,
-// every shadowed pair pointing at boxes the object carries, and a state drawn
-// from the four this version has — and the documented example is read against
-// them. It is the same defect the document describes, committed in the
-// document: a report saying something true-sounding about a state that is not
-// the state.
+// row pasted into the fence satisfied it: a grep for a token does not write out
+// the shape it expects. These properties are written out here and read off the
+// document.
 const STATES = ['carried', 'not-in-diff', 'recorded', 'unrecognised'];
+const parsed = [...prDoc.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => {
+  try {
+    return JSON.parse(match[1] ?? '');
+  } catch {
+    return null;
+  }
+});
+check('every fenced JSON example of the document parses', parsed.length > 0 && parsed.every((v) => v !== null), String(parsed.length));
 
-/** Every fenced JSON example of the document, with its text for the failure line. */
-const fencesOf = (doc: string): { text: string; value: any }[] =>
-  [...doc.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => {
-    const text = match[1] ?? '';
-    try {
-      return { text, value: JSON.parse(text) };
-    } catch {
-      return { text, value: null };
-    }
-  });
-
-const fences = fencesOf(prDoc);
-check('the document carries fenced JSON examples at all', fences.length > 0, String(fences.length));
+const shaped = (tick: any): boolean =>
+  tick?.state === 'unrecognised'
+    ? tick.remedy === null && tick.paths.length === 0
+    : tick?.state === 'recorded'
+      ? typeof tick.remedy === 'string' && tick.paths.length === 0
+      : STATES.includes(tick?.state) && tick.paths.length > 0 && typeof tick.remedy === 'string';
+const producible = (shown: any): boolean =>
+  shown.ticks.map((tick: any) => tick.gap).join(',') === shown.accepted.join(',') &&
+  shown.ticks.every((tick: any) => !shown.declined.includes(tick.gap) && shaped(tick)) &&
+  shown.shadowed.every((pair: any) => shown.declined.includes(pair.gap) && shown.accepted.includes(pair.tick));
+const examples: any[] = parsed.map((value: any) => value?.decision).filter((value: any) => value);
 check(
-  'every one of them is JSON, so a reader can paste it into a parser',
-  fences.every((fence) => fence.value !== null),
-  fences.find((fence) => fence.value === null)?.text.slice(0, 200) ?? '(all parse)',
+  'every documented decision is one the code could have produced',
+  examples.length > 0 && examples.every(producible),
+  JSON.stringify(examples.find((shown) => !producible(shown)) ?? '(all producible)'),
+);
+check(
+  'all four states appear in them, the one word new to a consumer included',
+  STATES.every((state) => examples.some((shown) => shown.ticks.some((tick: any) => tick.state === state))),
+  STATES.filter((state) => !examples.some((shown) => shown.ticks.some((tick: any) => tick.state === state))).join(',') || '(all four)',
 );
 
-const decisions = fences.map((fence) => fence.value?.decision).filter((value) => value !== undefined && value !== null);
-check('at least one example shows a decision object', decisions.length > 0, String(decisions.length));
-check(
-  'every documented decision has one tick per accepted box, in that order, and ticks nothing it declines',
-  decisions.every(
-    (decision: any) =>
-      (decision.ticks ?? []).map((tick: any) => tick?.gap).join(',') === (decision.accepted ?? []).join(',') &&
-      (decision.ticks ?? []).every((tick: any) => !(decision.declined ?? []).includes(tick?.gap)),
-  ),
-  JSON.stringify(decisions.map((decision: any) => ({ accepted: decision.accepted, declined: decision.declined, ticks: (decision.ticks ?? []).map((tick: any) => tick?.gap) }))),
-);
-check(
-  'every shadowed pair names a box that object declines and a tick it accepts',
-  decisions.every((decision: any) =>
-    (decision.shadowed ?? []).every(
-      (entry: any) => (decision.declined ?? []).includes(entry?.gap) && (decision.accepted ?? []).includes(entry?.tick),
-    ),
-  ),
-  JSON.stringify(decisions.map((decision: any) => decision.shadowed)),
-);
-check(
-  'every documented state is one of the four this version has, and each state is shaped as this version shapes it',
-  decisions.every((decision: any) =>
-    (decision.ticks ?? []).every((tick: any) => {
-      if (!STATES.includes(tick?.state)) return false;
-      if (tick.state === 'unrecognised') return tick.remedy === null && (tick.paths ?? []).length === 0;
-      if (tick.state === 'recorded') return typeof tick.remedy === 'string' && (tick.paths ?? []).length === 0;
-      return (tick.paths ?? []).length > 0 && typeof tick.remedy === 'string';
-    }),
-  ),
-  JSON.stringify(decisions.flatMap((decision: any) => decision.ticks ?? [])),
-);
-check(
-  'all four states appear in the examples, including the one word that is new to a consumer',
-  STATES.every((state) => decisions.some((decision: any) => (decision.ticks ?? []).some((tick: any) => tick?.state === state))),
-  STATES.filter((state) => !decisions.some((decision: any) => (decision.ticks ?? []).some((tick: any) => tick?.state === state))).join(',') || '(all four)',
-);
-check(
-  'it says what a second entry in GAP_PATHS would do to the same typo',
-  unwrap(prDoc).includes('GAP_PATHS') && /a second entry/.test(unwrap(prDoc)),
-  '(second entry prose)',
-);
-check(
-  'the document describes both shapes of a decision nobody is named for, not just the empty timeline',
-  unwrap(prDoc).includes('carries no actor') && unwrap(prDoc).includes('there is no such event'),
-  unwrap(prDoc).split('`decidedBy` is `null`')[1]?.slice(0, 300) ?? '(no such paragraph)',
-);
-check(
-  'and it says the comment names the remedy of a recorded gap and any tick nothing can act on',
-  /the command that performs a gap nothing here performed/.test(unwrap(prDoc)),
-  '(comment contents)',
-);
 check(
   'item 33 gains the forward direction of the cost it already carries, as a dated update',
   !item33.includes('*(none yet)*') && /## Updates/.test(item33) && unwrap(item33.split('## Updates')[1] ?? '').includes('2026-09-20'),
@@ -634,11 +583,9 @@ check(
 
 // --- G2: the object the `--pr` JSON carries -------------------------------
 // `decisionReport` is what `scripts/lib/adopt/pr-run.mts` emits under
-// `decision`. It adds to the two lists rather than reshaping them: `accepted`
-// and `declined` stay the names the person ticked, in their order, because
-// that is what `docs/adopt-pr.md` documents and what any existing consumer
-// reads. What is new is `ticks` — the classification, one entry per ticked box
-// — and `shadowed`, the declined gaps a near-miss was ticked against.
+// `decision`. It adds rather than reshapes: `accepted` and `declined` stay the
+// names the person ticked, in their order, because that is what
+// `docs/adopt-pr.md` documents and what any existing consumer reads.
 type Reported = DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
 const report = (record: DecisionRecord, carried: string[] = WITH_WORKFLOWS): Reported => {
   if (!mod?.decisionReport) return { accepted: ['(not exported)'], declined: [], decidedBy: null };

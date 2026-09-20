@@ -652,7 +652,7 @@ function decisionSection(decision: DecisionRecord, label: string, carried: reado
         const paths = GAP_PATHS[gap] ?? [];
         const shadow = shadowNote(gap, decision.accepted);
         return paths.length === 0
-          ? `- \`${gap}\` — its remedy is not a file, so nothing here changes because of it${shadow}`
+          ? `- \`${gap}\` — no file of this diff changes because of it${shadow}`
           : `- \`${gap}\` — so \`${paths.join('`, `')}\` is **not** in this diff${shadow}`;
       });
   return [

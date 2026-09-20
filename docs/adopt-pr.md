@@ -34,7 +34,6 @@ declares.
     "decidedBy": "the-owner",
     "ticks": [
       { "gap": "ruleset:absent", "state": "recorded", "paths": [], "remedy": "node scripts/init.mts --rules", "nearest": null },
-      { "gap": "workflows:missing", "state": "carried", "paths": [".github/workflows/"], "remedy": "node scripts/adopt.mts --workflows", "nearest": null },
       { "gap": "workflow:missing", "state": "unrecognised", "paths": [], "remedy": null, "nearest": "workflows:missing" }
     ],
     "shadowed": [{ "gap": "workflows:missing", "tick": "workflow:missing" }]
@@ -60,9 +59,42 @@ typos aimed at one box produce two entries.
 with that string. The table above writes the same thing as `.github/workflows/**`
 because that is what a reader of a table expects; the JSON is the prefix itself.
 
-**`carried` is read off the diff and never off the kind of gap.** A box ticked for
-`workflows:missing` over a base that already holds the generated workflows is
-`not-in-diff`: the branch writes nothing there, and a report calling that carried would
+**`carried` is read off the diff and never off the kind of gap.** One decision, both
+boxes ticked, answered twice: on the left the branch writes the generated workflows, on
+the right the base already holds them and every one of them plans as
+`skipped (unchanged)`.
+
+```json
+{
+  "decision": {
+    "accepted": ["workflows:missing", "labels:missing"],
+    "declined": [],
+    "decidedBy": "the-owner",
+    "ticks": [
+      { "gap": "workflows:missing", "state": "carried", "paths": [".github/workflows/"], "remedy": "node scripts/adopt.mts --workflows", "nearest": null },
+      { "gap": "labels:missing", "state": "recorded", "paths": [], "remedy": "node scripts/init.mts", "nearest": null }
+    ],
+    "shadowed": []
+  }
+}
+```
+
+```json
+{
+  "decision": {
+    "accepted": ["workflows:missing", "labels:missing"],
+    "declined": [],
+    "decidedBy": "the-owner",
+    "ticks": [
+      { "gap": "workflows:missing", "state": "not-in-diff", "paths": [".github/workflows/"], "remedy": "node scripts/adopt.mts --workflows", "nearest": null },
+      { "gap": "labels:missing", "state": "recorded", "paths": [], "remedy": "node scripts/init.mts", "nearest": null }
+    ],
+    "shadowed": []
+  }
+}
+```
+
+The tick is the same and the answer is not: a report calling the second one carried would
 be describing a state the pull request is not in. The three sections below say what each
 of those means for the branch.
 

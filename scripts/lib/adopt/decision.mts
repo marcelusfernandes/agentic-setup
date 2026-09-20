@@ -157,6 +157,16 @@ export const GAP_REMEDIES: Record<Gap, string> = {
 /** Every gap name this version knows, in the order the inventory defines them. */
 export const KNOWN_GAPS: readonly string[] = Object.keys(GAP_REMEDIES);
 
+/**
+ * Whether a ticked token is one of them. One function rather than two reads:
+ * `classifyAccepted` and `unrecognisedNotes` ask the same question, and
+ * `unrecognisedNotes` asks it directly rather than routing through the
+ * classification because it would otherwise have to be handed a list of
+ * carried paths it never looks at, through two call sites, to reach an answer
+ * that does not depend on them.
+ */
+const isKnown = (gap: string): boolean => KNOWN_GAPS.includes(gap);
+
 /** The remedy for a gap name, or `null` when the name is not one of the seven. */
 const remedyFor = (gap: string): string | null => (GAP_REMEDIES as Record<string, string>)[gap] ?? null;
 
@@ -241,7 +251,7 @@ export type AcceptedGap = {
 export function classifyAccepted(accepted: readonly string[], carried: readonly string[]): AcceptedGap[] {
   return accepted.map((gap) => {
     const paths = GAP_PATHS[gap] ?? [];
-    if (!KNOWN_GAPS.includes(gap)) {
+    if (!isKnown(gap)) {
       return { gap, state: 'unrecognised', paths: [], remedy: null, nearest: nearestGap(gap) };
     }
     if (paths.length === 0) return { gap, state: 'recorded', paths, remedy: remedyFor(gap), nearest: null };
@@ -260,7 +270,7 @@ export function classifyAccepted(accepted: readonly string[], carried: readonly 
  * the person who ticked can.
  */
 export function ticksShadowing(gap: string, accepted: readonly string[]): string[] {
-  return accepted.filter((tick) => !KNOWN_GAPS.includes(tick) && nearestGap(tick) === gap);
+  return accepted.filter((tick) => !isKnown(tick) && nearestGap(tick) === gap);
 }
 
 /** `; …` naming the ticks that shadow a declined gap, or '' when none does. */
@@ -268,7 +278,8 @@ export function shadowNote(gap: string, accepted: readonly string[]): string {
   const ticks = ticksShadowing(gap, accepted);
   if (ticks.length === 0) return '';
   const names = `\`${ticks.join('`, `')}\``;
-  return `; ${names} ${ticks.length === 1 ? 'was' : 'were'} ticked, a near-miss of this name, so this box may have been meant`;
+  const said = ticks.length === 1 ? 'was ticked, a near-miss of this name' : 'were ticked, near-misses of this name';
+  return `; ${names} ${said}, so this box may have been meant`;
 }
 
 /** The accepted list: one bullet per ticked box, saying what the tick did. */
@@ -278,8 +289,8 @@ export function acceptedLines(accepted: readonly string[], carried: readonly str
     if (entry.state === 'carried') return `- \`${entry.gap}\` — **carried**: this diff writes ${paths}.`;
     if (entry.state === 'not-in-diff') {
       return (
-        `- \`${entry.gap}\` — **not in this diff**: its remedy is ${paths}, and no file here writes it. ` +
-        'The list above says whether the base already had it or a file somebody else wrote was left alone.'
+        `- \`${entry.gap}\` — **not in this diff**: its remedy is ${paths}, and no file of this branch ` +
+        'writes it — the base already carries it, or a file somebody else wrote was left alone.'
       );
     }
     if (entry.state === 'recorded') {
@@ -314,7 +325,7 @@ function unrecognisedLine(entry: AcceptedGap, record: DecisionRecord): string {
  */
 export function unrecognisedNotes(record: DecisionRecord): string[] {
   const unknown = record.accepted
-    .filter((gap) => !KNOWN_GAPS.includes(gap))
+    .filter((gap) => !isKnown(gap))
     .map((gap): AcceptedGap => ({ gap, state: 'unrecognised', paths: [], remedy: null, nearest: nearestGap(gap) }));
   if (unknown.length === 0) return [];
   return [
@@ -466,7 +477,7 @@ export function renderDecisionComment(
       ? '**Declined:** nothing; every box was ticked.'
       : [
           '**Declined** — the boxes left empty. A gap whose remedy is a file is not in the',
-          'branch at all; a gap whose remedy is not a file is recorded here and nothing more:',
+          'branch at all; a gap no file of this diff closes is recorded here and nothing more:',
           '',
           ...declinedLines(record.declined, record.accepted),
         ].join('\n'),
