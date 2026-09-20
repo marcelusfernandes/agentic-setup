@@ -15,8 +15,10 @@
 # workflow is not in any ruleset's required checks and must not be added to one.
 #
 # Budget: one `gh api graphql` call per fifty issues, so this repository's
-# seventeen closeouts cost about four calls a run — against the 129 per run the
-# same check cost before #298 batched it.
+# seventeen closeouts cost four calls a run, plus one `gh auth status` —
+# against the 152 the same check cost before #298 batched it, one `gh issue
+# view` per row of every closeout. The required suite asks nothing either way:
+# it has since #356.
 #
 # Crash policy: fail open on the API, fail closed on the record. A `gh` that
 # cannot answer leaves a note and the run stays green; a row naming an issue

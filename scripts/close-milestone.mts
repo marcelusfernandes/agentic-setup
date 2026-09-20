@@ -100,8 +100,10 @@
 // exactly what was true when the phase ended.
 //
 // The closeout grammar is restated here rather than imported: the pin that
-// enforces it lives in `tests/provenance.test.mts` (invariant 6 — nothing
-// under `scripts/` implements it) and a script may not import from `tests/`.
+// enforces it lives in `tests/provenance.test.mts` (the format, the ancestry
+// and the prose) and `tests/provenance-issues.test.mts` (the two questions
+// that need GitHub) — invariant 6, nothing under `scripts/` implements it, and
+// a script may not import from `tests/`.
 // `docs/closeout/README.md` is the one statement of the format both parsers
 // are written from. The exit-criteria rules are likewise a copy of
 // `scripts/reconcile.mts`'s, which cannot be imported (it runs a whole pass
@@ -215,8 +217,13 @@ function bulletsOf(lines: string[]): string[] {
   const bullets: string[] = [];
   for (const line of lines) {
     const text = line.trim();
-    if (text.startsWith('- ')) bullets.push(text);
-    else if (text !== '' && bullets.length > 0 && /^\s/.test(line)) bullets[bullets.length - 1] += ` ${text}`;
+    if (text === '') continue;
+    // An indented line continues the bullet above it whatever it opens with,
+    // `- ` included: `- Deferred:` / `  - #12 ...` is one bullet about the
+    // deferral, not two, so #12 is mentioned and not claimed. A bullet begins
+    // at the left margin; anything else ends the one above and is ignored.
+    if (/^\s/.test(line) && bullets.length > 0) bullets[bullets.length - 1] += ` ${text}`;
+    else if (text.startsWith('- ')) bullets.push(text);
   }
   return bullets;
 }

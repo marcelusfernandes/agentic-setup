@@ -174,7 +174,11 @@ The rules the parser applies, in order:
   its continuation lines and its "where it went" trailer included: the check
   that reads this set, `evidence:issue-missing`, is looking for an issue nobody
   wrote down, not for a bullet worded loosely, so it is deliberately generous.
-  An unindented line ends the bullet, which is what keeps the parser strict.
+  An indented line continues the bullet above it **whatever it opens with**, `- `
+  included: `- Deferred:` followed by `  - #12 …` is one bullet about the
+  deferral, so #12 is mentioned there and not claimed. A bullet begins at the
+  left margin, and an unindented line that is not one ends the bullet above,
+  which is what keeps the parser strict.
 - **Mentioning an issue and accounting for it are not the same thing.** A
   bullet *accounts for* the issues in the unbroken run of `#N` that opens the bullet
   — `- #12`, `- #12 and #13`, `- #12, #13 and #14`, separated by nothing

@@ -94,8 +94,13 @@ function bulletsOf(lines: string[]): string[] {
   const bullets: string[] = [];
   for (const line of lines) {
     const text = line.trim();
-    if (text.startsWith('- ')) bullets.push(text);
-    else if (text !== '' && bullets.length > 0 && /^\s/.test(line)) bullets[bullets.length - 1] += ` ${text}`;
+    if (text === '') continue;
+    // An indented line continues the bullet above it whatever it opens with,
+    // `- ` included: `- Deferred:` / `  - #12 ...` is one bullet about the
+    // deferral, not two, so #12 is mentioned and not claimed. A bullet begins
+    // at the left margin; anything else ends the one above and is ignored.
+    if (/^\s/.test(line) && bullets.length > 0) bullets[bullets.length - 1] += ` ${text}`;
+    else if (text.startsWith('- ')) bullets.push(text);
   }
   return bullets;
 }
@@ -405,10 +410,13 @@ if (!existsSync(readmePath)) {
 // 10) -- so this pin reads the script's source and holds it to the string
 // above. The third wording, the half-filled error, is a different fact and
 // keeps its own words.
+// Held to the refusal, not to the file: a whole-file `includes` would pass if
+// the sentence survived only in a comment while the code said something else,
+// which is the drift this pin exists to catch.
 const closeMilestoneSource = readFileSync(join(ROOT, 'scripts', 'close-milestone.mts'), 'utf8');
 check(
   'scripts/close-milestone.mts refuses the unfilled template in the pin\'s own words',
-  closeMilestoneSource.includes(EMPTY_TEMPLATE_MESSAGE),
+  closeMilestoneSource.includes(`errors.push("${EMPTY_TEMPLATE_MESSAGE}")`),
   EMPTY_TEMPLATE_MESSAGE,
 );
 

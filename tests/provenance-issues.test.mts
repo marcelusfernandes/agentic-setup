@@ -84,8 +84,13 @@ function bulletsOf(lines: string[]): string[] {
   const bullets: string[] = [];
   for (const line of lines) {
     const text = line.trim();
-    if (text.startsWith('- ')) bullets.push(text);
-    else if (text !== '' && bullets.length > 0 && /^\s/.test(line)) bullets[bullets.length - 1] += ` ${text}`;
+    if (text === '') continue;
+    // An indented line continues the bullet above it whatever it opens with,
+    // `- ` included: `- Deferred:` / `  - #12 ...` is one bullet about the
+    // deferral, not two, so #12 is mentioned and not claimed. A bullet begins
+    // at the left margin; anything else ends the one above and is ignored.
+    if (/^\s/.test(line) && bullets.length > 0) bullets[bullets.length - 1] += ` ${text}`;
+    else if (text.startsWith('- ')) bullets.push(text);
   }
   return bullets;
 }
@@ -156,7 +161,8 @@ type Facts = { state: string; pr: number | null; prSha: string | null };
 type Answer = Facts | 'no-such-issue';
 type Lookup =
   | { kind: 'answers'; answers: Map<number, Answer> }
-  | { kind: 'unavailable'; detail: string };
+  | { kind: 'unavailable'; detail: string }
+  | { kind: 'forbidden'; detail: string };
 type IssueSource =
   | { kind: 'lookup'; lookup: (numbers: number[]) => Lookup }
   | { kind: 'skipped'; reason: string };
@@ -208,9 +214,19 @@ function ghIssueSource(repo: string, env: Env): IssueSource {
         } catch {
           body = null;
         }
+        // `FORBIDDEN` is read before anything else, because it is the one
+        // refusal that is a *configuration* fact: a token without the scope
+        // the query needs, which never fixes itself and whose whole symptom is
+        // a green run that checked nothing. A rate limit, a 5xx or a dropped
+        // network passes on its own, so those stay notes — reddening them is
+        // #356's false red coming back. A type that drifts falls through into
+        // `unavailable` and costs a skip, never a false red.
+        const reported = (body?.errors ?? []) as any[];
+        const forbidden = reported.filter((e) => e?.type === 'FORBIDDEN');
+        if (forbidden.length > 0) return { kind: 'forbidden', detail: String(forbidden[0]?.message ?? 'no message') };
         const repository = body?.data?.repository;
         if (!repository) return { kind: 'unavailable', detail: classifyGhFailure(r.stderr || r.stdout).detail };
-        const declined = (body.errors ?? []).filter((e: any) => e?.type !== 'NOT_FOUND');
+        const declined = reported.filter((e) => e?.type !== 'NOT_FOUND');
         if (declined.length > 0) return { kind: 'unavailable', detail: String(declined[0]?.message ?? 'no message') };
         for (const n of chunk) {
           const node = repository[`i${n}`];
@@ -273,9 +289,19 @@ function audit(repo: string, env: Env, source: IssueSource): Audit {
   if (numbers.length === 0) return { errors, notes, files, asked: 0 };
 
   const answer = source.lookup(numbers);
+  if (answer.kind === 'forbidden') {
+    errors.push(
+      `the token cannot read what this check asks for, so ${numbers.length} issue(s) went unchecked — ${answer.detail}. ` +
+        'That is a permission, not a rate limit: the query reads pull-request data, and a workflow with an explicit ' +
+        '`permissions:` block grants `none` to every scope it does not list.',
+    );
+    return { errors, notes, files, asked: 0 };
+  }
   if (answer.kind === 'unavailable') {
     notes.push(`the issue-state checks were skipped for ${numbers.length} issue(s) — ${answer.detail}`);
-    return { errors, notes, files, asked: numbers.length };
+    // `asked` is what was *answered*, never what the run wanted to ask, so a
+    // caller cannot read a skipped batch as a batch that reported clean.
+    return { errors, notes, files, asked: 0 };
   }
   const answers = answer.answers;
 
@@ -376,6 +402,14 @@ if (args[0] === 'auth' && args[1] === 'status') {
 }
 if (args[0] !== 'api' || args[1] !== 'graphql') die('fake-gh: unexpected call: ' + args.join(' '));
 if (process.env.FAKE_GH_FAIL) die(process.env.FAKE_GH_FAIL);
+if (process.env.FAKE_GH_FORBIDDEN) {
+  // What GitHub answers a token whose permissions block omits a scope the
+  // query needs: the data comes back null, alongside a FORBIDDEN error, and
+  // gh exits 1. (No backticks in here: this is a template literal.)
+  process.stdout.write(JSON.stringify({ data: { repository: null }, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by integration' }] }) + '\n');
+  process.stderr.write('gh: Resource not accessible by integration\n');
+  process.exit(1);
+}
 const query = args.find((a) => a.startsWith('query=')) ?? '';
 const numbers = [...query.matchAll(/i(\d+): issueOrPullRequest\(number: (\d+)\)/g)].map((m) => Number(m[2]));
 if (numbers.length === 0) die('fake-gh: graphql query names no issue');
@@ -470,6 +504,42 @@ function caseRepo(leftOut: string): { repo: string; first: string; second: strin
 }
 
 const auditWith = (repo: string, env: Env) => audit(repo, env, ghIssueSource(repo, env));
+
+// --- the real tree, against the fixture -------------------------------------
+// "AC4 of #356: determinism must not cost the check its reach." These two came
+// across the #422 split from `tests/provenance.test.mts`, where they were the
+// only assertions composing a real file, a real row, the audit and a named
+// error. Every other fixture-backed case below writes a one-row synthetic
+// document, so without these the required suite would hold no issue-state
+// assertion over the record it exists to protect. The first is the clean case;
+// the second mutates one real row's issue to OPEN, which is the defect the
+// live call existed to catch.
+const realCleanEnv = withFacts();
+const realClean = auditWith(ROOT, realCleanEnv);
+check(
+  `the real tree's closeout rows pass the issue-state checks against the fixture (${realClean.asked} issue(s))`,
+  realClean.errors.length === 0,
+  realClean.errors.join('\n'),
+);
+check('that fixture-backed run actually asked about every row', realClean.asked > 0, String(realClean.asked));
+
+const realRow = (() => {
+  for (const file of tracked) {
+    const p = parseCloseout(readFileSync(join(closeoutDir, file), 'utf8'));
+    if (p && p.rows.length > 0) return { file, issue: p.rows[0].issue };
+  }
+  return null;
+})();
+if (!realRow) {
+  console.error('note  provenance-issues: no filled closeout row to run the open-issue fixture over, case skipped');
+} else {
+  const realOpen = auditWith(ROOT, withFacts({ [realRow.issue]: { state: 'OPEN' } }));
+  check(
+    `a real closeout row whose issue is open fails (${realRow.file} #${realRow.issue})`,
+    realOpen.errors.some((e) => e.includes(`#${realRow.issue}`) && e.includes('OPEN')),
+    realOpen.errors.join('\n'),
+  );
+}
 
 // A: the row direction (#381).
 const openRow = caseRepo('- None — every issue shipped.');
@@ -572,6 +642,35 @@ check(
   unauthAudit.notes.join('\n'),
 );
 
+// D2: a token that cannot read what the query asks for is a configuration
+// fact, and the only failure whose symptom is a green run that checked
+// nothing. `permissions:` in a workflow grants `none` to every scope it does
+// not list, and the query reads pull-request data.
+const forbidden = caseRepo('- None — every issue shipped.');
+const forbiddenAudit = auditWith(forbidden.repo, withFacts({ 1: { state: 'OPEN' } }, { FAKE_GH_FORBIDDEN: '1' }));
+check(
+  'a token refused the scope the query needs is red, not a note',
+  forbiddenAudit.errors.some((e) => /permission/.test(e) && /not a rate limit/.test(e)),
+  forbiddenAudit.errors.join('\n'),
+);
+check(
+  'a refused token reports nothing as asked, so a skipped batch cannot read as a clean one',
+  forbiddenAudit.asked === 0,
+  String(forbiddenAudit.asked),
+);
+
+// D3: an indented line continues the bullet above it whatever it opens with.
+// `- Deferred:` / `  - #12 ...` is one bullet about the deferral, so #12 is
+// mentioned and not claimed — the false-red direction, and the reading
+// `docs/closeout/README.md` has always described.
+const nested = caseRepo('- Deferred to the next phase:\n  - #2 `feat(y): a thing` — moved, not dropped.');
+const nestedAudit = auditWith(nested.repo, withFacts({ 2: { state: 'CLOSED', pr: 22, sha: nested.first } }));
+check(
+  'a `#N` on an indented sub-bullet is a mention of the bullet above, not a claim of its own',
+  nestedAudit.errors.length === 0,
+  nestedAudit.errors.join('\n'),
+);
+
 // E: the scheduled run that exists so a closeout cannot rot after the close (#381).
 // Read defensively: a missing workflow is an assertion red naming the path,
 // never an exception out of the process, which the negative control would
@@ -588,5 +687,13 @@ check(
 check('provenance-live.yml sets the opt-in that runs these checks', scheduled.includes(`${LIVE_GH_ENV}: '1'`), scheduled);
 check('provenance-live.yml checks out enough history for the ancestry it needs', /fetch-depth:\s*0/.test(scheduled), scheduled);
 check('provenance-live.yml gives the job a token to read issues with', /GH_TOKEN:/.test(scheduled), scheduled);
+// The line between this workflow working and this workflow being green and
+// empty: an explicit `permissions:` block grants `none` to every scope it does
+// not list, and the query reads pull-request data.
+check(
+  'provenance-live.yml grants the pull-request scope the query needs',
+  /^\s*pull-requests:\s*read\s*$/m.test(scheduled),
+  scheduled,
+);
 
 finish();
