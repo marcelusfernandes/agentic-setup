@@ -106,9 +106,17 @@ not a detail of item 8:
   overlap to refuse (item 35 of [`../decisions.md`](../decisions.md);
   `tests/doctrine.test.mts` holds it against the lint itself). What is left is narrower:
   two pull requests that compute the number in the same window compute the same number.
-  Nothing here orders them — the duplicate is caught instead, by the case in
-  `tests/doctrine.test.mts` that fails when two items carry one number, so the collision
-  is a rename before the second lands rather than a duplicate after it.
+  Nothing here orders them. The duplicate is caught by the case in
+  `tests/doctrine.test.mts` that fails when two items carry one number — but **only when
+  that case runs after the sibling landed**. This repository does not guarantee that it
+  does: `.github/workflows/test.yml` fires on `pull_request`, so a base-branch update
+  re-triggers nothing, and the `main` ruleset sets
+  `strict_required_status_checks_policy: false`, so a branch is never required to be
+  current. A green recorded before the sibling merged still counts, and `scripts/land.mts`
+  gates on mergeability and review with no notion of a head behind its base, so it merges
+  the duplicate. The case then reds `main`, and every pull request after it, until an item
+  is renumbered. Enabling the strict policy, or teaching `land.mts` to refuse a behind
+  head, is what would move the catch ahead of the merge; it is its own issue.
 
 ## Correcting an item that is already written
 
@@ -175,20 +183,25 @@ table was a copy of data that was never anywhere else.
 
 **Every item, with the file it lives in and its status** — what the index gave a reader:
 
-```sh
-awk 'FNR==1{h=""} /^#+ [0-9]+\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md
-```
+````sh
+awk 'FNR==1{h="";c=0} substr($0,1,3)=="```"{c=!c; next} c{next} /^##? [0-9]+\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md
+````
 
 **The next free number**, one past the highest either file carries:
 
-```sh
-awk '/^#+ [0-9]+\. /{n=$0; sub(/^#+ +/,"",n); sub(/\..*/,"",n); if (n+0>m) m=n+0} END{printf "%04d\n", m+1}' docs/decisions.md docs/decisions/[0-9]*.md
-```
+````sh
+awk 'FNR==1{c=0} substr($0,1,3)=="```"{c=!c; next} c{next} /^##? [0-9]+\. /{n=$0; sub(/^#+ +/,"",n); sub(/\..*/,"",n); if (n+0>m) m=n+0} END{printf "%04d\n", m+1}' docs/decisions.md docs/decisions/[0-9]*.md
+````
+
+An item is a `#` or `##` heading whose first word is its number, outside a fenced block,
+with its `Status:` two lines under it — the two depths the register uses and no other, so
+a numbered `###` sub-heading is not an item and neither is a heading quoted in a fence.
 
 `tests/doctrine.test.mts` runs both commands on every `npm test`, against a scan of the
 same two files written out separately: the number they print is one past the highest, is
-free, and the view reaches both files. It holds no item number of its own, so adding an
-item never edits it.
+free, and the view reaches both files. It runs them again against a register written
+inside the test, which is where the two shapes above are held. It holds no item number of
+its own, so adding an item never edits it.
 
 **What a reader loses.** The table rendered on github.com; these commands need a checkout
 and a shell. A reader who wants the whole register at a glance from a browser now opens

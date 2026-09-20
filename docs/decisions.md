@@ -716,12 +716,38 @@ That is a real affordance traded for a real one, and the trade is the decision r
 an assumption: a view reachable without a checkout cost five serialised landings in one
 day, with nineteen open issues still owing an item behind it.
 
-**What is left.** The lock is gone; a race is not. Two pull requests that compute the
-number in the same window compute the same number, and nothing in a register of flat files
-can order them without being the shared file again. It is caught rather than ordered: the
-case in `tests/doctrine.test.mts` that fails when two items carry one number reds on the
-second pull request's own merge commit, so the collision is a rename before it lands
-instead of a duplicate after it.
+A second cost, smaller and immediate: this file is 770 lines with this item in it, and the
+scope check fails a file grown past 800. The next item that lands here by this item's own
+convention — an issue whose `## Files` lists `docs/decisions.md` and no path under
+`decisions/` — will be close to that line or over it. Relocating items 16, 18, 19, 20 and
+this one to dated files (#211's successor) is what buys the room back, and this item makes
+that relocation cheaper than it was: there is no index to keep in step with the move.
+
+**What is left, and what it costs under this repository's configuration.** The lock is
+gone; a race is not. Two pull requests that compute the number in the same window compute
+the same number, and nothing in a register of flat files can order them without being the
+shared file again. It is caught rather than ordered — the case in
+`tests/doctrine.test.mts` that fails when two items carry one number reds on the second
+pull request's merge commit — but **only when that case runs after the sibling landed**,
+and here nothing guarantees it does. `.github/workflows/test.yml` fires on `pull_request`
+with the default types, so a base-branch update re-triggers no sibling's check; the `main`
+ruleset sets `strict_required_status_checks_policy: false`, so a branch is never required
+to be current and GitHub will not update it; and `scripts/land.mts` gates on mergeability
+and review, with no notion of a head behind its base. So a green recorded before the
+sibling merged still stands, `--auto` lands the duplicate, and the case reds `main` and
+every pull request after it until an item is renumbered. That is the shape this item
+accepts, stated rather than assumed away: the failure is visible and mechanical, where the
+lock's failure was an invisible queue. Moving the catch ahead of the merge means enabling
+the strict policy or teaching `land.mts` to refuse a behind head — a change to a check and
+to a script, and so its own issue and its own item.
+
+**What counts as an item, for both commands.** A `#` or `##` heading whose first word is
+its number, outside a fenced block, with its `Status:` under it. Two depths and no more,
+so a numbered `###` sub-heading is prose; and a heading quoted inside a fence is a
+quotation. Both commands and the scan `tests/doctrine.test.mts` checks them against read
+that rule, which means they share it: two implementations catch one drifting from the
+other, not both being wrong together. The cases that hold this rule are therefore run
+against a register written inside the test rather than against this file.
 
 **What this item does not change.** `ci/issue-lint.mts` is untouched, in behaviour and in
 diff. Its disjointness refusal is protecting against a clean merge silently invalidating a

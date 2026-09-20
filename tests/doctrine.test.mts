@@ -574,38 +574,37 @@ check('#336 AC4 the template points at the readme section that states the split 
 // No case names a literal item number: a pin that did would itself have to be edited by
 // every pull request that adds an item, which is the lock this issue removes.
 //
-// What that cross-check does and does not catch, stated rather than left to be
-// rediscovered. The awk and the TypeScript are two implementations, so one drifting from
-// the other reds. They are not two *assumptions*: both read "an item is a `#` or `##`
-// heading whose first word is a number, outside a fenced block", and a register that
-// stopped being shaped that way would be misread by both in the same direction, with no
-// case to notice. That is the same bound the closeout grammar's three copies have. The
-// fixture-register cases below are the answer to it for the two shapes that bit first: a
-// heading inside a fence and a numbered `###` sub-heading are run against a register
-// written here for the purpose, so they are cases about the command rather than about
-// whatever this repository's own text happens to contain today.
+// What the cross-check does not catch, stated rather than left to be rediscovered: awk
+// and TypeScript are two implementations, so one drifting from the other reds, but they
+// are one *assumption* — "an item is a `#` or `##` heading whose first word is a number,
+// outside a fence" — and a register that stopped being shaped that way is misread by both
+// in the same direction, with no case to notice (the bound the closeout grammar's three
+// copies have). The fixture-register cases are the answer for the two shapes that bit
+// first, and they are cases about the command rather than about this repository's text.
 //
-// Which case pins the two-file read: the next-free-number case. It is discriminating
-// only because item 35 lives in `docs/decisions.md` — a derivation over the directory
-// alone returns 0035, which item 35 holds, and the case reds. On the commit before it
-// the highest number was 34 and its file was also the highest-numbered file in the
-// directory, so the same case passed against a one-file derivation. The
-// "carries numbers no directory file carries" case below is deliberately not the pin: it
-// is satisfied forever by items 1 to 13 and cannot fail. It is there to say what the
-// arrangement is, not to catch it changing.
+// Which case pins the two-file read: the next-free-number one, discriminating only
+// because item 35 lives in `docs/decisions.md` — a directory-only derivation returns
+// 0035, which item 35 holds. Before it, the highest number was 34 and its file was also
+// the highest-numbered file, so the same case passed against a one-file derivation. The
+// "carries numbers no directory file carries" case is not the pin: items 1 to 13 satisfy
+// it forever and it cannot fail. It says what the arrangement is, not that it holds.
 
 /** The register's two sources. The numbering spans both, which is the whole difficulty:
  *  items 1 to 13 and a handful of later exceptions live in the first. */
 const DECISIONS_DIR = join(ROOT, 'docs', 'decisions');
 const DECISIONS_MD = join(ROOT, 'docs', 'decisions.md');
 
+/** The three characters that open and close a Markdown fence, spelled out: a template
+ *  literal cannot carry them, and both commands below have to recognise one. */
+const FENCE = '`'.repeat(3);
+
 /** This file's own copy of the command the README documents for the next free number. */
 const NEXT_NUMBER_COMMAND =
-  `awk '/^#+ [0-9]+\\. /{n=$0; sub(/^#+ +/,"",n); sub(/\\..*/,"",n); if (n+0>m) m=n+0} END{printf "%04d\\n", m+1}' docs/decisions.md docs/decisions/[0-9]*.md`;
+  `awk 'FNR==1{c=0} substr($0,1,3)=="${FENCE}"{c=!c; next} c{next} /^##? [0-9]+\\. /{n=$0; sub(/^#+ +/,"",n); sub(/\\..*/,"",n); if (n+0>m) m=n+0} END{printf "%04d\\n", m+1}' docs/decisions.md docs/decisions/[0-9]*.md`;
 
 /** This file's own copy of the command the README documents for the status view. */
 const STATUS_VIEW_COMMAND =
-  `awk 'FNR==1{h=""} /^#+ [0-9]+\\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md`;
+  `awk 'FNR==1{h="";c=0} substr($0,1,3)=="${FENCE}"{c=!c; next} c{next} /^##? [0-9]+\\. /{h=$0} /^Status:/ && h!=""{print FILENAME" | "h" | "$0}' docs/decisions.md docs/decisions/[0-9]*.md`;
 
 /** Runs a documented command the way a reader would: `sh -c`, from a repository root. */
 function shell(command: string, cwd: string = ROOT): { status: number | null; out: string } {
@@ -614,12 +613,23 @@ function shell(command: string, cwd: string = ROOT): { status: number | null; ou
 }
 
 /** Every item number a register file carries, read from its headings — `## 20.` in
- *  `docs/decisions.md`, `# 0034.` in a dated file. Written out here rather than shared
- *  with the awk commands above on purpose: a cross-check that reuses the thing it checks
- *  cannot catch it drifting. `0000-template.md` heads with `# NNNN.`, which carries no
- *  digits, so it contributes nothing here and nothing to either command. */
+ *  `docs/decisions.md`, `# 0034.` in a dated file, and those two depths only. Fenced
+ *  blocks are skipped: a heading quoted in one is a quotation, not an item. Written out
+ *  here rather than shared with the awk commands above on purpose: a cross-check that
+ *  reuses the thing it checks cannot catch it drifting. `0000-template.md` heads with
+ *  `# NNNN.`, which carries no digits, so it contributes nothing here and nothing to
+ *  either command. */
 function numbersIn(text: string): number[] {
-  return [...text.matchAll(/^#{1,2} (\d+)\. /gm)].map((m) => Number(m[1]));
+  const found: number[] = [];
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith(FENCE)) fenced = !fenced;
+    else if (!fenced) {
+      const heading = /^#{1,2} (\d+)\. /.exec(line);
+      if (heading !== null) found.push(Number(heading[1]));
+    }
+  }
+  return found;
 }
 
 const datedFiles = readdirSync(DECISIONS_DIR).filter((f) => f.endsWith('.md') && f !== 'README.md').sort();
@@ -688,22 +698,9 @@ const fixtureRoot = mkdtempSync(join(tmpdir(), 'agentic-register-fixture-'));
 cleanup(() => rmSync(fixtureRoot, { recursive: true, force: true }));
 mkdirSync(join(fixtureRoot, 'docs', 'decisions'), { recursive: true });
 writeFileSync(join(fixtureRoot, 'docs', 'decisions.md'), [
-  '# Decisions',
-  '',
-  '## 7. A real item, in the file that holds the exceptions',
-  '',
-  'Status: accepted',
-  '',
-  '### 8. A numbered sub-heading, which is not an item',
-  '',
-  'Prose under it.',
-  '',
-  '```md',
-  '## 900. A heading quoted inside a fence, which is not an item either',
-  '',
-  'Status: proposed',
-  '```',
-  '',
+  '# Decisions', '', '## 7. A real item, in the file that holds the exceptions', '', 'Status: accepted', '',
+  '### 8. A numbered sub-heading, which is not an item', '', 'Prose under it.', '',
+  '```md', '## 900. A heading quoted inside a fence, which is not an item either', '', 'Status: proposed', '```', '',
 ].join('\n'));
 writeFileSync(join(fixtureRoot, 'docs', 'decisions', '0000-template.md'), '# NNNN. The shape\n\nStatus: proposed\n');
 writeFileSync(join(fixtureRoot, 'docs', 'decisions', '0009-a-dated-file.md'), '# 0009. A real item, in a dated file\n\nStatus: proposed\n');
