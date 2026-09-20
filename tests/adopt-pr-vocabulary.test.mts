@@ -431,6 +431,11 @@ check(
   '(unrecognised prose)',
 );
 check(
+  'it documents the two fields the JSON gained, and no longer says the JSON carries none of it',
+  unwrap(prDoc).includes('"ticks"') && unwrap(prDoc).includes('"shadowed"') && !/JSON is not part of this/.test(prDoc),
+  unwrap(prDoc).split('```json')[1]?.slice(0, 300) ?? '(no JSON example)',
+);
+check(
   'it says what a second entry in GAP_PATHS would do to the same typo',
   unwrap(prDoc).includes('GAP_PATHS') && /a second entry/.test(unwrap(prDoc)),
   '(second entry prose)',

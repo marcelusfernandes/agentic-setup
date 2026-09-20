@@ -27,8 +27,27 @@ the body declares, the checks the generated workflow produces, and the proof the
 declares.
 
 ```json
-{ "decision": { "accepted": ["ruleset:absent"], "declined": ["workflows:missing"], "decidedBy": "the-owner" } }
+{
+  "decision": {
+    "accepted": ["ruleset:absent", "workflow:missing"],
+    "declined": ["workflows:missing"],
+    "decidedBy": "the-owner",
+    "ticks": [
+      { "gap": "ruleset:absent", "state": "recorded", "paths": [], "remedy": "node scripts/init.mts --rules", "nearest": null },
+      { "gap": "workflow:missing", "state": "unrecognised", "paths": [], "remedy": null, "nearest": "workflows:missing" }
+    ],
+    "shadowed": [{ "gap": "workflows:missing", "tick": "workflow:missing" }]
+  }
+}
 ```
+
+`accepted` and `declined` are the names the person ticked, in the order the plan listed
+them, and they do not change. `ticks` says what this run could do with each accepted box
+— `carried` when its remedy is a file in this diff, `recorded` when the remedy is not a
+file and nothing here performed it (with the command that does), `unrecognised` when no
+gap of this version carries that name (with the gap it was nearest, or `null`).
+`shadowed` names a declined gap an unrecognised tick was aimed at. The three sections
+below say what each of those means for the branch.
 
 ### The sequence, end to end
 
@@ -190,12 +209,11 @@ two correct-looking declines instead of one. The report is what scales here, not
 map — every entry added to `GAP_PATHS` is covered by the same carried/recorded split and
 the same near-miss note the moment it exists.
 
-**The `--pr` JSON is not part of this yet.** Its `decision` object still carries
-`accepted` and `declined` exactly as the boxes were ticked, with no carried/recorded
-split and no unrecognised list: that object is assembled in
-`scripts/lib/adopt/pr-run.mts`, which is outside the files #423 declared. The two places
-a person reads a decision — the comment on the plan issue and the pull-request body —
-carry the whole of it.
+**All three places say it.** The comment on the plan issue and the pull-request body
+render the split as prose; the `--pr` JSON carries it as the `ticks` and `shadowed`
+fields shown at the top of this document. A script reading the JSON and a person reading
+the pull request learn the same thing, which they did not before: the JSON said which
+boxes were ticked and nothing about what the run could do with them.
 
 ### A decision that accepts nothing is refused
 

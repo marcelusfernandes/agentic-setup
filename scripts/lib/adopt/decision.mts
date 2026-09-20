@@ -302,6 +302,39 @@ export function unrecognisedNotes(record: DecisionRecord): string[] {
   ];
 }
 
+/**
+ * What the `--pr` JSON says about a decision.
+ *
+ * **It adds, and reshapes nothing.** `accepted` and `declined` stay the names
+ * the person ticked, in the order the plan issue listed them: that is what
+ * `docs/adopt-pr.md` documents and what any consumer already reads, and a
+ * consumer that breaks on a field it does not know is a consumer no addition
+ * can be made for. `ticks` is the classification, one entry per accepted box
+ * and in the same order, so a reader of the JSON alone can tell a gap the
+ * branch carries from one the run only wrote down; `shadowed` names the
+ * declined gaps an unrecognised tick was aimed at.
+ *
+ * Both were rendered only into the comment and the pull-request body until
+ * this existed, so the two artefacts a person reads said more than the one a
+ * script reads (#423).
+ */
+export type ReportedDecision = DecisionRecord & {
+  ticks: AcceptedGap[];
+  shadowed: { gap: string; tick: string }[];
+};
+
+/** A new object; the record it is handed is never written into. */
+export function decisionReport(record: DecisionRecord): ReportedDecision {
+  return {
+    ...record,
+    ticks: classifyAccepted(record.accepted),
+    shadowed: record.declined.flatMap((gap) => {
+      const tick = tickShadowing(gap, record.accepted);
+      return tick === null ? [] : [{ gap, tick }];
+    }),
+  };
+}
+
 /** One event of an issue timeline, as GitHub renders it; every field optional. */
 export type TimelineEvent = {
   event?: unknown;

@@ -42,7 +42,7 @@ import {
   resolvePlanIssue,
   type PlanCandidate,
 } from './pr.mts';
-import { decidedBy, renderDecisionComment, type DecisionRecord } from './decision.mts';
+import { decidedBy, decisionReport, renderDecisionComment, type DecisionRecord } from './decision.mts';
 import { GENERATED_BY, RECORD_FILE, buildRecord, type AdoptionRecord } from './record.mts';
 import type { CommandResult, GitOptions } from './git.mts';
 import type { Inventory } from './inventory.mts';
@@ -311,7 +311,11 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
       base,
       head: branch.head,
       issue: planNumber,
-      decision: decided,
+      // The decision as the person ticked it, plus what this run could do with
+      // each tick: a gap carried in the diff, a gap recorded and performed by
+      // nothing, a name no gap of this version defines. The comment and the
+      // pull-request body said all of it and the JSON said none of it (#423).
+      decision: decisionReport(decided),
       pr: created.stdout.trim().split('\n').filter(Boolean).pop() ?? '',
       commits: branch.commits.map(({ subject, sha, paths }) => ({ subject, sha, paths })),
       files: plan.files.map(({ content: _content, ...rest }) => rest),
