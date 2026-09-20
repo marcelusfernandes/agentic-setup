@@ -78,16 +78,21 @@ tripping it. Describe such a character in prose (U+0000) in files, commits and P
    merge base, for the reason step 4 gives about the negative control. It refuses for four
    different things, and only the first is about your globs:
    - a changed file outside the union of the `## Files` globs of every issue the pull
-     request closes, plus whatever an `authorised:` line in one of those **issue** bodies
-     grants;
+     request closes;
+   - a file only an `authorised:` grant could have covered, where the grant is in the wrong
+     place: `scope` reads a grant from the **issue** body's `## Files` and nowhere else, so
+     one written in the pull-request body, or outside `## Files`, is parsed, reported as
+     ignored with the reason, and widens nothing — the file then fails exactly as if no
+     grant had been written (#155);
    - a path the diff deletes or renames away from while a tracked file outside the diff
      still names it — the dangling-reference rule;
    - a file new at head over 800 lines, or grown past 800 against the base: the growth cap,
      which is the one that actually bites, and `@generated` on the first line is its only
-     exemption;
-   - a file already over 800 at the base that this diff did not lengthen, which is
-     reported and does not fail — "over the limit" and "failing this check" are two
-     different sentences.
+     exemption.
+   One thing it reports rather than refuses, so do not read it as a fifth: a file already
+   over 800 at the base that this diff did not lengthen is reported and does not fail,
+   under `### Already over the line limit` — "over the limit" and "failing this check" are
+   two different sentences.
    The checks a pull request must pass are the ones the base branch's **ruleset** names,
    and the ruleset is the authority: `docs/workflow.md`'s "Required checks" table is the
    prose mirror of it, and `scripts/doctor.mts`'s `required-checks` fact reports only

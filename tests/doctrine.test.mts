@@ -792,7 +792,7 @@ const scopeCall417 = (/node ci\/scope-check\.mts[^`]*/.exec(at417.cycle) ?? ['']
 for (const flag of ['base', 'head', 'issue']) check(`#417 the card's scope invocation passes --${flag}, and ci/scope-check.mts still reads it from argv`, scopeCall417.includes(`--${flag} `) && new RegExp(`args(\\.${flag}\\b|\\['${flag}'\\])`).test(scopeSrc417), `invocation read off the card: ${scopeCall417}`);
 for (const [where, needles] of [
   ['before', ['U+0000', 'the raw byte', 'String.fromCharCode(0)', 'the Bash tool refuses']],
-  ['cycle', ['outside the union of the', 'dangling-reference rule', 'grown past 800 against the base', 'reported and does not fail', "base branch's **ruleset**", 'is the prose mirror', 'does **not** run `scope`']],
+  ['cycle', ['outside the union of the', 'reported as ignored', 'dangling-reference rule', 'grown past 800 against the base', 'reported and does not fail', "base branch's **ruleset**", 'is the prose mirror', 'does **not** run `scope`']],
   ['never', ['no `pkill`, no `killall`', 'pkill -f "tests/run.mts"', 'unique to the issue', 'another implementer is running right now', 'gh pr view <n> --json body']],
   ['worktree', ['the tree and the shared local services above, and stops there', 'agents/implementer.md']],
 ] as const) for (const needle of needles) check(`#417 the ${where} section states "${needle}"`, at417[where].includes(needle), at417[where].slice(0, 260));
