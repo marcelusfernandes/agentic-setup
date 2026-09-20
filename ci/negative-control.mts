@@ -99,10 +99,69 @@
 // file appears as a source location (`<path>:<line>` or a `file://` URL).
 // A second granularity is needed because a block cannot discriminate here:
 // this repository's own runner prints one `<file>: N passed, M failed` line
-// per test file, consecutively and with no blank line between them, so the
-// whole listing is a single block in which every overlaid name sits beside
-// every unrelated red — which is exactly the run that produced the false
-// pass this rule exists for (#354, run `35405433899`).
+// per test file and, since #415, a `<file>: note …` line for every line a
+// *passing* file marked for an operator, continuation lines included and
+// marked too (#432) — all of them consecutively and with no blank line
+// between them, so the whole listing is a single block in which every
+// overlaid name sits beside every unrelated red, which is exactly the run
+// that produced the false pass this rule exists for (#354, run
+// `35405433899`). The `note` half of that description is the reason for the
+// paragraph below (invariant 8, #428).
+//
+// **A line a passing file wrote is not evidence** (#428). Those `note` lines
+// are free text a *green* file chose to print — a rate limit it skipped a row
+// over, a `gh` or `git` error it carried on from — and each of the three
+// readings above took them for a failure. A note matching FAILURE_SIGNATURE
+// on its `Error:` made `mentioned` true through its own `<file>: ` prefix,
+// turning `unattributed` into `pass`. A note carrying `Cannot find module`
+// put a structural token into the one block that already names every overlaid
+// file, turning an honest red into `structural` — or, when a `test(red):`
+// commit vouches for the red, into a `pass` with the structural warning and
+// no attribution test at all. And a note *continuation* carrying a source
+// location reached `locatesOverlay`, which owns every other failure in its
+// block and empties `elsewhere`: `unattributed` became a `pass` that had also
+// lost the warning naming the unrelated red, which is the strongest of the
+// three. All four were measured by running this check over one captured
+// listing with and without the line; `tests/negative-control.test.mts` holds
+// that listing and the four pairs.
+//
+// So every such line is dropped from what the two predicates read
+// (`NOTE_LINE` below), and from nothing else: a verdict's detail still prints
+// the run's output whole, notes and all, because an operator reading why a
+// run was refused wants the line the file meant them to see.
+//
+// Why the marker and not the block. Attributing only within a failing file's
+// block cannot discriminate here, for the reason the paragraph above gives —
+// the listing is one block, so every overlaid name is already in it, note or
+// no note. The marker is the only thing in the line that says a *passing*
+// file wrote it, which is why #432 put it on continuation lines too: the
+// whole exposure then sits inside one discriminator. Nothing here reads
+// blocks, so a blank line appearing in that listing changes none of it, and
+// dropping a line never merges two blocks either, because the blank lines
+// around it stay where they were. Blanking the line instead of dropping it
+// would split its block and change how every other line in it is read.
+//
+// What keying on the marker costs, since a line can carry it by accident. A
+// failing file's output is printed verbatim, so a file whose own output
+// contains `<name>.<ext>: note ` at the start of a line — in practice only
+// `tests/run.test.mts`, which quotes this runner's log in its failure detail
+// — has that line ignored as evidence too. Dropping evidence usually moves a
+// verdict *toward* refusal: a mention or an owner lost is `unattributed`, a
+// structural diagnostic lost is a red that has to attribute itself. It can
+// move one toward `pass`, when the dropped line was the only `elsewhere`
+// entry contradicting a mention. That direction is the rule working rather
+// than failing — a note is inert in both directions or it is not inert — and
+// it costs a failing file printing a runner-shaped note line that carries
+// another file's non-zero failure count.
+//
+// The note is the only free text a *passing* file gets into this log, checked
+// by reading the two places `tests/run.mts` prints for a green child: its
+// `<file>: N passed, M failed` summary and `printNotes`. A failing file's
+// output is printed whole and is deliberately not covered — that file failed,
+// and its output is what this check is for. Nor is an adopting repository
+// covered: `scripts/init.mts` copies this file into repositories whose runner
+// is not `tests/run.mts`, and free text *their* runner prints for a passing
+// file carries no marker this rule can see.
 //
 // The skip is by path class, not by the PR's own labels: the implementer
 // applies its own PR's labels, so a `type:` label could buy its own
@@ -269,6 +328,28 @@ const csv = (value: string | undefined): string[] =>
 // (`ci/lib/attribution.mts`) decides when that is the case.
 const STRUCTURAL_WARNING =
   'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
+
+/**
+ * A line this repository's runner printed on behalf of a *passing* test file:
+ * `<file>: note ` and then whatever that file marked, continuation lines
+ * included (`tests/run.mts`, #415 and #432). The shape is mirrored here by
+ * hand rather than imported — that file runs a suite at import, and invariant
+ * 10 asks a pin to write out the shape it pins anyway. The token before the
+ * colon is file-shaped, the same thing `FILE_VERDICT` looks for, which keeps
+ * a prose `something: note ` out of it. `tests/run.test.mts` pins the
+ * printing side and `tests/negative-control.test.mts` pins this one; a change
+ * to either owes a visit to the other.
+ */
+const NOTE_LINE = /^[^\s:]+\.[A-Za-z0-9]{1,6}: note\s/;
+
+/**
+ * `output` with every one of those lines dropped — what the two predicates
+ * read, and the whole of the fix for #428. Dropped, never blanked: a blank
+ * line splits the diagnostic block it sits in, which would change how every
+ * other line in that block is attributed.
+ */
+const withoutNotes = (output: string): string =>
+  output.split('\n').filter((line) => !NOTE_LINE.test(line)).join('\n');
 
 /** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
 const listFailures = (failures: string[]): string => {
@@ -575,7 +656,11 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
       };
     }
     const named = testFiles.map((f) => `\`${f}\``).join(', ');
-    const structural = structuralInOverlay(overlaid.output, [...testFiles, ...changed]);
+    // What the two predicates read: the run's output with the lines a
+    // *passing* file wrote taken out of it (#428). `tail` still prints it
+    // whole, notes included, in every detail below.
+    const evidence = withoutNotes(overlaid.output);
+    const structural = structuralInOverlay(evidence, [...testFiles, ...changed]);
     if (structural && !redCommitTouchesTests()) {
       return {
         outcome: 'structural',
@@ -585,7 +670,7 @@ function runOnBase(): { outcome: Outcome; detail: string; warning?: string } {
     // A structural red already proved its point: `structuralInOverlay` only
     // says `true` when the diagnostic named an overlaid path, so the overlay
     // is what could not run. Every other red has to show its own evidence.
-    const { owned, mentioned, failures, elsewhere } = attributeFailures(overlaid.output, testFiles);
+    const { owned, mentioned, failures, elsewhere } = attributeFailures(evidence, testFiles);
     // A mention is evidence until something better contradicts it. `FAIL  the
     // overlaid file is listed in the pin table` is a *case name* quoting a
     // path, not that file failing, and this repository writes nineteen of
