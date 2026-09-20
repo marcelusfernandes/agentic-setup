@@ -525,8 +525,39 @@ check(
   notRunMd.out,
 );
 check('--markdown carries a Disjointness not checked section naming the reason', /\*\*Disjointness not checked\*\*/.test(notRunMd.out) && /--milestone-issues-file/.test(notRunMd.out), notRunMd.out);
-const checkedMd = lint(2992, issueBody(), { markdown: true, milestone: milestoneFile([]) });
-check('--markdown reports a plain PASS when the list was there', /issue-lint for #2992: PASS$/m.test(checkedMd.out) && !/Disjointness not checked/.test(checkedMd.out), checkedMd.out);
+// The missing list takes two checks away, not one: the `Blocked by:` graph
+// such a run builds holds the linted issue alone, so the cycle scan is as
+// blind as the glob comparison. The key is named for the check an
+// orchestrator acts on; the section says the rest.
+check(
+  '--markdown says the Blocked-by cycle scan was equally blind, not just the glob comparison',
+  /cycle scan/i.test(notRunMd.out),
+  notRunMd.out,
+);
+
+// `checked: true, compared: 0` is an answer, not a blind spot — the list was
+// read and held no issue in flight with a scope of its own. A plain PASS
+// renders it identically to a run that compared against a dozen, which is
+// the distinction `compared` exists to make, so the Markdown makes it too.
+const nothingToCompareMd = lint(2992, issueBody(), { markdown: true, milestone: milestoneFile([]) });
+const nothingToCompareOut = parse(lint(2992, issueBody(), { milestone: milestoneFile([]) }).out);
+check('an empty list is still a check that ran, against nothing', nothingToCompareOut?.disjointness?.checked === true && nothingToCompareOut?.disjointness?.compared === 0, JSON.stringify(nothingToCompareOut));
+check(
+  '--markdown does not render "held against nothing" as a plain PASS',
+  /issue-lint for #2992: PASS$/m.test(nothingToCompareMd.out) &&
+    !/Disjointness not checked/.test(nothingToCompareMd.out) &&
+    /\*\*Disjointness: nothing to compare\*\*/.test(nothingToCompareMd.out),
+  nothingToCompareMd.out,
+);
+
+// A run that did compare against an issue in flight says nothing extra: the
+// plain PASS is the whole report, as it was before #299.
+const comparedMd = lint(2999, issueBody(), { markdown: true, milestone: milestoneFile([{ number: 29990, labels: ['state:ready'], body: '## Files\n- `scripts/reconcile.mts`\n' }]) });
+check(
+  '--markdown reports a plain PASS, with no disjointness section, when the globs were held against an issue in flight',
+  /issue-lint for #2999: PASS$/m.test(comparedMd.out) && !/Disjointness/.test(comparedMd.out),
+  comparedMd.out,
+);
 
 // AC2: the chain's intermediate carries no `state:ready` label and no
 // `## Files` section at all — it is in flight in no sense and declares no

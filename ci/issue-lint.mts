@@ -56,6 +56,9 @@
 // and a `gh`-mode run on an issue that carries no milestone — and neither is
 // reported as a pass: `disjointness.checked` is `false` with the reason in
 // it, and the Markdown heading reads `PASS (disjointness not checked)`. The
+// field is named for the check an orchestrator acts on; both checks are
+// gone, so the Markdown section says the cycle scan was equally blind (the
+// graph such a run builds holds the linted issue alone). The
 // verdict itself is left alone. A run that could not look found nothing, and
 // `ok: false` here would refuse every milestone-less claim
 // `scripts/claim.mts` makes today over a check that never ran — a different
@@ -93,7 +96,10 @@
 // issue comment), starting with the `<!-- agentic-issue-lint -->` marker
 // the workflow greps for; it no longer has a Warnings section, and it
 // carries a **Disjointness not checked** section, with the heading
-// qualified to match, on a run that could not make that check. Exit 0 when
+// qualified to match, on a run that could not make that check — or a
+// **Disjointness: nothing to compare** line when the list was read and held
+// no issue in flight with a scope (`checked: true, compared: 0`), which a
+// plain PASS renders the same as a run that compared against a dozen. Exit 0 when
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
 // answer for the issue/milestone lookups themselves (not for a single
 // missing `Blocked by:` number, which is a normal failure entry). Any flag
@@ -599,6 +605,22 @@ function renderMarkdown(result: Result): string {
       '',
       `- ${result.disjointness.reason}`,
       '- Two issues in flight may claim the same file without this run seeing it. Rerun with `--milestone-issues-file`, or on an issue that carries a milestone, to make the check.',
+      // The key is named for the check an orchestrator acts on, but it is not
+      // the only one the missing list takes away: the `Blocked by:` graph is
+      // this issue's own line and nothing else, so the cycle scan saw one
+      // node. Said here rather than left for a reader to infer from the
+      // absence of a failure that could not have been raised.
+      '- The `Blocked by:` cycle scan is equally blind: the graph this run built holds this issue alone, so a cycle among the milestone\'s other issues would not have been reported either.',
+      '',
+    );
+  } else if (result.disjointness.compared === 0) {
+    // `checked: true, compared: 0` is an answer — the list was read and held
+    // no issue in flight declaring a scope — and a plain PASS renders it
+    // identically to a run that compared against a dozen. That is exactly
+    // the distinction `compared` was added to make, so the Markdown says it
+    // too and does not leave it to the JSON alone.
+    lines.push(
+      '**Disjointness: nothing to compare** — the milestone\'s other issues were read, and none of them is in flight with a scope of its own, so these globs were held against no issue. Nothing else claims these files, as far as that list goes.',
       '',
     );
   }
