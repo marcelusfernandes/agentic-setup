@@ -36,14 +36,16 @@
 // the decision as if it were the one intended (#400).
 //
 // **The vocabulary is mirrored here, and the mirror is checked by `tsc`.**
-// `GAP_REMEDIES` writes the seven names out rather than importing the list at
-// runtime: `import type { Gap }` is erased by `verbatimModuleSyntax`, so this
-// module still has no runtime dependency on `inventory.mts` and an unknown
-// tick still cannot become a refusal. `Record<Gap, string>` makes `npm run
-// check` refuse a name added to or renamed in that module without this one
-// following, which is the drift item 33's cost list accepted when `GAP_PATHS`
-// was written the same way — now caught at compile time in both directions
-// rather than at neither.
+// `GAP_REMEDIES` writes the seven names out rather than importing the list:
+// `import type { Gap }` is erased by `verbatimModuleSyntax`, so the *names*
+// this module branches on are its own literals and an unknown tick still
+// cannot become a refusal. It is not a claim that nothing of `inventory.mts`
+// runs — `./workflows.mts` imports `OWNED_WORKFLOWS` from it, so importing
+// this module has evaluated it all along; the type import adds no edge that
+// was not already there. `Record<Gap, string>` makes `npm run check` refuse a
+// name added to or renamed in that module without this one following, which is
+// the drift item 33's cost list accepted when `GAP_PATHS` was written the same
+// way — now caught at compile time in both directions rather than at neither.
 //
 // **Crash policy: this module cannot fail.** Every function is total over
 // whatever it is handed — a body that is not the rendered shape, a timeline
@@ -200,17 +202,29 @@ export function nearestGap(name: string): string | null {
 }
 
 /**
- * What accepting one gap did: the diff carries its remedy, or the run wrote
- * the tick down and performed nothing, or no gap of this version has that
- * name at all.
+ * What accepting one gap did.
+ *
+ * **`carried` is a fact about the diff, never about the kind of gap.** The
+ * first version of this read `GAP_PATHS[gap].length > 0` — is this a gap whose
+ * remedy is a file — and answered `carried` for a branch that wrote no such
+ * file: a base that already holds the generated workflows plans every one of
+ * them as `skipped (unchanged)`, and a workflow somebody wrote is skipped as
+ * `not-generated`. The body then said the branch carried them a few lines
+ * under its own file list saying it carried nothing, which is the defect this
+ * module exists to close, committed by the fix for it. `planWorkflow`'s three
+ * no-content outcomes are the warning this repository had already written
+ * down.
  */
-export type TickState = 'carried' | 'recorded' | 'unrecognised';
+export type TickState = 'carried' | 'not-in-diff' | 'recorded' | 'unrecognised';
 
 /** One ticked box, and what the run could do about it. */
 export type AcceptedGap = {
   gap: string;
   state: TickState;
-  /** The paths its remedy writes, empty unless the state is `carried`. */
+  /**
+   * The path prefixes its remedy writes — `GAP_PATHS`' entry, not a glob —
+   * empty for a gap whose remedy is not a file and for a name nobody defines.
+   */
   paths: string[];
   /** What performs it, or `null` for a name this version does not define. */
   remedy: string | null;
@@ -224,13 +238,15 @@ export type AcceptedGap = {
  * of its reads were on the declined side, so a gap the run performed and a
  * gap it only wrote down were one word in three artefacts (#403).
  */
-export function classifyAccepted(accepted: readonly string[]): AcceptedGap[] {
+export function classifyAccepted(accepted: readonly string[], carried: readonly string[]): AcceptedGap[] {
   return accepted.map((gap) => {
     const paths = GAP_PATHS[gap] ?? [];
     if (!KNOWN_GAPS.includes(gap)) {
       return { gap, state: 'unrecognised', paths: [], remedy: null, nearest: nearestGap(gap) };
     }
-    return { gap, state: paths.length > 0 ? 'carried' : 'recorded', paths, remedy: remedyFor(gap), nearest: null };
+    if (paths.length === 0) return { gap, state: 'recorded', paths, remedy: remedyFor(gap), nearest: null };
+    const inDiff = paths.some((prefix) => carried.some((path) => path.startsWith(prefix)));
+    return { gap, state: inDiff ? 'carried' : 'not-in-diff', paths, remedy: remedyFor(gap), nearest: null };
   });
 }
 
@@ -243,24 +259,31 @@ export function classifyAccepted(accepted: readonly string[]): AcceptedGap[] {
  * never a refusal — the run cannot know which of the two happened, and only
  * the person who ticked can.
  */
-export function tickShadowing(gap: string, accepted: readonly string[]): string | null {
-  return accepted.find((tick) => !KNOWN_GAPS.includes(tick) && nearestGap(tick) === gap) ?? null;
+export function ticksShadowing(gap: string, accepted: readonly string[]): string[] {
+  return accepted.filter((tick) => !KNOWN_GAPS.includes(tick) && nearestGap(tick) === gap);
 }
 
-/** `; …` naming the tick that shadows a declined gap, or '' when none does. */
+/** `; …` naming the ticks that shadow a declined gap, or '' when none does. */
 export function shadowNote(gap: string, accepted: readonly string[]): string {
-  const tick = tickShadowing(gap, accepted);
-  return tick === null ? '' : `; \`${tick}\` was ticked, a near-miss of this name, so this box may have been meant`;
+  const ticks = ticksShadowing(gap, accepted);
+  if (ticks.length === 0) return '';
+  const names = `\`${ticks.join('`, `')}\``;
+  return `; ${names} ${ticks.length === 1 ? 'was' : 'were'} ticked, a near-miss of this name, so this box may have been meant`;
 }
 
 /** The accepted list: one bullet per ticked box, saying what the tick did. */
-export function acceptedLines(accepted: readonly string[]): string[] {
-  return classifyAccepted(accepted).map((entry) => {
-    if (entry.state === 'carried') {
-      return `- \`${entry.gap}\` — **carried**: its remedy is \`${entry.paths.join('\`, \`')}\`, and this branch is what carries it.`;
+export function acceptedLines(accepted: readonly string[], carried: readonly string[]): string[] {
+  return classifyAccepted(accepted, carried).map((entry) => {
+    const paths = `\`${entry.paths.join('\`, \`')}\``;
+    if (entry.state === 'carried') return `- \`${entry.gap}\` — **carried**: this diff writes ${paths}.`;
+    if (entry.state === 'not-in-diff') {
+      return (
+        `- \`${entry.gap}\` — **not in this diff**: its remedy is ${paths}, and no file here writes it. ` +
+        'The list above says whether the base already had it or a file somebody else wrote was left alone.'
+      );
     }
     if (entry.state === 'recorded') {
-      return `- \`${entry.gap}\` — **recorded, not performed**: its remedy is not a file, so nothing in this branch closes it. Run \`${entry.remedy}\`.`;
+      return `- \`${entry.gap}\` — **recorded, not performed**: no file of this diff closes it. Run \`${entry.remedy}\`.`;
     }
     return `- \`${entry.gap}\` — **unrecognised**: no gap of this version carries that name, so nothing acted on it.`;
   });
@@ -290,7 +313,9 @@ function unrecognisedLine(entry: AcceptedGap, record: DecisionRecord): string {
  * are one mistake read side by side and two unrelated lines read apart.
  */
 export function unrecognisedNotes(record: DecisionRecord): string[] {
-  const unknown = classifyAccepted(record.accepted).filter((entry) => entry.state === 'unrecognised');
+  const unknown = record.accepted
+    .filter((gap) => !KNOWN_GAPS.includes(gap))
+    .map((gap): AcceptedGap => ({ gap, state: 'unrecognised', paths: [], remedy: null, nearest: nearestGap(gap) }));
   if (unknown.length === 0) return [];
   return [
     '**Ticks this version cannot act on.** A name no gap of this version defines is',
@@ -324,14 +349,11 @@ export type ReportedDecision = DecisionRecord & {
 };
 
 /** A new object; the record it is handed is never written into. */
-export function decisionReport(record: DecisionRecord): ReportedDecision {
+export function decisionReport(record: DecisionRecord, carried: readonly string[]): ReportedDecision {
   return {
     ...record,
-    ticks: classifyAccepted(record.accepted),
-    shadowed: record.declined.flatMap((gap) => {
-      const tick = tickShadowing(gap, record.accepted);
-      return tick === null ? [] : [{ gap, tick }];
-    }),
+    ticks: classifyAccepted(record.accepted, carried),
+    shadowed: record.declined.flatMap((gap) => ticksShadowing(gap, record.accepted).map((tick) => ({ gap, tick }))),
   };
 }
 
@@ -420,19 +442,24 @@ export function decidedByPhrase(record: DecisionRecord, label: string): string {
  * only trace of what was decided was the body's edit history, which no script
  * and no closeout reads.
  */
-export function renderDecisionComment(record: DecisionRecord, label: string, branch: string): string {
+export function renderDecisionComment(
+  record: DecisionRecord,
+  label: string,
+  branch: string,
+  carried: readonly string[],
+): string {
   return [
     '`node scripts/adopt.mts --pr` read this decision and acted on it.',
     '',
     record.accepted.length === 0
       ? '**Accepted:** nothing.'
       : [
-          '**Accepted** — the boxes ticked above. A gap whose remedy is a file is carried in',
-          'the diff, and the pull request lists file by file what changed and what the base',
-          'already had; a gap whose remedy is not a file is recorded here and performed by',
+          '**Accepted** — the boxes ticked above, and what this branch did about each. A gap is',
+          'carried when this diff writes the files its remedy writes, and not when the base',
+          'already had them; a gap no file of this diff closes is recorded here and performed by',
           'nothing, so the command that performs it is named beside it:',
           '',
-          ...acceptedLines(record.accepted),
+          ...acceptedLines(record.accepted, carried),
         ].join('\n'),
     '',
     record.declined.length === 0

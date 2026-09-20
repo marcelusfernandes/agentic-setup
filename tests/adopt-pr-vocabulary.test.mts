@@ -11,14 +11,19 @@
 // about a state that is not the state.
 //
 // This file is the split target `tests/adopt-pr-decision.test.mts` declares:
-// that file stands at 785 lines of the 800 this repository holds every file
-// to, and the two findings name nine outcomes between them. The cases here are
-// the vocabulary and the wording — pure functions over a decision, and the two
-// renderings they feed. The spawn that proves the same rendering end to end,
-// through the real script against a throwaway repository, is the `typo` case
-// in that file; invariant 6's "spawn the real script" is answered there, and
-// `renderBody`/`renderDecisionComment` are exercised directly here for the
-// same reason sections G and H of that file exercise the planner directly.
+// that file stood at 785 lines of the 800 this repository holds every file to,
+// and the two findings name nine outcomes between them.
+//
+// **The rule the split follows is what a case needs to run**, and it is stated
+// in both files. A case that spawns the real script stays there, with the four
+// plan bodies the fake `gh` answers with — the parser cases among them, since
+// moving those would have duplicated the bodies rather than the budget. A case
+// that proves a module by importing it lives here: who decided, the gap
+// vocabulary, the report the JSON carries, the planner's reading of a declined
+// box, and the prose pins of both adoption documents. Invariant 6's "spawn the
+// real script" is answered by the sibling file, which carries an end-to-end
+// case for every rendering this one reads directly — the mistyped tick, and
+// the base that already holds the workflows.
 //
 // Invariant 10: the gap vocabulary, the remedies and every expected sentence
 // are written out here as literals. Nothing is imported from
@@ -27,7 +32,7 @@
 //
 // Negative control: on the base `scripts/lib/adopt/decision.mts` exists and
 // imports cleanly, so every case here fails on its own assertion rather than
-// on a missing module — `classifyAccepted`, `nearestGap`, `tickShadowing` and
+// on a missing module — `classifyAccepted`, `nearestGap`, `ticksShadowing` and
 // `unrecognisedNotes` are not exported there, the accepted side renders a bare
 // list, and `decidedByPhrase` has one wording for both shapes of `null`.
 import { readFileSync } from 'node:fs';
@@ -146,7 +151,7 @@ try {
 // --- A: the vocabulary this module reports against --------------------------
 check('classifyAccepted is exported', typeof mod?.classifyAccepted === 'function');
 check('nearestGap is exported', typeof mod?.nearestGap === 'function');
-check('tickShadowing is exported', typeof mod?.tickShadowing === 'function');
+check('ticksShadowing is exported', typeof mod?.ticksShadowing === 'function');
 check('unrecognisedNotes is exported', typeof mod?.unrecognisedNotes === 'function');
 check(
   'the vocabulary it reports against is the inventory’s seven gap names, in order',
@@ -218,8 +223,9 @@ check(
 );
 check(
   'a gap left untouched while a near-miss of its name was ticked is distinguishable from one simply left alone',
-  mod?.tickShadowing?.(FILE_GAP, [TYPO]) === TYPO && mod?.tickShadowing?.(RECORDED_GAP, [TYPO]) === null,
-  `${String(mod?.tickShadowing?.(FILE_GAP, [TYPO]))} | ${String(mod?.tickShadowing?.(RECORDED_GAP, [TYPO]))}`,
+  (mod?.ticksShadowing?.(FILE_GAP, [TYPO]) ?? []).join(',') === TYPO &&
+    (mod?.ticksShadowing?.(RECORDED_GAP, [TYPO]) ?? ['x']).length === 0,
+  `${JSON.stringify(mod?.ticksShadowing?.(FILE_GAP, [TYPO]))} | ${JSON.stringify(mod?.ticksShadowing?.(RECORDED_GAP, [TYPO]))}`,
 );
 
 // --- C: the comment on the plan issue ---------------------------------------
@@ -344,7 +350,10 @@ const RECORD_VALUE = {
 const PLAN = {
   branch: BRANCH,
   slug: SLUG,
-  files: [{ path: 'agentic.config.json', content: '{}\n', outcome: 'written', reason: 'generated' }],
+  files: [
+    { path: 'agentic.config.json', content: '{}\n', outcome: 'written', reason: 'generated' },
+    { path: '.github/workflows/agentic-checks.yml', content: 'name: checks\n', outcome: 'written', reason: 'generated' },
+  ],
   globs: ['agentic.config.json'],
   checks: [],
   proof: { slug: SLUG, command: 'npm test', source: 'record', declaration: `proof/${SLUG}.json` },

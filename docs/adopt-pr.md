@@ -34,6 +34,7 @@ declares.
     "decidedBy": "the-owner",
     "ticks": [
       { "gap": "ruleset:absent", "state": "recorded", "paths": [], "remedy": "node scripts/init.mts --rules", "nearest": null },
+      { "gap": "workflows:missing", "state": "carried", "paths": [".github/workflows/"], "remedy": "node scripts/adopt.mts --workflows", "nearest": null },
       { "gap": "workflow:missing", "state": "unrecognised", "paths": [], "remedy": null, "nearest": "workflows:missing" }
     ],
     "shadowed": [{ "gap": "workflows:missing", "tick": "workflow:missing" }]
@@ -42,12 +43,28 @@ declares.
 ```
 
 `accepted` and `declined` are the names the person ticked, in the order the plan listed
-them, and they do not change. `ticks` says what this run could do with each accepted box
-— `carried` when its remedy is a file in this diff, `recorded` when the remedy is not a
-file and nothing here performed it (with the command that does), `unrecognised` when no
-gap of this version carries that name (with the gap it was nearest, or `null`).
-`shadowed` names a declined gap an unrecognised tick was aimed at. The three sections
-below say what each of those means for the branch.
+them, and they do not change. `ticks` says what this run did about each accepted box:
+
+| `state` | What it means |
+| --- | --- |
+| `carried` | this diff writes the files the gap's remedy writes |
+| `not-in-diff` | its remedy is a file and **this diff writes none of it** — the base already carried it (`skipped (unchanged)`), or a file somebody wrote was left alone (`skipped (not-generated)`) |
+| `recorded` | no file of this diff closes it; `remedy` is the command that does |
+| `unrecognised` | no gap of this version carries that name; `nearest` is the gap it was within two edits of, or `null` |
+
+`shadowed` names a declined gap an unrecognised tick was aimed at, once per tick: two
+typos aimed at one box produce two entries.
+
+**`paths` is a path prefix, not a glob.** It is `GAP_PATHS`' entry for the gap —
+`.github/workflows/`, with the trailing slash — and a path belongs to it when it starts
+with that string. The table above writes the same thing as `.github/workflows/**`
+because that is what a reader of a table expects; the JSON is the prefix itself.
+
+**`carried` is read off the diff and never off the kind of gap.** A box ticked for
+`workflows:missing` over a base that already holds the generated workflows is
+`not-in-diff`: the branch writes nothing there, and a report calling that carried would
+be describing a state the pull request is not in. The three sections below say what each
+of those means for the branch.
 
 ### The sequence, end to end
 
@@ -121,13 +138,17 @@ section, and says that no generated check is expected red or green on that pull 
 because none of them is installed by it.
 
 **What accepting one changes depends on the same thing, and the report now says
-which.** Five of the seven remedies are a GitHub API call, an environment variable or
-a file no pull request can carry, so accepting them records an answer and performs
-nothing.
+which.** Only `workflows:missing` is closed by a file this pull request writes. The
+other six are a GitHub API call, an environment variable, a file no pull request can
+carry or a regeneration this flag never runs, so accepting one of them records an answer
+and performs nothing — which is not the same as saying its remedy writes no file at all:
+`--hooks` also writes `.claude/settings.json` and `--record --force` rewrites
+`agentic.config.json`, and both of those files are in every adoption commit. What is
+true, and what the report says, is that **no file of this diff closes the gap**.
 
 | Accepted gap | What the pull request does |
 | --- | --- |
-| `workflows:missing` | **carried** — `.github/workflows/**` is in this diff; the body's file list says which files were written and which the base already carried identically |
+| `workflows:missing` | **carried** when this diff writes `.github/workflows/**`, and **not in this diff** when it does not — a base that already holds the generated workflows plans every one of them as `skipped (unchanged)`, and a workflow somebody wrote is skipped as `not-generated`. The body's file list is the account, and the decision section agrees with it |
 | `ruleset:absent`, `ruleset:review-not-required` | **recorded, not performed** — run `node scripts/init.mts --rules` |
 | `labels:missing` | **recorded, not performed** — run `node scripts/init.mts`, which is what calls `gh label create` for every label of the dictionary |
 | `hooks:not-installed` | **recorded, not performed** — run `node scripts/adopt.mts --hooks`, once in each clone |
