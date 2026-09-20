@@ -28,8 +28,11 @@
 //
 // Negative control: the #338 block at the foot of this file is the red. On
 // the base an overlap between two issues of different milestones is reported
-// as no overlap at all, so those cases fail there. Everything above it moved
-// from tests/issue-lint.test.mts unchanged and passes on the base too.
+// as no overlap at all, so those cases fail there. Everything above it passes
+// on the base too: the cases #352 split out of tests/issue-lint.test.mts, and
+// the three #299 blocks #338 moved across, whose only edits are the comments
+// that named the milestone as the scope. No assertion above the #338 block
+// changed.
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -349,7 +352,9 @@ check('a grant overlap is sequenced, not a failure, when a Blocked by: orders th
 // --- #299: what a run that could not look reports, and how far the
 // `Blocked by:` graph is scanned ---------------------------------------------
 // Written for #299 into tests/issue-lint.test.mts, whose `## Files` named
-// that file and `ci/issue-lint.mts` alone, and moved here unchanged by #338.
+// that file and `ci/issue-lint.mts` alone, and moved here by #338 with no
+// assertion touched — the only edits are the comments that named the
+// milestone as the scope, which #338 is what changes.
 // What a run *without* that list cannot do, and how far the graph is scanned
 // when it has one, are both decided by reading more than one issue, so they
 // belong on this side of the boundary the two headers draw.
