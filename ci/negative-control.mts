@@ -123,7 +123,8 @@
 // lost the warning naming the unrelated red, which is the strongest of the
 // three. All four were measured by running this check over one captured
 // listing with and without the line; `tests/negative-control.test.mts` holds
-// that listing and the four pairs.
+// that listing and six pairs — each of the three notes against both a `feat:`
+// and a `test(red):` subject, because the vouch decides the third move.
 //
 // So every such line is dropped from what the two predicates read
 // (`NOTE_LINE` below), and from nothing else: a verdict's detail still prints
@@ -142,17 +143,23 @@
 // would split its block and change how every other line in it is read.
 //
 // What keying on the marker costs, since a line can carry it by accident. A
-// failing file's output is printed verbatim, so a file whose own output
-// contains `<name>.<ext>: note ` at the start of a line — in practice only
-// `tests/run.test.mts`, which quotes this runner's log in its failure detail
-// — has that line ignored as evidence too. Dropping evidence usually moves a
-// verdict *toward* refusal: a mention or an owner lost is `unattributed`, a
-// structural diagnostic lost is a red that has to attribute itself. It can
-// move one toward `pass`, when the dropped line was the only `elsewhere`
-// entry contradicting a mention. That direction is the rule working rather
-// than failing — a note is inert in both directions or it is not inert — and
-// it costs a failing file printing a runner-shaped note line that carries
-// another file's non-zero failure count.
+// failing file's output is printed verbatim, so a file that writes
+// `<name>.<ext>: note ` at the *start of a line* has that line ignored as
+// evidence too. Column zero is what narrows this: the files that quote this
+// runner's log back — `tests/run.test.mts` and this check's own cases — do it
+// inside a `check(...)` detail, and `tests/lib/harness.mts` joins a detail's
+// lines with six spaces, so a quoted note reaches the log indented and this
+// rule never sees it. What is left is a failing file writing such a line
+// straight to a stream itself.
+//
+// Dropping evidence usually moves a verdict *toward* refusal: a mention or an
+// owner lost is `unattributed`, a structural diagnostic lost is a red that
+// has to attribute itself. It can move one toward `pass`, when the dropped
+// line was the only `elsewhere` entry contradicting a mention. That direction
+// is the rule working rather than failing — a note is inert in both
+// directions or it is not inert — and it costs a failing file printing, at
+// column zero, a runner-shaped note line carrying another file's non-zero
+// failure count.
 //
 // The note is the only free text a *passing* file gets into this log, checked
 // by reading the two places `tests/run.mts` prints for a green child: its
