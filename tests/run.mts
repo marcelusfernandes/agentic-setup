@@ -20,10 +20,36 @@
 //
 // A note is everything the file marked, not its first line. A line that
 // begins with whitespace and follows a note line, or another such line, is
-// that note's continuation and is printed with the same prefix; the note
+// that note's continuation and is printed under the same file name; the note
 // ends at the first line that is blank or unindented. That is the shape a
 // FAIL detail already uses in tests/lib/harness.mts, so an author writing a
-// note is not asked to learn a second one.
+// note is not asked to learn a second one — with one difference that is not
+// cosmetic: that precedent is capped at six lines (DETAIL_TAIL) and this
+// rule caps at nothing. The cap is not copied for the reason no cap was put
+// on notes in the first place (#382) — a cap discards exactly the detail the
+// note exists to carry, silently, which is the defect #429 is about — so a
+// note is as long as the file made it.
+//
+// Every line this file prints for a passing child carries the marker,
+// continuations included: a continuation goes out as `note` followed by the
+// line as the file wrote it, which always begins with whitespace because
+// that is what made it a continuation. Bare continuations were the first
+// spelling and were wrong. ci/negative-control.mts reads this log as
+// evidence, and #428 — which exists because a passing file's note can flip
+// that check's verdict — records that attributing within a diagnostic block
+// cannot discriminate here, since this whole listing is one block with no
+// blank lines. That leaves the marker as the only discriminator a fix can
+// key on, and an unmarked line would sit outside it.
+//
+// What that does not buy, stated plainly because the record should not claim
+// otherwise: it does not close the hole, and the hole is not new. A note has
+// always been able to carry a source location, and `locatesOverlay` turns
+// one into `located`, which makes every unattributed failure in the block
+// `owned` and empties `elsewhere` — measured as `unattributed` becoming
+// `pass`, losing the warning that would have named the unrelated red. That
+// path runs on the runner as it stood before this rule existed. Marking
+// continuations only keeps the whole of the exposure inside one
+// discriminator, so #428 can close it in one move rather than two.
 //
 // The rejected alternative was to keep truncating at the first line and say
 // so here (#429). It lost on the merits. Both notes this repository writes
@@ -45,6 +71,13 @@
 // log a second time riding inside a note. The failing branch still prints
 // both streams verbatim — there, the run's readers want what the child said,
 // in the order it said it.
+//
+// Reading the streams apart also changes the order of a passing file's
+// notes, for a file that writes to both: every note it put on stdout is
+// printed before any note it put on stderr, where the concatenated scan
+// interleaved them as the two streams happened to land. Nothing depends on
+// the old order — the streams were already glued in an order the child did
+// not control — but the change is real and this is where it is written down.
 //
 // Takes an optional directory argument (default: this file's own directory)
 // so tests/run.test.mts can point it at a temp directory instead of tests/.
@@ -93,17 +126,23 @@ function withoutSummary(stdout: string, match: RegExpExecArray | null): string {
 
 /**
  * Prints the note lines in one stream of `file`'s output, continuation lines
- * included, each on its own line under that file's name.
+ * included, each on its own line under that file's name and each carrying the
+ * marker. A continuation begins with whitespace by definition, so prefixing
+ * the bare marker to it always leaves a line `NOTE` itself matches.
  */
 function printNotes(file: string, text: string): void {
   let inNote = false;
   for (const line of text.split('\n')) {
-    if (NOTE.test(line)) inNote = true;
-    else if (!inNote || !CONTINUATION.test(line)) {
+    if (NOTE.test(line)) {
+      inNote = true;
+      console.log(`${file}: ${line}`);
+      continue;
+    }
+    if (!inNote || !CONTINUATION.test(line)) {
       inNote = false;
       continue;
     }
-    console.log(`${file}: ${line}`);
+    console.log(`${file}: note${line}`);
   }
 }
 
