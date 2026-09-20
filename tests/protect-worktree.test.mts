@@ -111,6 +111,11 @@ check('protect-worktree allows and names the durable location from a worktree ou
 const emptyHome = write(join(repo, 'a.txt'), {}, outsideWt, { HOME: '' });
 check('protect-worktree still denies a main-checkout write when $HOME resolves to nothing', emptyHome.status === 2);
 check('protect-worktree offers no durable location when $HOME resolves to nothing', /no durable location/i.test(emptyHome.stderr));
-check('protect-worktree never calls a path inside the worktree outside every checkout', !emptyHome.stderr.includes('outside every checkout'));
+// The defect precisely: the refusal used to carry `<worktree>/.claude/agent-memory`
+// as the place to put something that outlives the worktree. Asserted as the
+// absence of that path rather than of the phrase around it, because the
+// remedy that replaces it says `memory: user` does *not* resolve outside
+// every checkout — the same words, the opposite claim.
+check('protect-worktree never offers a path inside the worktree as the durable one', !emptyHome.stderr.includes(join(outsideWt, '.claude', 'agent-memory')));
 
 finish();
