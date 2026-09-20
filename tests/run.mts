@@ -31,9 +31,9 @@
 // the aggregate below and in ci/negative-control.mts, which reads this log.
 //
 // The one exception is the file that never starts a line with its summary at
-// all, which is the `e` shape below: a note written without a terminating
-// newline leaves the summary on that note's line. For that file, and only
-// for it, the last summary-shaped text anywhere stands in, because reporting
+// all — the `e` fixture in tests/run.test.mts: a note written without a
+// terminating newline leaves the summary on that note's line. For that file,
+// and only for it, the last summary-shaped text anywhere stands in, because reporting
 // a file that ran and passed as CRASHED is worse than reading a count off a
 // line the child glued together. It is a real residual: a file whose stdout
 // holds a stray count and no summary line of its own is still reported by
