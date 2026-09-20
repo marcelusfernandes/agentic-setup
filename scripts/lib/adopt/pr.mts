@@ -53,7 +53,7 @@
 //
 // Node built-ins only.
 import { CHECKS_WORKFLOW, MARKER, WORKFLOW_DIR, isGenerated, readTemplates, renderWorkflows, type RenderedWorkflow } from './workflows.mts';
-import { GAP_PATHS, acceptedLines, decidedByPhrase, isDeclined, parseDecision, tickShadowing, unrecognisedNotes, type DecisionRecord } from './decision.mts';
+import { GAP_PATHS, acceptedLines, decidedByPhrase, isDeclined, parseDecision, shadowNote, unrecognisedNotes, type DecisionRecord } from './decision.mts';
 import { SETTINGS_FILE, mergeDeny, readShipped, type DenyMerge, type Shipped } from './hooks.mts';
 import { PROOF_DIR, RECORD_FILE, type AdoptionRecord } from './record.mts';
 
@@ -634,8 +634,7 @@ function decisionSection(decision: DecisionRecord, label: string): string[] {
     ? ['Nothing: every box of the plan was ticked.']
     : decision.declined.map((gap) => {
         const paths = GAP_PATHS[gap] ?? [];
-        const tick = tickShadowing(gap, decision.accepted);
-        const shadow = tick === null ? '' : `; \`${tick}\` was ticked, a near-miss of this name, so this box may have been meant`;
+        const shadow = shadowNote(gap, decision.accepted);
         return paths.length === 0
           ? `- \`${gap}\` — its remedy is not a file, so nothing here changes because of it${shadow}`
           : `- \`${gap}\` — so \`${paths.join('`, `')}\` is **not** in this diff${shadow}`;

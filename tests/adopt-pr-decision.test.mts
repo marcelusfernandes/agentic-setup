@@ -34,11 +34,13 @@
 // is imported from `scripts/lib/adopt/inventory.mts` — a pin that reuses the
 // thing it pins cannot catch that thing drifting.
 //
-// Negative control: on the base `--pr` never reads a body, so the "some
-// ticked" and "none ticked" cases fail on their own assertions, no comment is
-// ever posted, and `scripts/lib/adopt/decision.mts` does not exist, so the
-// import below answers `null` and every parser case fails on its own
-// assertion rather than on a missing module.
+// Negative control: when this file was written `--pr` never read a body, so
+// the "some ticked" and "none ticked" cases failed on their own assertions and
+// no comment was ever posted, and `scripts/lib/adopt/decision.mts` did not
+// exist. It does now (#396), so the guarded import below answers with whatever
+// the base exports and every case still fails on its own assertion rather than
+// on a missing module — which is what the guard is for, and what keeps a red
+// here from being read as structural.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -247,8 +247,8 @@ export function tickShadowing(gap: string, accepted: readonly string[]): string 
   return accepted.find((tick) => !KNOWN_GAPS.includes(tick) && nearestGap(tick) === gap) ?? null;
 }
 
-/** ` — …` naming the tick that shadows a declined gap, or '' when none does. */
-function shadowNote(gap: string, accepted: readonly string[]): string {
+/** `; …` naming the tick that shadows a declined gap, or '' when none does. */
+export function shadowNote(gap: string, accepted: readonly string[]): string {
   const tick = tickShadowing(gap, accepted);
   return tick === null ? '' : `; \`${tick}\` was ticked, a near-miss of this name, so this box may have been meant`;
 }

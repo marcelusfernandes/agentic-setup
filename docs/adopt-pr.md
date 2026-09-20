@@ -215,9 +215,11 @@ correctly, so this one names the boxes.
 
 ### The decision is recorded on the issue that asked
 
-Before it opens the pull request, `--pr` comments on the plan issue: the accepted gaps,
-the declined ones (with the paths a declined gap left out, where it has any), and the
-login that applied `human:decided`. That login is read from the issue's **timeline** —
+Before it opens the pull request, `--pr` comments on the plan issue: the accepted gaps —
+each one marked as carried in the diff or recorded and performed by nothing, with the
+command that performs a gap nothing here performed — the declined ones (with the paths a
+declined gap left out, where it has any, and the tick that was aimed at it where one
+was), any tick this version cannot act on, and the login that applied `human:decided`. That login is read from the issue's **timeline** —
 the last `labeled` event naming the label, because a label removed and applied again is
 an ordinary thing and the decision in force is the standing one.
 
@@ -238,9 +240,14 @@ Two things can go wrong there, and both fail closed:
   rather than duplicating anything, so the remedy is to comment by hand, or to delete the
   branch and run again.
 
-A timeline that *answers* and names no `labeled` event for the label is a different
-thing: `decidedBy` is `null`, and the comment and the body both say the timeline names
-nobody, in those words. That is a fact about the issue rather than a failed read.
+A timeline that *answers* is a different thing from one that cannot be read, and it has
+two shapes that both mean `decidedBy: null`. Either **there is no such event** — no
+`labeled` event for the label at all — or the standing one **carries no actor**, which is
+what GitHub renders for an event attributed to a deleted user or to an integration. The
+comment and the body say a sentence true of both, because the timeline itself does not
+reach the phrase: the run names no person, and the reason is one of those two. Both are
+facts about the issue rather than a failed read, and reporting only the first sent a
+reader looking for a missing event that was sitting in the timeline.
 
 ### Which plan issue authorises, when two share the title
 

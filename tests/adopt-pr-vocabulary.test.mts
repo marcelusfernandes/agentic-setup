@@ -430,6 +430,16 @@ check(
   '(second entry prose)',
 );
 check(
+  'the document describes both shapes of a decision nobody is named for, not just the empty timeline',
+  unwrap(prDoc).includes('carries no actor') && unwrap(prDoc).includes('there is no such event'),
+  unwrap(prDoc).split('`decidedBy` is `null`')[1]?.slice(0, 300) ?? '(no such paragraph)',
+);
+check(
+  'and it says the comment names the remedy of a recorded gap and any tick nothing can act on',
+  /the command that performs a gap nothing here performed/.test(unwrap(prDoc)),
+  '(comment contents)',
+);
+check(
   'item 33 gains the forward direction of the cost it already carries, as a dated update',
   !item33.includes('*(none yet)*') && /## Updates/.test(item33) && unwrap(item33.split('## Updates')[1] ?? '').includes('2026-09-20'),
   (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
