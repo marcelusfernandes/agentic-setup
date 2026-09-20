@@ -95,6 +95,7 @@ type Module = {
   tickShadowing?: (gap: string, accepted: readonly string[]) => string | null;
   unrecognisedNotes?: (record: DecisionRecord) => string[];
   decidedByPhrase?: (record: DecisionRecord, label: string) => string;
+  decisionReport?: (record: DecisionRecord) => DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
   decidedBy?: (timeline: unknown, label: string) => string | null;
   renderDecisionComment?: (record: DecisionRecord, label: string, branch: string) => string;
 };
@@ -106,7 +107,12 @@ try {
   mod = null;
 }
 
-type PlanModule = { renderBody?: (plan: unknown, context: unknown) => string };
+type PlannedFile = { path: string; content: string | null; outcome: string; reason: string };
+type Plan = { files: PlannedFile[]; checks: string[] };
+type PlanModule = {
+  renderBody?: (plan: unknown, context: unknown) => string;
+  planPullRequest?: (record: unknown, options: unknown) => Plan;
+};
 
 let planner: PlanModule | null = null;
 try {
@@ -448,6 +454,175 @@ check(
   'and that update says the drift it names is now caught by npm run check',
   unwrap(item33.split('## Updates')[1] ?? '').includes('npm run check'),
   (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
+);
+
+// --- G2: the object the `--pr` JSON carries -------------------------------
+// `decisionReport` is what `scripts/lib/adopt/pr-run.mts` emits under
+// `decision`. It adds to the two lists rather than reshaping them: `accepted`
+// and `declined` stay the names the person ticked, in their order, because
+// that is what `docs/adopt-pr.md` documents and what any existing consumer
+// reads. What is new is `ticks` — the classification, one entry per ticked box
+// — and `shadowed`, the declined gaps a near-miss was ticked against.
+type Reported = DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
+const report = (record: DecisionRecord): Reported => {
+  if (!mod?.decisionReport) return { accepted: ['(not exported)'], declined: [], decidedBy: null };
+  try {
+    return mod.decisionReport(record);
+  } catch {
+    return { accepted: ['(threw)'], declined: [], decidedBy: null };
+  }
+};
+
+const RECORD_IN = { accepted: [TYPO, RECORDED_GAP], declined: [FILE_GAP, 'ruleset:absent'], decidedBy: DECIDED_BY };
+const reported = report(RECORD_IN);
+check('decisionReport is exported', typeof mod?.decisionReport === 'function');
+check(
+  'it keeps the two lists exactly as the boxes were ticked, in their order',
+  (reported.accepted ?? []).join(',') === RECORD_IN.accepted.join(',') &&
+    (reported.declined ?? []).join(',') === RECORD_IN.declined.join(',') &&
+    reported.decidedBy === DECIDED_BY,
+  JSON.stringify(reported),
+);
+check(
+  'it carries one tick per accepted box, in the same order, each with its state',
+  (reported.ticks ?? []).map((tick) => tick.gap).join(',') === RECORD_IN.accepted.join(',') &&
+    (reported.ticks ?? []).map((tick) => tick.state).join(',') === 'unrecognised,recorded',
+  JSON.stringify(reported.ticks),
+);
+check(
+  'a consumer of the JSON alone can tell a carried gap from a recorded one',
+  (report({ accepted: [FILE_GAP, RECORDED_GAP], declined: [], decidedBy: null }).ticks ?? [])
+    .map((tick) => `${tick.gap}=${tick.state}`)
+    .join(',') === `${FILE_GAP}=carried,${RECORDED_GAP}=recorded`,
+  JSON.stringify(report({ accepted: [FILE_GAP, RECORDED_GAP], declined: [], decidedBy: null }).ticks),
+);
+check(
+  'and a tick that names a gap from one that names nothing',
+  (report({ accepted: [NONSENSE], declined: [], decidedBy: null }).ticks ?? [])[0]?.nearest === null &&
+    (reported.ticks ?? [])[0]?.nearest === FILE_GAP,
+  JSON.stringify(report({ accepted: [NONSENSE], declined: [], decidedBy: null }).ticks),
+);
+check(
+  'the declined gap a near-miss was ticked against is named, and the one nobody aimed at is not',
+  (reported.shadowed ?? []).length === 1 &&
+    (reported.shadowed ?? [])[0]?.gap === FILE_GAP &&
+    (reported.shadowed ?? [])[0]?.tick === TYPO,
+  JSON.stringify(reported.shadowed),
+);
+check(
+  'a decision with nothing mistyped reports no shadowed gap at all',
+  (report({ accepted: [RECORDED_GAP], declined: [FILE_GAP], decidedBy: null }).shadowed ?? []).length === 0,
+  JSON.stringify(report({ accepted: [RECORDED_GAP], declined: [FILE_GAP], decidedBy: null }).shadowed),
+);
+check(
+  'it answers with a new object and never writes into the record it was handed',
+  reported !== (RECORD_IN as unknown as Reported) &&
+    Object.keys(RECORD_IN).join(',') === 'accepted,declined,decidedBy' &&
+    RECORD_IN.accepted.join(',') === `${TYPO},${RECORDED_GAP}`,
+  Object.keys(RECORD_IN).join(','),
+);
+check(
+  'the JSON it produces survives a round trip, so what a consumer parses is what it built',
+  JSON.stringify(JSON.parse(JSON.stringify(reported))) === JSON.stringify(reported),
+  JSON.stringify(reported).slice(0, 300),
+);
+
+// --- I: only a *declined* box empties the checks ----------------------------
+// Moved here from `tests/adopt-pr-decision.test.mts` with the sweep that split
+// it: these prove the planner by importing it, and that file keeps the cases
+// that spawn the real script.
+//
+// A planned workflow carries no content for three different reasons, and only
+// one of them is a decision: `declined`, but also `unchanged` when the base
+// already carries the generated file and `not-generated` when a person wrote
+// it. (`planSettings` has three more, on `.claude/settings.json`, and none of
+// them reaches a workflow — which is why the count is three and not six.)
+// Reading "no content" as "declined" made the body say the box was left
+// empty over a decision that ticked it — a false sentence about the decision,
+// in the artefact whose purpose is recording the decision.
+//
+// The base content here is the planner's own first answer rather than an
+// import of `renderWorkflows`: a second base that agreed with the generator
+// by construction could not tell `unchanged` from anything else.
+
+/** The planner's answer for one base reader, or `null` when it could not run. */
+function planWith(baseFile: (path: string) => string | null, declined?: string[]): Plan | null {
+  if (!planner?.planPullRequest) return null;
+  try {
+    return planner.planPullRequest(RECORD_VALUE, { root: ROOT, baseFile, ...(declined === undefined ? {} : { declined }) });
+  } catch {
+    return null;
+  }
+}
+
+const isWorkflow = (file: PlannedFile): boolean => file.path.startsWith('.github/workflows/');
+const fresh = planWith(() => null);
+const generated = new Map((fresh?.files ?? []).filter(isWorkflow).map((file) => [file.path, file.content]));
+check('the planner answers with the generated workflows at all', generated.size > 0 && fresh !== null, String(generated.size));
+
+const unchanged = planWith((path) => generated.get(path) ?? null);
+const unchangedWorkflows = (unchanged?.files ?? []).filter(isWorkflow);
+check(
+  'a base that already carries the generated workflows plans every one of them as skipped (unchanged)',
+  unchangedWorkflows.length === generated.size && unchangedWorkflows.every((file) => file.reason === 'unchanged' && file.content === null),
+  JSON.stringify(unchangedWorkflows.map((file) => file.reason)),
+);
+check(
+  'and its checks are the ones the record renders: nobody declined anything',
+  (unchanged?.checks ?? []).length > 0,
+  (unchanged?.checks ?? []).join(','),
+);
+
+/** The body for a planned branch, with a decision that ticked every box. */
+const bodyFor = (plan: Plan | null): string =>
+  !planner?.renderBody || plan === null
+    ? ''
+    : planner.renderBody(plan, {
+        issue: PLAN_ISSUE,
+        defaultBranch: 'main',
+        record: RECORD_VALUE,
+        decision: { accepted: [...VOCABULARY], declined: [], decidedBy: DECIDED_BY },
+        decidedLabel: DECIDED_LABEL,
+      });
+
+/** The sentence a body may only carry when a box really was left empty. */
+const CLAIM = 'because the box for it was left empty';
+
+const unchangedBody = unwrap(bodyFor(unchanged));
+check(
+  'the body of an unchanged-workflow branch never claims a box was left empty',
+  unchangedBody.length > 0 && !unchangedBody.includes(CLAIM),
+  unchangedBody.slice(0, 400),
+);
+
+const declinedPlan = planWith(() => null, [FILE_GAP]);
+check(
+  'a declined workflow box, and only that, empties the checks',
+  (declinedPlan?.checks ?? ['x']).length === 0,
+  (declinedPlan?.checks ?? []).join(','),
+);
+const declinedBody = unwrap(bodyFor(declinedPlan));
+check(
+  'and its body says so, as one unbroken sentence rather than three loose words',
+  declinedBody.includes(CLAIM),
+  declinedBody.slice(0, 600),
+);
+
+// --- H: what the flag does, said in both adoption documents (invariant 8) ---
+// Moved here from `tests/adopt-pr-decision.test.mts` with the sweep that split
+// that file: the prose pins of both adoption documents sit beside the ones
+// above rather than in two places, and that file keeps the spawn cases.
+const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
+const docs = `${adoptDoc}\n${prDoc}`;
+check('the documentation says what a tick does and what leaving one empty does', /What a tick does/.test(adoptDoc) && /ticks decide/i.test(prDoc), 'tick prose');
+check('it names the refusal a decided plan with nothing ticked gets', docs.includes('pr:plan-nothing-ticked') && docs.includes('plan:nothing-ticked'), 'nothing-ticked');
+check('it names the two failures the decision record can have', docs.includes('pr:timeline-unreadable') && docs.includes('pr:decision-not-recorded'), 'named failures');
+check('it says the decision is commented on the plan issue before the pull request is opened', /before .{0,40}pull request/i.test(prDoc) && /timeline/.test(prDoc), 'comment order');
+check(
+  'the bolded sentence about an existing label is narrowed to the label the inventory read saw',
+  adoptDoc.includes('**A label the inventory read saw is left exactly as it is.**') &&
+    !adoptDoc.includes('**A label the repository already has is left exactly as it is.**'),
+  adoptDoc.split('\n').find((line) => line.startsWith('**A label')) ?? '(no such sentence)',
 );
 
 finish();
