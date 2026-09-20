@@ -382,7 +382,7 @@ edits, never merges, never offers to fix.
 |---|---|---|
 | WorktreeCreate | `worktree-create.mts` | creates every agent's worktree itself, outside the main checkout — `${AGENTIC_WORKTREE_DIR:-<tmpdir>/agentic-worktrees}/<name>`, detached HEAD, `node_modules` symlinked in when the checkout has one, path printed on stdout. Ships because Claude Code's own default (`.claude/worktrees/agent-<id>`) sits under a protected path and a headless implementer's writes there were denied (#129 L10/L11); this hook replaces that default once registered. Fails **closed**: any error exits 1 with nothing on stdout, since there is no later layer to catch a bogus or missing worktree the way the ruleset catches a missed push |
 | PreToolUse Bash | `protect-main.mts` | the third layer, for a session in a repo with no server-side ruleset yet: denies a force-push, a push or delete of `main`/`master`, **any `gh pr merge` segment, with or without `--admin`**, and **any `gh issue edit` segment from inside an agent's worktree** — `node scripts/land.mts <pr>` is the only merge path from a session (it spawns `gh` from inside Node, so the hook never sees a `gh` command string), and no environment variable lifts either rule. The issue-edit rule (#237) is how an `authorised:` grant stays unwritable by the session it would exempt: the grant lives in the issue's `## Files`, `ci/scope-check.mts` reads that body at check time, and only the orchestrator — which runs in the main checkout, never a linked worktree — writes one. The discriminator is the payload's `agent_id` plus the linked-worktree test `protect-worktree.mts` already makes, so the orchestrator's own `gh issue edit` and every other `gh issue` subcommand from anywhere stay allowed; an agent that needs a wider scope asks and stops. `AGENTIC_ALLOW_PUSH_MAIN=1` lifts the push form only, never deletion, never a merge and never an issue edit. Force-push, `reset --hard`, `clean`, `stash` and `gh pr merge` are also denied declaratively by the permission deny list `/agentic-setup:init` writes |
-| PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it |
+| PreToolUse Edit/Write | `protect-worktree.mts` | denies a subagent's write that resolves inside the main checkout but outside its own worktree. A real failure mode: under load the model writes with an absolute path rooted at the main repository, and a prose rule does not stop it. Outside the checkout it denies nothing — it is a fence around that one failure mode, not a sandbox — and since #327 it **names** the one outside path that is not scratch: a write under `~/.claude/agent-memory/<agent>/`, the `memory: user` scope, is allowed with a note saying so, and every main-checkout refusal carries that path, so an agent that knows only its own worktree learns from the refusal where a durable write goes. A denied path that is itself agent memory in the checkout (`.claude/agent-memory/`, `.claude/agent-memory-local/` — the `project` and `local` scopes) is told which scope would have survived. The permit is withheld, and the path denied like any other, when `~/.claude/agent-memory/` resolves inside the checkout (a `$HOME` that contains it): a hole in this fence costs more than a memory |
 | SubagentStop, Stop | `stop-gate.mts` | runs the project's own check command then its test command (`ci/lib/detect.mts`, the same detection `negative-control` uses; a branch's `proof/<slug>.json` `command` replaces the detected test command) **in the directory the event carries as its `cwd`** — the agent's worktree when the agent was spawned with `isolation: "worktree"` (the `WorktreeCreate` path above) or when the session's own cwd is the worktree, and the *session's* checkout for an agent that merely `cd`s into one (see the Known limits) — and **blocks the stop** while either is red — a top-level `{ decision: 'block', reason }` carrying the last lines of the failing output. Four bounds keep it from becoming a second CI: `main`/`master` is never gated (which is what makes the same hook a no-op when it fires on `Stop` in the main session), a last commit whose subject starts with `test(red):` is exempt, a project with no detected test command is let through with a note, and after **three consecutive blocks** on the same branch the stop goes through with a note. The counter lives in the worktree's own git directory, never in a tracked file, and resets three ways — a green run, a change of branch in the same worktree, and the cap pass itself, so the gate is live again for the agent's next turn rather than off for the rest of the branch. A fourth scope: the stop event's `stop_hook_active` (`true` when the stop continues one a stop hook already blocked) is read as a *counter scope*, not a bypass — `false` means a fresh stop, so blocks left on the branch by an abandoned round are not counted against it; `true` counts consecutively, because an early return there would put the cap out of reach and let every stop after the first block through. A command that ran and proved nothing — exit 127 (no such command) or more output than the gate can hold (ENOBUFS) — **blocks** with its own named reason and counts towards the cap, while a command that times out or genuinely cannot be spawned still lets the stop through. The commands run with `AGENTIC_STOP_GATE=1` so the gate cannot recurse into itself, each in its own process group, so the per-command timeout (five minutes, `AGENTIC_STOP_GATE_TIMEOUT_MS` overrides it up to seven) ends the runner *and* whatever it forked |
 
 The gate is *before* CI, not instead of it: `test`, `scope` and `negative-control` are
@@ -439,17 +439,40 @@ split is read as pending.
   repository outside the session's checkout entirely; a second worktree of the session's
   *own* repository is still refused, as the bullet above says. Measured on the first pass
   of this loop against a third-party repository (`docs/dogfood/2026-09-06.md`, F5).
-- **An agent that declares `memory: project` writes its memory inside its worktree.** Both
-  the implementer and the reviewer declare it (`agents/implementer.md:7`), and project
-  memory resolves against the directory the agent runs in — under `isolation: worktree`
-  that directory is the worktree, and the worktree is removed with the pass. So agent
-  memory does not survive a pass: every pass starts blank, and what round 1 learned
-  reaches round 2 only through the issue, the pull request and the branch (resuming the
-  same agent keeps its conversation, which is context and not memory). A durable memory
-  has to be given a path in the main checkout, and that path is configuration rather than
-  something an agent writes for itself — `protect-worktree.mts` denies a subagent's
-  `Edit`/`Write` that lands in the main checkout outside its own worktree (the hooks table
-  above). Measured on the headless pass (`docs/dogfood/2026-09-10.md`, L15).
+- **An agent that declares `memory: project` writes its memory inside its worktree — and
+  the `memory:` line is the mechanism, because a different scope writes it elsewhere.**
+  The three scopes Claude Code offers resolve to fixed directories: `user` to
+  `~/.claude/agent-memory/<agent>/`, `project` to
+  `<project>/.claude/agent-memory/<agent>/`, `local` to
+  `<project>/.claude/agent-memory-local/<agent>/`. The implementer and the reviewer both
+  declare `memory: project` (`agents/implementer.md:7`, `agents/reviewer.md:6`), so their
+  memory lands inside the checkout they run in — under `isolation: worktree` that is the
+  worktree, and the worktree is removed with the pass. That is the measured finding: agent
+  memory does not survive a pass, every pass starts blank, and what round 1 learned reaches
+  round 2 only through the issue, the pull request and the branch (resuming the same agent
+  keeps its conversation, which is context and not memory — `docs/dogfood/2026-09-10.md`,
+  L15). **The durable location is `~/.claude/agent-memory/<agent>/`, and `memory: user` is
+  the mechanism that gives an agent that path** (#327). It is outside every checkout, so no
+  worktree removal takes it and `protect-worktree.mts` has nothing to deny there; it is not
+  derived from the agent's cwd, so isolation does not move it; and it is configuration
+  rather than something an agent writes for itself in the sense that matters here — the
+  scope lives in `agents/<name>.md`, in the main checkout, which is exactly the write that
+  same hook denies to the agent whose memory it is. Since #327 the hook names that path:
+  it notes the permit when a write lands under it, and carries the path in every
+  main-checkout refusal, which is what makes the location discoverable to an agent that
+  knows only its own worktree — the refusal is the half that reaches the model, since a
+  hook that allows a write says nothing back to it. One precondition: the whole `memory:`
+  field is inert when auto memory is off (`autoMemoryEnabled`,
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY`), and then no scope is durable because there is no
+  memory. **This supersedes #266's sentence that a durable memory has
+  to be given a path in the main checkout.** That sentence was false when it was written:
+  a path in the main checkout is the one place a durable memory cannot go, because the hook
+  denies it — which is the contradiction #327 was opened on — and the scope that solves it
+  already existed. What is still open is the choice itself, and it has a cost worth
+  stating: `user` memory is shared *across repositories*, so an implementer flipped to it
+  carries what it learned here into every repository the plugin runs in. That is the trade
+  the orchestrator weighs, it is outside this bullet's mechanism question, and neither card
+  is changed here.
 - **Shared local services are the hidden coupling.** If two worktrees point at the same
   local database, cache or dev server, one agent's reset lands under another's test run.
   Derive ports and instance names from the worktree path, and stop the instance before

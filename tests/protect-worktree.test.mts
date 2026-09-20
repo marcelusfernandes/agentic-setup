@@ -83,5 +83,6 @@ check('protect-worktree does not call a scratch file durable', !scratch.stderr.i
 // protect, and a memory there is no more durable than any other file in it.
 const insideHome = write(join(projectMemory(repo), 'implementer', 'MEMORY.md'), {}, wt, { HOME: repo });
 check('protect-worktree denies the memory root when it resolves inside the main checkout', insideHome.status === 2);
+check('protect-worktree does not offer a durable location it is itself refusing', /no durable location is reachable/i.test(insideHome.stderr));
 
 finish();
