@@ -18,6 +18,27 @@
 // with the file that said it. What a file marks is what it prints, so the
 // volume is the suite's own choice and not this file's to cap.
 //
+// What counts as a child's summary, stated here because a note author who
+// does not know the rule pays for it in a wrong count (#439). A summary is
+// `N passed, M failed` at the *start of a line* of the child's stdout, and
+// the last such line is the one read. Summary-shaped text anywhere else in
+// that file's output — quoted in a note, quoted as an expectation, quoted
+// from some other run's result — is the file talking, not the file
+// reporting, and is not its result. Before this rule the match was taken
+// unanchored, so a file that passed one case and mentioned `3 passed, 0
+// failed` afterwards was reported as passing three, and one that quoted a
+// non-zero count was reported as failing that many: counts nobody had, in
+// the aggregate below and in ci/negative-control.mts, which reads this log.
+//
+// The one exception is the file that never starts a line with its summary at
+// all, which is the `e` shape below: a note written without a terminating
+// newline leaves the summary on that note's line. For that file, and only
+// for it, the last summary-shaped text anywhere stands in, because reporting
+// a file that ran and passed as CRASHED is worse than reading a count off a
+// line the child glued together. It is a real residual: a file whose stdout
+// holds a stray count and no summary line of its own is still reported by
+// the stray. Terminate the line, and the rule above applies.
+//
 // A note is everything the file marked, not its first line. A line that
 // begins with whitespace and follows a note line, or another such line, is
 // that note's continuation and is printed under the same file name; the note
@@ -92,7 +113,11 @@ const files = readdirSync(dir)
   .filter((name) => name.endsWith('.test.mts'))
   .sort();
 
+/** Summary-shaped text, wherever it sits. The fallback of `lastSummary`. */
 const SUMMARY = /(\d+) passed, (\d+) failed/g;
+
+/** The same shape at the start of a line: a summary printed as one (#439). */
+const SUMMARY_LINE = /^(\d+) passed, (\d+) failed/gm;
 
 /**
  * A line a test file means an operator to read even when the file passes:
@@ -104,9 +129,20 @@ const NOTE = /^note\s/;
 /** A note's continuation: an indented, non-empty line under the note it belongs to. */
 const CONTINUATION = /^\s+\S/;
 
-/** Returns the last "N passed, M failed" match in text, or null if there is none. */
+/**
+ * The match this file reads a child's result from: the last
+ * "N passed, M failed" that *starts a line*, or null if the text has none.
+ *
+ * A child that wrote an unterminated line before its summary has pushed that
+ * summary off the start of its line, and no line of its stdout begins with
+ * one. Only then does the last summary-shaped text anywhere stand in, because
+ * the alternative is reporting a file that ran and passed as CRASHED. See the
+ * header for what that fallback does and does not cover.
+ */
 function lastSummary(text: string): RegExpExecArray | null {
   let last: RegExpExecArray | null = null;
+  for (const m of text.matchAll(SUMMARY_LINE)) last = m;
+  if (last !== null) return last;
   for (const m of text.matchAll(SUMMARY)) last = m;
   return last;
 }
