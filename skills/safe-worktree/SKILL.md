@@ -23,6 +23,11 @@ of it. What is left is below.
    it before the worktree is removed. Two agents on one local database is how one agent's
    reset lands under another's test run.
 
+This card covers the tree and the shared local services above, and stops there. The rest
+of the machine — scratch files in a path unique to the issue, and the ban on process-wide
+signals such as `pkill` and `killall` — is written once, on `agents/implementer.md` under
+`## Never`, so that the two cards cannot drift apart.
+
 ## B. While working
 
 5. **No destructive git.** `stash`, `reset --hard`, `checkout <file>`, `clean` delete
