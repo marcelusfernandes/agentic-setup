@@ -18,6 +18,34 @@
 // with the file that said it. What a file marks is what it prints, so the
 // volume is the suite's own choice and not this file's to cap.
 //
+// A note is everything the file marked, not its first line. A line that
+// begins with whitespace and follows a note line, or another such line, is
+// that note's continuation and is printed with the same prefix; the note
+// ends at the first line that is blank or unindented. That is the shape a
+// FAIL detail already uses in tests/lib/harness.mts, so an author writing a
+// note is not asked to learn a second one.
+//
+// The rejected alternative was to keep truncating at the first line and say
+// so here (#429). It lost on the merits. Both notes this repository writes
+// today flatten by hand — `.split('\n')[0]` in `classifyGhFailure` and in
+// the clone note of tests/provenance.test.mts — and what they drop is `gh`'s
+// or `git`'s own error, which is the whole reason the note exists. A rule
+// that an author has to pre-flatten to obey costs a line every time someone
+// forgets it, and the loss is silent, which is how #429 was found. The cost
+// of the rule chosen instead is stated rather than hidden: an indented line
+// that happens to sit directly under a note is printed too.
+//
+// The child's two streams are read separately for notes, never joined. A
+// child that ends its stdout without a newline used to have its stderr glued
+// onto that last line, so a note at the top of stderr began mid-line, no
+// longer started one, and was dropped with no sign of it. For the same
+// reason the summary matched below is removed from stdout before the note
+// scan: a file that writes its note without terminating the line leaves the
+// summary on that line, and this file's own protocol line must not reach the
+// log a second time riding inside a note. The failing branch still prints
+// both streams verbatim — there, the run's readers want what the child said,
+// in the order it said it.
+//
 // Takes an optional directory argument (default: this file's own directory)
 // so tests/run.test.mts can point it at a temp directory instead of tests/.
 import { spawnSync } from 'node:child_process';
@@ -41,11 +69,42 @@ const SUMMARY = /(\d+) passed, (\d+) failed/g;
  */
 const NOTE = /^note\s/;
 
+/** A note's continuation: an indented, non-empty line under the note it belongs to. */
+const CONTINUATION = /^\s+\S/;
+
 /** Returns the last "N passed, M failed" match in text, or null if there is none. */
-function lastSummary(text: string): { passed: number; failed: number } | null {
+function lastSummary(text: string): RegExpExecArray | null {
   let last: RegExpExecArray | null = null;
   for (const m of text.matchAll(SUMMARY)) last = m;
-  return last ? { passed: Number(last[1]), failed: Number(last[2]) } : null;
+  return last;
+}
+
+/**
+ * `stdout` with the summary this file reprints removed, from the match to the
+ * end of the line carrying it. A file that writes a note without terminating
+ * the line leaves the summary on that same line, and a note is not the place
+ * for a second copy of the one line this log's readers trust.
+ */
+function withoutSummary(stdout: string, match: RegExpExecArray | null): string {
+  if (match === null) return stdout;
+  const eol = stdout.indexOf('\n', match.index);
+  return stdout.slice(0, match.index) + (eol < 0 ? '' : stdout.slice(eol));
+}
+
+/**
+ * Prints the note lines in one stream of `file`'s output, continuation lines
+ * included, each on its own line under that file's name.
+ */
+function printNotes(file: string, text: string): void {
+  let inNote = false;
+  for (const line of text.split('\n')) {
+    if (NOTE.test(line)) inNote = true;
+    else if (!inNote || !CONTINUATION.test(line)) {
+      inNote = false;
+      continue;
+    }
+    console.log(`${file}: ${line}`);
+  }
 }
 
 let totalPassed = 0;
@@ -55,7 +114,8 @@ let anyFailed = false;
 for (const file of files) {
   const r = spawnSync(runtime, [join(dir, file)], { encoding: 'utf8' });
   const out = `${r.stdout}${r.stderr}`;
-  const summary = lastSummary(r.stdout ?? '');
+  const match = lastSummary(r.stdout ?? '');
+  const summary = match === null ? null : { passed: Number(match[1]), failed: Number(match[2]) };
 
   if (r.status !== 0) anyFailed = true;
 
@@ -72,9 +132,8 @@ for (const file of files) {
   if (r.status !== 0 || (summary && summary.failed > 0)) {
     process.stdout.write(out);
   } else {
-    for (const line of out.split('\n')) {
-      if (NOTE.test(line)) console.log(`${file}: ${line}`);
-    }
+    printNotes(file, withoutSummary(r.stdout ?? '', match));
+    printNotes(file, r.stderr ?? '');
   }
 }
 
