@@ -44,16 +44,34 @@
 // line *and* a real summary that only ends one, and the real summary has to
 // win. `p` is why the whole-line rank sits above ends-a-line: its stray ends
 // its line with the runtime parenthetical too, so nothing below that rank
-// separates them.
+// separates them. `n` is why a rank asks whether the summary ends its line
+// rather than whether the line ends there: a file whose own summary line
+// carries trailing whitespace is still writing a summary, and demanding a
+// bare end of line drops it under any stray that ends one cleanly.
 //
-// Three things the rule still lets through, none of them new here. A stray
-// that is a whole line of its own is indistinguishable from the protocol
-// line, so one written after the real summary is read instead of it. A file
-// that prints no summary at all but does write summary-shaped text is
-// reported by that text, as a *passing* file if the text says `0 failed`,
-// where it would otherwise be `CRASHED`. And whichever match is read is cut
-// out of the note scan below from the match to the end of its line, so on the
-// lowest rank that cut lands inside a note and truncates it there. All three
+// What keeps this suite's own files clear of the lower ranks is not luck:
+// tests/lib/harness.mts writes exactly one thing to stdout, its summary
+// line. A `FAIL` and its indented detail go to stderr, and this file never
+// reads a summary from stderr (the `c` fixture pins that). So a case name or
+// a detail quoting a runner log cannot reach the ranking at all, whatever it
+// quotes. Under the rule this replaced — last match anywhere on stdout — the
+// same files were safe only because none of them happened to print one.
+//
+// Three things the rule still lets through, and one of them is half new. A
+// stray that is a whole line of its own is indistinguishable from the
+// protocol line, and is read instead of the real summary whether written
+// before or after it — after, because the last match of the top rank wins,
+// which is what the rule this replaced did too; before, when the real summary
+// is glued onto an unterminated note and so cannot reach the top rank, which
+// is new here and is the price of ranking over position. Position is the only
+// thing that could tell the two apart, and position is the rule that loses
+// the `g`, `j`, `k` and `p` fixtures, so this is a trade and not an
+// oversight. A file that prints no summary at all but does write
+// summary-shaped text is reported by that text, as a *passing* file if the
+// text says `0 failed`, where it would otherwise be `CRASHED`. And whichever
+// match is read is cut out of the note scan below from the match to the end
+// of its line, so on the lowest rank that cut lands inside a note and
+// truncates it there. All three
 // end at the same place: terminate the line, and the top rank applies.
 //
 // A note is everything the file marked, not its first line. A line that
@@ -135,9 +153,14 @@ const SUMMARY = /(\d+) passed, (\d+) failed/g;
 
 /**
  * What a summary may be followed by and still be the end of its line: the
- * runtime parenthetical this protocol's own line carries, or nothing.
+ * runtime parenthetical this protocol's own line carries, or nothing, and
+ * then whitespace. The trailing `\s*` is not cosmetic — a file whose summary
+ * line ends with a space is writing a summary, and a rule that demanded a
+ * bare end of line would drop it below any stray that ended one cleanly.
+ * `\s` cannot run past the line here: it is tested against a slice already
+ * cut at the next newline.
  */
-const SUMMARY_TAIL = /^(?: \([^()\n]*\))?$/;
+const SUMMARY_TAIL = /^(?: \([^()\n]*\))?\s*$/;
 
 /**
  * A line a test file means an operator to read even when the file passes:
