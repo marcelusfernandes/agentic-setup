@@ -18,23 +18,15 @@
 // live here and both the real tree and the synthetic repositories below go
 // through the same two functions.
 //
-// GitHub is a controlled `gh` fixture (a bash script first on PATH) for every
-// issue-closed case, the real tree's rows included. Nothing here calls the live
-// API unless asked: set `AGENTIC_PROVENANCE_LIVE_GH=1` and the real tree's
-// check runs against the `gh` on PATH; unset, it is skipped with a note naming
-// the variable. Ancestry is never opportunistic -- it needs no credentials,
-// only history, hence `fetch-depth: 0` in test.yml.
-//
-// That default is #356: the check used to shell out once per row of every
-// closeout -- 129 calls per run -- to a shared quota, and exhausting it failed
-// this file as `docs/closeout/M*.md is clean`, naming a file when the cause was
-// an HTTP status elsewhere. `docs/closeout/README.md` carries the rest, and the
-// cases below hold it to it.
-//
-// Third fail-open, with the other two below: with the opt-in set, a `gh` that
-// cannot answer -- a rate limit, a 5xx, no network -- is a note per row, not a
-// failure; a number that resolves to nothing stays red, and says so in words
-// that cannot be read as a rate limit. `classifyGhFailure` tells them apart.
+// This file asks nothing of GitHub. What it holds is the format, the ancestry
+// and the prose: a closeout's own text, and `git merge-base --is-ancestor`,
+// which needs no credentials, only history -- hence `fetch-depth: 0` in
+// test.yml. The half that needs an answer from outside the checkout -- whether
+// #123 is closed, and whether a `## Left out` bullet accounts for something
+// that shipped -- is `tests/provenance-issues.test.mts`, split out of this file
+// by #422 and opt-in behind `AGENTIC_PROVENANCE_LIVE_GH` (#356). The two files
+// parse a closeout separately and on purpose: invariant 10, a pin that imports
+// what it pins cannot catch it drifting.
 //
 // One more fail-open, stated here so it is not discovered in a log: the
 // shallow-checkout case below needs `git clone --depth 1` to work in the
@@ -49,7 +41,7 @@
 // not carry is a red the overlay reproduces. The synthetic cases carry their
 // own parser and repositories, so they prove the parser, not the base.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, cleanup, commit, finish, git, ROOT, tempRepo } from './lib/harness.mts';
@@ -87,6 +79,26 @@ type Parsed = {
   sha: string;
   rows: Row[];
 };
+
+/**
+ * The bullets of a prose section: each `- ` line joined with the indented
+ * continuation lines under it. Mirrors `bulletsOf` in
+ * `scripts/close-milestone.mts`, written out rather than imported because a
+ * pin that reuses the thing it pins cannot catch that thing drifting
+ * (invariant 10), and because a script may not import from `tests/`
+ * (invariant 6). `docs/closeout/README.md`, "Format", is the one statement
+ * both are written from. Until #341 both read a bullet's first line only,
+ * while the README and the script's own header said "any `#N` in a bullet".
+ */
+function bulletsOf(lines: string[]): string[] {
+  const bullets: string[] = [];
+  for (const line of lines) {
+    const text = line.trim();
+    if (text.startsWith('- ')) bullets.push(text);
+    else if (text !== '' && bullets.length > 0 && /^\s/.test(line)) bullets[bullets.length - 1] += ` ${text}`;
+  }
+  return bullets;
+}
 
 /** Splits one markdown table line into trimmed cells, or null if it is not one. */
 function cells(line: string): string[] | null {
@@ -190,8 +202,8 @@ function parseCloseout(raw: string): Parsed {
   }
 
   // Both prose sections carry at least one bullet; "none" is written out, not omitted.
-  const leftOut = lines.slice(at[1] + 1, at[2]).filter((l) => l.trim().startsWith('- '));
-  const dogfood = lines.slice(at[2] + 1).filter((l) => l.trim().startsWith('- '));
+  const leftOut = bulletsOf(lines.slice(at[1] + 1, at[2]));
+  const dogfood = bulletsOf(lines.slice(at[2] + 1));
   if (leftOut.length === 0) errors.push('`## Left out` needs at least one bullet (`- None — <why>` when nothing was left out)');
   if (dogfood.length === 0) errors.push('`## Dogfood` needs at least one bullet (`- None needed — <why>` when no report was)');
 
@@ -213,84 +225,6 @@ type Audit = { errors: string[]; notes: string[]; files: string[] };
 export const EMPTY_TEMPLATE_MESSAGE = "still the empty template — a milestone's closeout must be filled in";
 /** The pin's note when there is no closeout file to check at all. */
 export const NO_CLOSEOUT_MESSAGE = 'no docs/closeout/M<n>.md yet — the provenance pin has nothing to check';
-
-// --- the issue-closed check's source ---------------------------------------
-// The one half of this pin needing an answer from outside the checkout:
-// ancestry is git and git is here, but whether #123 is closed is not. Since
-// #356 that answer is a value, chosen once and passed in, so the default run
-// asks nothing and the synthetic cases keep the fixture they already had.
-
-/** The environment variable that opts the real tree back into a live `gh`. */
-export const LIVE_GH_ENV = 'AGENTIC_PROVENANCE_LIVE_GH';
-/** The note the default (offline) source leaves, once, naming the opt-in. */
-export const OFFLINE_MESSAGE =
-  `the issue-closed check was skipped — it asks GitHub, and the required suite does not: set ${LIVE_GH_ENV}=1 to run it`;
-/** The note a `gh` that cannot authenticate leaves, once. */
-export const UNAUTHENTICATED_MESSAGE = 'gh is absent or unauthenticated — the issue-closed check was skipped';
-
-/**
- * What one issue lookup can answer, and the distinction that is the point of
- * #356: `state` is the record being checked, `no-such-issue` is the record
- * being wrong, and `unavailable` is the API declining to answer — which says
- * nothing about the record and must never be reported as if it did. `gh` gives
- * the last two the same shape (exit 1, one `GraphQL: ...` line on stderr).
- */
-type IssueLookup =
-  | { kind: 'state'; state: string }
-  | { kind: 'no-such-issue'; detail: string }
-  | { kind: 'unavailable'; detail: string };
-
-/** Either a working lookup, or the whole check skipped once with a reason. */
-type IssueSource =
-  | { kind: 'lookup'; lookup: (issue: number) => IssueLookup }
-  | { kind: 'skipped'; reason: string };
-
-/**
- * `gh`'s wording when a number resolves to nothing, taken from the real CLI:
- * `GraphQL: Could not resolve to an issue or pull request with the number of
- * N. (repository.issue)`. Everything else it can fail with — a rate limit, a
- * 5xx, no network, a timeout — is the API declining to answer, so this is a
- * list of one: a wording that drifts costs a skip, never a false red.
- */
-const NO_SUCH_ISSUE = /could not resolve to an? (issue|pull ?request)/i;
-
-/** Reads one failed `gh issue view` and says which of the two failures it is. */
-export function classifyGhFailure(stderr: string): { kind: 'no-such-issue' | 'unavailable'; detail: string } {
-  const detail = stderr.trim().split('\n')[0] || 'no output';
-  return { kind: NO_SUCH_ISSUE.test(stderr) ? 'no-such-issue' : 'unavailable', detail };
-}
-
-/** A source that answers nothing and says why, without spawning anything. */
-const skippedIssueSource = (reason: string): IssueSource => ({ kind: 'skipped', reason });
-
-/**
- * A source backed by whatever `gh` is on PATH — the controlled fixture in the
- * synthetic cases below, the real CLI only where the opt-in asked for it. The
- * `gh auth status` probe happens here, so a skipped source spawns nothing.
- */
-function ghIssueSource(repo: string, env: Env): IssueSource {
-  if (run('gh', ['auth', 'status'], repo, env).status !== 0) return skippedIssueSource(UNAUTHENTICATED_MESSAGE);
-  return {
-    kind: 'lookup',
-    lookup: (issue: number): IssueLookup => {
-      const r = run('gh', ['issue', 'view', String(issue), '--json', 'state'], repo, env);
-      if (r.status !== 0) return classifyGhFailure(r.stderr);
-      try {
-        return { kind: 'state', state: String(JSON.parse(r.stdout).state ?? '') };
-      } catch {
-        // An exit of 0 carrying no JSON is the CLI failing to answer, not the
-        // record failing: `unavailable`, like a rate limit.
-        return { kind: 'unavailable', detail: 'gh exited 0 but returned no JSON state' };
-      }
-    },
-  };
-}
-
-/** The source the real tree gets: offline unless `LIVE_GH_ENV` asks otherwise. */
-export function issueSourceFor(repo: string, env: Env): IssueSource {
-  if ((env[LIVE_GH_ENV] ?? '') !== '1') return skippedIssueSource(OFFLINE_MESSAGE);
-  return ghIssueSource(repo, env);
-}
 
 /** Runs git in a repository without throwing: returns its status and output. */
 function run(cmd: string, args: string[], cwd: string, env: Env) {
@@ -318,12 +252,10 @@ function ancestry(repo: string, sha: string, ref: string, env: Env): 'ancestor' 
  * Reads every docs/closeout/M<n>.md under repo and reports what does not hold.
  * Errors fail the build; notes say what could not be checked and why.
  *
- * `issues` is where the issue-closed half gets its answers. Left out, it is a
- * `gh` on PATH — the controlled fixture for every synthetic case below, which
- * is why they read unchanged. The real tree passes one explicitly (#356),
- * because there `gh` would be the live CLI.
+ * Whether the issues it names are closed is not asked here: that needs GitHub,
+ * and `tests/provenance-issues.test.mts` is where it is asked (#422).
  */
-function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audit {
+function audit(repo: string, env: Env = process.env): Audit {
   const errors: string[] = [];
   const notes: string[] = [];
   const dir = join(repo, 'docs', 'closeout');
@@ -343,9 +275,6 @@ function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audi
     errors.push('no main ref to check ancestry against (tried origin/main, main, HEAD)');
     return { errors, notes, files };
   }
-
-  const source = issues ?? ghIssueSource(repo, env);
-  if (source.kind === 'skipped') notes.push(source.reason);
 
   for (const file of files) {
     const parsed = parseCloseout(readFileSync(join(dir, file), 'utf8'));
@@ -369,19 +298,6 @@ function audit(repo: string, env: Env = process.env, issues?: IssueSource): Audi
       const a = ancestry(repo, row.sha, ref, env);
       if (a === 'unknown') errors.push(`${file}: merge commit ${row.sha} for #${row.issue} is not a commit in this repository`);
       else if (a === 'not-ancestor') errors.push(`${file}: merge commit ${row.sha} for #${row.issue} is not an ancestor of ${ref}`);
-      if (source.kind !== 'lookup') continue;
-      const answer = source.lookup(row.issue);
-      // The API declining to answer is not evidence about the record: a note
-      // naming the row and what was said, so it reads as "not checked".
-      if (answer.kind === 'unavailable') {
-        notes.push(`${file}: the issue-closed check was skipped for #${row.issue} — ${answer.detail}`);
-        continue;
-      }
-      if (answer.kind === 'no-such-issue') {
-        errors.push(`${file}: #${row.issue} resolves to no issue or pull request — the row is wrong, not the API: ${answer.detail}`);
-        continue;
-      }
-      if (answer.state !== 'CLOSED') errors.push(`${file}: #${row.issue} is listed as shipped but is ${answer.state}`);
     }
   }
   return { errors, notes, files };
@@ -442,109 +358,68 @@ if (!existsSync(readmePath)) {
     /issue order/.test(readme) && /ascending/.test(readme),
     readme.slice(-600),
   );
+
+  // #422. The grammar gained the three sentences the sweep turns on, and the
+  // README is where both parsers are written from, so the pin reads them here
+  // rather than trusting either parser to agree with itself.
+  check(
+    'README.md says a `#N` anywhere in a `## Left out` bullet counts, continuation lines included',
+    /continuation line/.test(readme) && /anywhere in (a|the) .?## Left out/.test(readme),
+    readme.slice(-2400),
+  );
+  check(
+    'README.md separates a bullet mentioning an issue from a bullet accounting for it',
+    /accounts for/.test(readme) && /cross-reference/.test(readme) && /opens the bullet/.test(readme),
+    readme.slice(-2400),
+  );
+  check(
+    'README.md states the shipped rule and the snapshot clause that bounds it',
+    /snapshot/.test(readme) && /merged pull request/.test(readme) && /main SHA/.test(readme),
+    readme.slice(-2400),
+  );
+  check(
+    'README.md names the three refusal codes the close raises over a closeout',
+    ['evidence:issue-missing', 'evidence:left-out-shipped', 'evidence:row-open'].every((code) => readme.includes(code)),
+    readme.slice(-2400),
+  );
+  check(
+    'README.md names the split file that asks GitHub',
+    /tests\/provenance-issues\.test\.mts/.test(readme),
+    readme.slice(0, 400),
+  );
+  check(
+    'README.md says when a closeout may cite a dogfood report older than its own phase',
+    /dogfood/i.test(readme) && /predates|older than|earlier than/.test(readme),
+    readme.slice(-2400),
+  );
+  check(
+    'README.md says why a closeout file carries no dated filename',
+    /dated filename|no date in (its|the) filename/.test(readme),
+    readme.slice(-2400),
+  );
 }
 
+// #298, sharpened by #422: the empty-template refusal had three wordings, two
+// of which say the same thing in two files. They are one sentence now, written
+// out in both places because neither may import the other (invariants 6 and
+// 10) -- so this pin reads the script's source and holds it to the string
+// above. The third wording, the half-filled error, is a different fact and
+// keeps its own words.
+const closeMilestoneSource = readFileSync(join(ROOT, 'scripts', 'close-milestone.mts'), 'utf8');
+check(
+  'scripts/close-milestone.mts refuses the unfilled template in the pin\'s own words',
+  closeMilestoneSource.includes(EMPTY_TEMPLATE_MESSAGE),
+  EMPTY_TEMPLATE_MESSAGE,
+);
+
 // AC2: the real tree is clean; with no closeout file yet it passes with a note.
-const real = audit(ROOT, process.env, issueSourceFor(ROOT, process.env));
+const real = audit(ROOT);
 check(`docs/closeout/M*.md is clean (${real.files.length} file(s))`, real.errors.length === 0, real.errors.join('\n'));
 for (const note of real.notes) console.error(`note  provenance: ${note}`);
 
-// #356: the default run asks GitHub nothing. The issue-closed half used to
-// shell out once per row of every closeout -- 129 calls against a shared,
-// exhaustible quota, from a unit test in the required `test` suite. It is
-// opt-in now and the note says so by name, so the case asserts the default --
-// and the opposite when the run itself asked for the live check.
-if ((process.env[LIVE_GH_ENV] ?? '') === '1') {
-  check(
-    `the real-tree audit runs the issue-closed check when ${LIVE_GH_ENV}=1`,
-    !real.notes.includes(OFFLINE_MESSAGE),
-    real.notes.join('\n'),
-  );
-} else {
-  check(
-    'the real-tree audit does not call GitHub by default, and the note names the opt-in',
-    real.notes.includes(OFFLINE_MESSAGE) && /AGENTIC_PROVENANCE_LIVE_GH/.test(OFFLINE_MESSAGE),
-    real.notes.join('\n'),
-  );
-}
-check(
-  'without the opt-in the source is skipped, so nothing is spawned to ask',
-  issueSourceFor(ROOT, { ...process.env, [LIVE_GH_ENV]: '' }).kind === 'skipped',
-  issueSourceFor(ROOT, { ...process.env, [LIVE_GH_ENV]: '' }).kind,
-);
-
 // --- synthetic repositories ------------------------------------------------
-// A fake `gh` first on PATH: every issue is CLOSED except the numbers in
-// FAKE_GH_OPEN; #9999999 does not exist -- a sentinel above every issue this
-// repository has, because the real tree's own rows go through this fixture now
-// and a low one would collide (M6.md lists #99); FAKE_GH_AUTH=fail is the
-// unauthenticated runner; and FAKE_GH_FAIL is the message a refusing API
-// answers with -- a rate limit, a 5xx, a network error -- on stderr with a
-// non-zero exit, the shape gh gives a missing issue too (#356).
-const FAKE_GH = `#!/usr/bin/env bash
-case "\${1:-} \${2:-}" in
-  "auth status")
-    [ "\${FAKE_GH_AUTH:-ok}" = "fail" ] && { echo "not logged in" >&2; exit 1; }
-    exit 0 ;;
-  "issue view")
-    n="$3"
-    if [ -n "\${FAKE_GH_FAIL:-}" ]; then echo "\$FAKE_GH_FAIL" >&2; exit 1; fi
-    if [ "$n" = "9999999" ]; then echo "GraphQL: Could not resolve to an issue or pull request with the number of 9999999. (repository.issue)" >&2; exit 1; fi
-    for open in \${FAKE_GH_OPEN:-}; do
-      if [ "$open" = "$n" ]; then echo '{"state":"OPEN"}'; exit 0; fi
-    done
-    echo '{"state":"CLOSED"}'
-    exit 0 ;;
-esac
-echo "unexpected gh call: $*" >&2
-exit 1
-`;
-
-const bin = mkdtempSync(join(tmpdir(), 'agentic-gh-'));
-cleanup(() => spawnSync('rm', ['-rf', bin]));
-writeFileSync(join(bin, 'gh'), FAKE_GH);
-chmodSync(join(bin, 'gh'), 0o755);
-const withGh: Env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
-
-// The opt-in half of #356, proved against the fixture rather than the network:
-// with LIVE_GH_ENV set the source is a lookup against whatever PATH offers.
-check(
-  'with the opt-in set, the source is a lookup against the gh on PATH',
-  issueSourceFor(ROOT, { ...withGh, [LIVE_GH_ENV]: '1' }).kind === 'lookup',
-  issueSourceFor(ROOT, { ...withGh, [LIVE_GH_ENV]: '1' }).kind,
-);
-
-// AC4 of #356: determinism must not cost the check its reach. These two run
-// the real tree's own closeout rows -- the rows the live call used to read --
-// through the issue-closed check with the fixture answering, so the real record
-// is exercised and not a one-row synthetic document. The first is the clean
-// case; the second picks a real row and has the fixture call that issue open,
-// the defect the live call existed to catch.
-const realWithFixture = audit(ROOT, withGh);
-check(
-  "the real tree's closeout rows pass the issue-closed check against the fixture",
-  realWithFixture.errors.length === 0,
-  realWithFixture.errors.join('\n'),
-);
-
-const realRow = (() => {
-  for (const file of realWithFixture.files) {
-    const parsed = parseCloseout(readFileSync(join(closeoutDir, file), 'utf8'));
-    if (parsed.errors.length === 0 && parsed.rows.length > 0) return { file, issue: parsed.rows[0].issue };
-  }
-  return null;
-})();
-if (!realRow) {
-  console.error('note  provenance: no filled closeout row to run the open-issue fixture over, case skipped');
-} else {
-  const realOpen = audit(ROOT, { ...withGh, FAKE_GH_OPEN: String(realRow.issue) });
-  check(
-    `a real closeout row whose issue is open fails (${realRow.file} #${realRow.issue})`,
-    realOpen.errors.some((e) => e.includes(`#${realRow.issue}`) && e.includes('OPEN')),
-    realOpen.errors.join('\n'),
-  );
-}
-
+// Every case here is offline: a real git repository, a written closeout and the
+// parser above. Nothing spawns `gh`.
 /** A repository with one merged commit on main and one commit on a side branch. */
 function fixtureRepo(): { repo: string; mainSha: string; sideSha: string } {
   const repo = tempRepo();
@@ -588,14 +463,14 @@ ${table}
 
 const good = fixtureRepo();
 writeCloseout(good.repo, 'M1.md', closeout('1', good.mainSha, [[1, 11, good.mainSha]]));
-const goodAudit = audit(good.repo, withGh);
+const goodAudit = audit(good.repo);
 check('a closeout whose sha is on main and whose issue is closed passes', goodAudit.errors.length === 0, goodAudit.errors.join('\n'));
 check('a passing closeout leaves no note', goodAudit.notes.length === 0, goodAudit.notes.join('\n'));
 check('the passing closeout was actually read', goodAudit.files.join(',') === 'M1.md', goodAudit.files.join(','));
 
 const sideBranch = fixtureRepo();
 writeCloseout(sideBranch.repo, 'M1.md', closeout('1', sideBranch.mainSha, [[2, 12, sideBranch.sideSha]]));
-const sideAudit = audit(sideBranch.repo, withGh);
+const sideAudit = audit(sideBranch.repo);
 check(
   'a merge sha that is only on a side branch fails as not an ancestor',
   sideAudit.errors.some((e) => e.includes(sideBranch.sideSha) && e.includes('not an ancestor')),
@@ -605,7 +480,7 @@ check(
 const invented = fixtureRepo();
 const INVENTED_SHA = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 writeCloseout(invented.repo, 'M1.md', closeout('1', invented.mainSha, [[1, 11, INVENTED_SHA]]));
-const inventedAudit = audit(invented.repo, withGh);
+const inventedAudit = audit(invented.repo);
 check(
   'an invented merge sha fails as not a commit in this repository',
   inventedAudit.errors.some((e) => e.includes(INVENTED_SHA) && e.includes('not a commit')),
@@ -614,89 +489,34 @@ check(
 
 const anchor = fixtureRepo();
 writeCloseout(anchor.repo, 'M1.md', closeout('1', anchor.sideSha, [[1, 11, anchor.mainSha]]));
-const anchorAudit = audit(anchor.repo, withGh);
+const anchorAudit = audit(anchor.repo);
 check(
   'the header main SHA is held to the same ancestry rule as the rows',
   anchorAudit.errors.some((e) => e.includes('main SHA') && e.includes('not an ancestor')),
   anchorAudit.errors.join('\n'),
 );
 
-const openIssue = fixtureRepo();
-writeCloseout(openIssue.repo, 'M1.md', closeout('1', openIssue.mainSha, [[1, 11, openIssue.mainSha]]));
-const openAudit = audit(openIssue.repo, { ...withGh, FAKE_GH_OPEN: '1' });
-check(
-  'a listed issue that is still open fails',
-  openAudit.errors.some((e) => e.includes('#1') && e.includes('OPEN')),
-  openAudit.errors.join('\n'),
-);
-
-const missingIssue = fixtureRepo();
-writeCloseout(missingIssue.repo, 'M1.md', closeout('1', missingIssue.mainSha, [[9999999, 11, missingIssue.mainSha]]));
-const missingAudit = audit(missingIssue.repo, withGh);
-check(
-  'an issue gh cannot resolve fails rather than passing silently',
-  missingAudit.errors.some((e) => e.includes('#9999999') && e.includes('resolves to no issue')),
-  missingAudit.errors.join('\n'),
-);
-
-// #356: the two failures gh reports identically -- non-zero, one GraphQL line
-// on stderr -- are different answers. A rate limit is the API declining to
-// answer and proves nothing about the record, so it is a note; a number that
-// resolves to nothing is a defect in the closeout, so it stays red.
-const RATE_LIMITED = 'GraphQL: API rate limit already exceeded';
-const rateLimited = fixtureRepo();
-writeCloseout(rateLimited.repo, 'M1.md', closeout('1', rateLimited.mainSha, [[1, 11, rateLimited.mainSha]]));
-const rateLimitedAudit = audit(rateLimited.repo, { ...withGh, FAKE_GH_FAIL: RATE_LIMITED });
-check(
-  'an API that declines to answer is skipped, not failed',
-  rateLimitedAudit.errors.length === 0,
-  rateLimitedAudit.errors.join('\n'),
-);
-check(
-  'the skip says which issue it could not check and what the API said',
-  rateLimitedAudit.notes.some((n) => n.includes('#1') && n.includes(RATE_LIMITED)),
-  rateLimitedAudit.notes.join('\n'),
-);
-
-// The wording is gh's own, from `gh issue view <missing> --json state` against
-// this repository: the classifier is held to what the real CLI prints
-// (invariant 10 -- the pin writes the shape out rather than importing it).
-const NO_SUCH_ISSUE_STDERR =
-  'GraphQL: Could not resolve to an issue or pull request with the number of 9999999. (repository.issue)';
-const noSuchIssue = fixtureRepo();
-writeCloseout(noSuchIssue.repo, 'M1.md', closeout('1', noSuchIssue.mainSha, [[1, 11, noSuchIssue.mainSha]]));
-const noSuchIssueAudit = audit(noSuchIssue.repo, { ...withGh, FAKE_GH_FAIL: NO_SUCH_ISSUE_STDERR });
-check(
-  'a row naming an issue that resolves to nothing stays a failure, not a skip',
-  // ...and says so in words a reader cannot mistake for an availability
-  // problem: "could not answer" is what `unavailable` means, and the whole
-  // point of the split is that these two do not read alike.
-  noSuchIssueAudit.errors.some((e) => e.includes('#1') && e.includes('resolves to no issue') && !/could not answer|rate limit/i.test(e)),
-  noSuchIssueAudit.errors.join('\n'),
-);
-
-const noGh = fixtureRepo();
-writeCloseout(noGh.repo, 'M1.md', closeout('1', noGh.mainSha, [[1, 11, noGh.mainSha]]));
-const noGhAudit = audit(noGh.repo, { ...withGh, FAKE_GH_AUTH: 'fail', FAKE_GH_OPEN: '1' });
-check('an unauthenticated gh skips the issue check instead of failing', noGhAudit.errors.length === 0, noGhAudit.errors.join('\n'));
-check(
-  'an unauthenticated gh says on stderr what was skipped',
-  noGhAudit.notes.some((n) => /gh is absent or unauthenticated/.test(n)),
-  noGhAudit.notes.join('\n'),
-);
-
-// A checkout with neither origin/main nor main still has HEAD, the last of the
-// three refs resolveMainRef tries; the pin runs there instead of refusing.
 const headOnly = fixtureRepo();
 git(['checkout', '-q', '-b', 'trunk'], headOnly.repo);
 git(['branch', '-D', 'main'], headOnly.repo);
 writeCloseout(headOnly.repo, 'M1.md', closeout('1', headOnly.mainSha, [[1, 11, headOnly.mainSha]]));
-const headOnlyAudit = audit(headOnly.repo, withGh);
+const headOnlyAudit = audit(headOnly.repo);
 check(
   'a checkout with neither origin/main nor main falls back to HEAD',
   headOnlyAudit.errors.length === 0,
   headOnlyAudit.errors.join('\n'),
 );
+
+// #341: a bullet is the `- ` line and the indented lines under it, so a
+// `## Left out` entry written over three lines is one bullet, not one bullet
+// and two stray lines -- and a section whose only bullet wraps is not empty.
+const wrapped = parseCloseout(
+  closeout('1', 'a'.repeat(40), [[1, 11, 'b'.repeat(40)]]).replace(
+    '- Nothing \u2014 every issue shipped.',
+    '- The phase cut work that had no owner, and the list it was checked\n  against names #2 and #3 among them.',
+  ),
+);
+check('a `## Left out` bullet wrapped over three lines parses as one bullet', wrapped.errors.length === 0, wrapped.errors.join('\n'));
 
 const outOfOrder = fixtureRepo();
 writeCloseout(
@@ -704,7 +524,7 @@ writeCloseout(
   'M1.md',
   closeout('1', outOfOrder.mainSha, [[2, 12, outOfOrder.mainSha], [1, 11, outOfOrder.mainSha]]),
 );
-const outOfOrderAudit = audit(outOfOrder.repo, withGh);
+const outOfOrderAudit = audit(outOfOrder.repo);
 check(
   'rows out of ascending issue order fail, naming both rows',
   outOfOrderAudit.errors.some((e) => e.includes(outOfOrderMessage(2, 1))),
@@ -717,7 +537,7 @@ writeCloseout(
   'M1.md',
   closeout('1', duplicateRow.mainSha, [[1, 11, duplicateRow.mainSha], [1, 12, duplicateRow.mainSha]]),
 );
-const duplicateAudit = audit(duplicateRow.repo, withGh);
+const duplicateAudit = audit(duplicateRow.repo);
 check(
   'the same issue listed twice fails the ascending order rule',
   duplicateAudit.errors.some((e) => e.includes(outOfOrderMessage(1, 1))),
@@ -725,7 +545,7 @@ check(
 );
 
 const empty = fixtureRepo();
-const emptyAudit = audit(empty.repo, withGh);
+const emptyAudit = audit(empty.repo);
 check('a tree with no closeout file passes', emptyAudit.errors.length === 0, emptyAudit.errors.join('\n'));
 check(
   'a tree with no closeout file leaves a note on stderr',
@@ -735,7 +555,7 @@ check(
 
 const unparsed = fixtureRepo();
 writeCloseout(unparsed.repo, 'M1.md', closeout('1', unparsed.mainSha, [[1, 11, unparsed.mainSha]]).replace('## Dogfood', '## Reports'));
-const unparsedAudit = audit(unparsed.repo, withGh);
+const unparsedAudit = audit(unparsed.repo);
 check(
   'a closeout missing a required section fails to parse',
   unparsedAudit.errors.some((e) => e.includes('## Dogfood')),
@@ -744,7 +564,7 @@ check(
 
 const mismatch = fixtureRepo();
 writeCloseout(mismatch.repo, 'M2.md', closeout('3', mismatch.mainSha, [[1, 11, mismatch.mainSha]]));
-const mismatchAudit = audit(mismatch.repo, withGh);
+const mismatchAudit = audit(mismatch.repo);
 check(
   'a heading that names another milestone than the filename fails',
   mismatchAudit.errors.some((e) => e.includes('M3') && e.includes('M2.md')),
@@ -753,7 +573,7 @@ check(
 
 const halfFilled = fixtureRepo();
 writeCloseout(halfFilled.repo, 'M1.md', closeout('1', halfFilled.mainSha, [[1, 11, halfFilled.mainSha]]).replace('- Closed (UTC): 2026-09-17', '- Closed (UTC): <YYYY-MM-DD>'));
-const halfAudit = audit(halfFilled.repo, withGh);
+const halfAudit = audit(halfFilled.repo);
 check(
   'a half-filled closeout (a placeholder left among real rows) fails',
   halfAudit.errors.some((e) => e.includes('placeholder')),
@@ -762,7 +582,7 @@ check(
 
 const stillTemplate = fixtureRepo();
 writeCloseout(stillTemplate.repo, 'M1.md', existsSync(templatePath) ? readFileSync(templatePath, 'utf8') : '# Closeout M<n> — <milestone title>\n');
-const templateAudit = audit(stillTemplate.repo, withGh);
+const templateAudit = audit(stillTemplate.repo);
 check(
   'a milestone file left as the unfilled template fails',
   templateAudit.errors.some((e) => e.includes(EMPTY_TEMPLATE_MESSAGE)),
@@ -782,7 +602,7 @@ if (clone.status !== 0) {
   console.error(`note  provenance: shallow clone unavailable, case skipped: ${clone.stderr.trim().split('\n')[0]}`);
 } else {
   writeCloseout(join(shallowDir, 'repo'), 'M1.md', closeout('1', shallow.mainSha, [[1, 11, shallow.mainSha]]));
-  const shallowAudit = audit(join(shallowDir, 'repo'), withGh);
+  const shallowAudit = audit(join(shallowDir, 'repo'));
   check(
     'a shallow checkout fails with the fetch-depth remedy instead of guessing',
     shallowAudit.errors.some((e) => /shallow/.test(e) && /fetch-depth: 0/.test(e)),

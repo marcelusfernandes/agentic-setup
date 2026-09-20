@@ -131,6 +131,39 @@ for (let i = 1; i < args.length; i++) {
 }
 if (path === null) die('fake-gh: no path in: ' + args.join(' '));
 
+// gh api graphql -F owner={owner} -F name={repo} -f query=<one alias per issue>
+//
+// facts.json is keyed by issue number: "none" resolves to nothing, otherwise
+// { state, pr, sha }. A number not named there is a closed issue with no pull
+// request. The real CLI prints the answers it does have and exits 1 when any
+// alias failed, so this does too: a partial body is not a failure to answer.
+if (path === 'graphql') {
+  if (process.env.FAKE_GH_GRAPHQL_FAIL) die(process.env.FAKE_GH_GRAPHQL_FAIL);
+  const query = String(fields.query ?? '');
+  const numbers = [...query.matchAll(/i(\d+): issueOrPullRequest\(number: (\d+)\)/g)].map((m) => Number(m[2]));
+  if (numbers.length === 0) die('fake-gh: graphql query names no issue: ' + query);
+  const facts = read('facts.json', {});
+  const data = {};
+  const errors = [];
+  for (const n of numbers) {
+    const fact = facts[String(n)];
+    if (fact === 'none') {
+      data['i' + n] = null;
+      errors.push({ type: 'NOT_FOUND', message: 'Could not resolve to an issue or pull request with the number of ' + n + '.' });
+      continue;
+    }
+    const nodes = fact && fact.pr ? [{ number: fact.pr, state: 'MERGED', mergeCommit: { oid: fact.sha } }] : [];
+    data['i' + n] = { __typename: 'Issue', state: (fact && fact.state) || 'CLOSED', closedByPullRequestsReferences: { nodes } };
+  }
+  const body = JSON.stringify(errors.length > 0 ? { data: { repository: data }, errors } : { data: { repository: data } });
+  if (errors.length > 0) {
+    process.stdout.write(body + '\n');
+    process.stderr.write('gh: ' + errors[0].message + '\n');
+    process.exit(1);
+  }
+  out(body);
+}
+
 const milestone = path.match(/^repos\/\{owner\}\/\{repo\}\/milestones\/(\d+)$/);
 if (milestone) {
   const n = Number(milestone[1]);
@@ -222,7 +255,7 @@ function goodRepo(): Fixture {
 // `title` is the milestone title the fake `gh` answers issue lists for: the
 // issue lists are keyed by it, so a case that renames the milestone renames
 // the key too and a script asking for another milestone gets nothing.
-type State = { milestone?: unknown; title?: string; open?: number[]; closed?: number[] };
+type State = { milestone?: unknown; title?: string; open?: number[]; closed?: number[]; facts?: Record<string, unknown> };
 
 function stateDir(state: State = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'agentic-close-state-'));
@@ -237,6 +270,7 @@ function stateDir(state: State = {}): string {
     join(dir, 'issues.json'),
     JSON.stringify({ [title]: { open: state.open ?? [], closed: state.closed ?? [1] } }),
   );
+  writeFileSync(join(dir, 'facts.json'), JSON.stringify(state.facts ?? {}));
   return dir;
 }
 
@@ -645,6 +679,120 @@ check(
   'an unusable TMPDIR failed at the write, every check before it having passed',
   v.log.split('\n').some((line) => line.startsWith('issue list ') && line.includes('--state closed')),
   v.log,
+);
+
+// --- W: a `#N` on a bullet's continuation line is collected (#341) ----------
+// Both directions, because a parser that collected the whole section would
+// pass the first half and fail the second. Red on the base: `:232` filtered
+// `## Left out` to lines whose `trim()` starts with `- `, so a reference one
+// line further down was invisible to the check whose job is to notice an issue
+// nobody wrote down. `docs/closeout/README.md` and the script header both said
+// otherwise; measured, the code was the one that was wrong.
+const WRAPPED = '- The phase cut work that had no owner before it closed, and the list it was\n  checked against names #2 among them.';
+const wRepo = fixture();
+land(wRepo.repo, { [EVIDENCE]: closeout('14', wRepo.landed, [[1, 11, wRepo.landed]], WRAPPED) }, 'docs(docs): closeout M14 (#174)');
+const w = run(wRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2] });
+check('a closed issue named only on a bullet continuation line closes the milestone', w.status === 0 && parse(w.stdout)?.closed === TITLE, w.stdout);
+
+const wGone = fixture();
+land(wGone.repo, { [EVIDENCE]: closeout('14', wGone.landed, [[1, 11, wGone.landed]], WRAPPED.replace('names #2 among them', 'is in the milestone description')) }, 'docs(docs): closeout M14 (#174)');
+refuses('the same closeout with that issue absent altogether', run(wGone.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2] }), 'evidence:issue-missing');
+
+// --- X: the `## Dogfood` reader answers the same question the same way ------
+// `DOGFOOD_REPORT_RE` matches anywhere in a bullet, so the first-line-only
+// filter at `:233` was the only thing hiding a wrapped report path.
+const xRepo = fixture();
+const xMerged = land(xRepo.repo, { 'ci/scope-check.mts': '// a mechanism change\n' }, 'feat(ci): change the mechanism (#1)');
+land(
+  xRepo.repo,
+  { [EVIDENCE]: closeout('14', xMerged, [[1, 11, xMerged]], '- None — every issue shipped.', '- The pass that ran this phase is recorded in\n  [`docs/dogfood/2026-09-17.md`](../dogfood/2026-09-17.md) — what it found.') },
+  'docs(docs): closeout M14 (#174)',
+);
+check('a dogfood report named on a bullet continuation line satisfies the dogfood check', run(xRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE]).status === 0, EVIDENCE);
+
+// --- Y: table → state, the direction no code path asked (#381) --------------
+// The row says the issue shipped; an issue that is not closed did not. The
+// milestone holds no open issue — this one is open and outside it — so
+// `milestone:open-issues` cannot see it and the base closes.
+const y = run(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE], { facts: { 1: { state: 'OPEN' } } });
+refuses('a row naming an issue that is open and outside the milestone', y, 'evidence:row-open');
+check(
+  'that refusal names the row and its state, under its own code alone',
+  /#1 is OPEN/.test(parse(y.stdout)?.refused ?? '') && missingOf(y.stdout).join() === 'evidence:row-open',
+  y.stdout,
+);
+
+const y2 = run(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE], { facts: { 1: 'none' } });
+refuses('a row naming an issue that resolves to nothing', y2, 'evidence:row-open');
+check(
+  'a row that resolves to nothing reads as the row being wrong, not the API declining',
+  /names no issue/.test(parse(y2.stdout)?.refused ?? '') && !/rate limit|could not answer/i.test(parse(y2.stdout)?.refused ?? ''),
+  y2.stdout,
+);
+
+// --- Z: an API that cannot answer is `{ error }`, never a verdict -----------
+const z = close(goodRepo().repo, [String(MILESTONE), '--evidence', EVIDENCE], stateDir(), {
+  FAKE_GH_GRAPHQL_FAIL: 'gh: HTTP 403: API rate limit exceeded for installation',
+});
+check(
+  'a graphql call that cannot answer reports { error }, never { refused }, and wrote nothing',
+  z.status === 1 && typeof parse(z.stdout)?.error === 'string' && parse(z.stdout)?.refused === undefined && noWrite(z.log) && z.patch === null,
+  z.stdout,
+);
+
+// --- AA: a `## Left out` bullet that accounts for an issue that shipped -----
+// #298's D22: a closeout drafted while a run is still merging writes up as
+// left out the work that landed while it was being written. The bullet opens
+// with the number, so it is a claim about that issue, not a cross-reference.
+const aaRepo = fixture();
+land(aaRepo.repo, { [EVIDENCE]: closeout('14', aaRepo.landed, [[1, 11, aaRepo.landed]], '- #2 `feat(x): a thing` — did not ship in this phase.') }, 'docs(docs): closeout M14 (#174)');
+const aa = run(aaRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2], facts: { 2: { state: 'CLOSED', pr: 22, sha: aaRepo.landed } } });
+refuses('a `## Left out` bullet accounting for an issue that shipped', aa, 'evidence:left-out-shipped');
+check(
+  'that refusal names the issue and the pull request, under its own code alone',
+  /#2/.test(parse(aa.stdout)?.refused ?? '') && /PR #22/.test(parse(aa.stdout)?.refused ?? '') && missingOf(aa.stdout).join() === 'evidence:left-out-shipped',
+  aa.stdout,
+);
+
+// --- AB: the same bullet, for work that shipped after the `main SHA` --------
+// The closeout issue itself is the case the grammar requires: the pull request
+// closing it is the one landing this file, so it cannot be in the history the
+// file snapshots. One rule covers it and the phase's parent spec issue, rather
+// than a list of exceptions discovered one red at a time.
+const abRepo = fixture();
+const abLanded = land(abRepo.repo, { [EVIDENCE]: closeout('14', abRepo.landed, [[1, 11, abRepo.landed]], '- #2 `docs: closeout M14` — the issue this file answers.') }, 'docs(docs): closeout M14 (#174)');
+const ab = run(abRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2], facts: { 2: { state: 'CLOSED', pr: 22, sha: abLanded } } });
+check('a bullet naming an issue whose pull request merged after the `main SHA` closes', ab.status === 0, ab.stdout);
+
+// --- AC: a cross-reference to the file's own table, and the refusal paths ---
+// A number that is both a row and a bullet is the file explaining its own
+// table; `## Issues` is the stronger statement and wins. Then the three
+// paths #298 asked for as named outcomes rather than crashes: an issue that
+// resolves to nothing (case Y2 above), one closed with no pull request, and a
+// bullet carrying no number at all.
+const acRepo = fixture();
+land(
+  acRepo.repo,
+  { [EVIDENCE]: closeout('14', acRepo.landed, [[1, 11, acRepo.landed], [2, 12, acRepo.landed]], '- #1 and #2 are the same defect filed twice, and both shipped; the duplicate is\n  recorded rather than folded into one row.') },
+  'docs(docs): closeout M14 (#174)',
+);
+const acFacts = { 1: { state: 'CLOSED', pr: 11, sha: acRepo.landed }, 2: { state: 'CLOSED', pr: 12, sha: acRepo.landed } };
+check(
+  'a number that is both a row and a `## Left out` bullet closes the milestone',
+  run(acRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2], facts: acFacts }).status === 0,
+  EVIDENCE,
+);
+
+const adRepo = fixture();
+land(
+  adRepo.repo,
+  { [EVIDENCE]: closeout('14', adRepo.landed, [[1, 11, adRepo.landed]], '- #2 `spec: a phase` — closed as not planned; it ships no pull request.\n- Nothing else was left out.') },
+  'docs(docs): closeout M14 (#174)',
+);
+check(
+  'an issue closed with no pull request, and a bullet with no number, both close',
+  run(adRepo.repo, [String(MILESTONE), '--evidence', EVIDENCE], { closed: [1, 2], facts: { 2: { state: 'CLOSED' } } }).status === 0,
+  EVIDENCE,
 );
 
 finish();
