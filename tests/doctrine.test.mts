@@ -542,6 +542,51 @@ check('#336 AC4 the template gives the reason an appended line cannot serve it',
 check('#336 AC4 the template names the three a body correction never touches', /never touches the decision itself, its `Status:` or its number/.test(templateUpdates), templateUpdates);
 check('#336 AC4 the template points at the readme section that states the split in full', templateUpdates.includes(CORRECTION_HEADING.slice(3)) && templateUpdates.includes('README.md'), templateUpdates);
 
+// --- #448: the register names the file that actually runs its commands ---
+// The two documented commands, the TypeScript scan they are checked against and the
+// disjointness property they bought moved to tests/register.test.mts when #448 split them
+// out of this file. Seven sentences across the register's two documents named this file
+// instead, and nothing read them — which is how they stayed right for as long as they were
+// and wrong the moment they were not. A register is what an agent reads *instead of*
+// measuring, so a false sentence there outlives every other copy; this block is its
+// consumer, the same way the blocks above are for prose nothing else reads.
+//
+// Invariant 10: both paths are written out here rather than read back from the documents,
+// from a shared constant or from `import.meta`, so renaming either file reds here instead
+// of being mirrored into the assertion. Each claim is pinned with enough of its own
+// sentence to say which of the seven it is: the bare path would let one sentence satisfy
+// the pin on another's behalf, which is the failure this whole file is built against.
+//
+// The eighth mention is held to the *old* path on purpose. `docs/decisions.md`'s "Why not
+// a script" paragraph says #411's `## Files` listed `tests/doctrine.test.mts`, which is a
+// statement about that issue's body: true on its own date and true now, because that issue
+// declared this path and no other. Rewriting it to name a file #411 never declared would
+// put a false sentence in the register to remove a stale-looking one. The count cases below
+// are what stop a later sweep from "fixing" it.
+
+const REGISTER_TEST = '`tests/register.test.mts`';
+const DOCTRINE_TEST = '`tests/doctrine.test.mts`';
+
+for (const [name, text, claims] of [
+  ['docs/decisions.md', decisions, [
+    `${REGISTER_TEST} runs both commands on every \`npm test\``,
+    `${REGISTER_TEST} pins the property that outlives any one arrangement`,
+    `the case in ${REGISTER_TEST} that fails when two items carry one number`,
+    `the scan ${REGISTER_TEST} checks them against`,
+  ]],
+  ['docs/decisions/README.md', decisionsReadme, [
+    `${REGISTER_TEST} holds it against the lint itself`,
+    `caught by the case in ${REGISTER_TEST} that fails when two items carry one number`,
+    `${REGISTER_TEST} runs both commands on every \`npm test\``,
+  ]],
+] as const) for (const claim of claims) check(`#448 ${name} names the register test as the consumer — "${claim}"`, text.includes(claim), text.slice(0, 600));
+
+// The exception, and its bound: exactly one mention of this file is left in the register,
+// it is the one that reports what #411 declared, and the README carries none at all.
+check('#448 docs/decisions.md keeps the one mention that reports #411\'s own `## Files`', decisions.includes(`\`docs/decisions/README.md\`, \`docs/decisions.md\` and ${DOCTRINE_TEST}, and an implementer never widens its own globs`), decisions.slice(0, 600));
+check('#448 docs/decisions.md names this file exactly once — no consumer claim is left on it', decisions.split(DOCTRINE_TEST).length === 2, `${decisions.split(DOCTRINE_TEST).length - 1} mentions`);
+check('#448 docs/decisions/README.md names this file nowhere — every claim there moved', !decisionsReadme.includes(DOCTRINE_TEST), decisionsReadme.slice(0, 600));
+
 // --- #417: the card names every gate that can refuse its pull request, and the two rules about
 // the machine it shares. Each needle is bounded to the section of `agents/implementer.md` that
 // owes it, so a sentence in the wrong half does not satisfy the pin. Invariant 10: the three
