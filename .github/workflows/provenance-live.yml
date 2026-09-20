@@ -1,0 +1,78 @@
+# provenance-live — the closeout record, checked against GitHub, on a schedule.
+#
+# `tests/provenance-issues.test.mts` asks the two questions a checkout cannot
+# answer on its own: whether every row of every `docs/closeout/M<n>.md` names a
+# closed issue, and whether a `## Left out` bullet accounts for something that
+# shipped. Both need a token, so the required `test` job (`contents: read`, no
+# token) skips them and this workflow is where they run (#381).
+#
+# Deliberately off the pull-request path, and that is the whole design: a
+# closeout can only rot *after* its milestone closed — an issue reopened, a
+# deferral that later shipped — so the question is a daily one, not a
+# per-change one. A scheduled job wired to a pull request would also be a
+# required check whose verdict depends on an external API, which is exactly the
+# false red #356 removed from the `test` job. Nothing here gates a merge: the
+# workflow is not in any ruleset's required checks and must not be added to one.
+#
+# Budget: one `gh api graphql` call per fifty issues, so this repository's
+# seventeen closeouts cost four calls a run, plus one `gh auth status` —
+# against the 152 the same check cost before #298 batched it, one `gh issue
+# view` per row of every closeout. The required suite asks nothing either way:
+# it has since #356.
+#
+# Crash policy: fail open on what passes by itself, fail closed on what does
+# not. A `gh` that cannot answer — a rate limit, a 5xx, no network — leaves a
+# note and the run stays green. A row naming an issue that resolves to nothing,
+# or an issue that is not closed, is red. So is a token refused the scope the
+# query needs: that is a configuration fact rather than a transient one, it
+# never fixes itself, and its whole symptom would otherwise be a green run that
+# checked nothing (`docs/closeout/README.md`, "What keeps it honest").
+
+name: provenance-live
+
+on:
+  schedule:
+    # 06:20 UTC daily, off the hour to stay out of GitHub's own peak.
+    - cron: '20 6 * * *'
+  workflow_dispatch:
+
+# `pull-requests: read` is not optional and not decorative: the query reads
+# `closedByPullRequestsReferences { ... mergeCommit }`, which is pull-request
+# data, and an explicit `permissions:` block makes every unlisted scope `none`.
+# Without it GITHUB_TOKEN answers `Resource not accessible by integration`.
+# That answer **reds**: `tests/provenance-issues.test.mts` reads GraphQL's
+# `FORBIDDEN` before anything else and fails with the permission named. Both
+# halves matter and they were added in that order — the scope is what makes the
+# check work, and the refusal class is what makes its absence audible instead of
+# a green run that checked nothing. Striking this line now breaks the run
+# loudly; before the refusal class existed it did not.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  provenance:
+    name: provenance-live
+    runs-on: ubuntu-latest
+    steps:
+      # `fetch-depth: 0` for the same reason test.yml takes it: the shipped
+      # rule asks whether a pull request's merge commit is an ancestor of a
+      # closeout's `main SHA`, and a shallow checkout has no history to answer
+      # with.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node tests/provenance-issues.test.mts
+        env:
+          AGENTIC_PROVENANCE_LIVE_GH: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `{owner}` and `{repo}` are gh's placeholders, resolved from the
+          # repository of the current directory; naming it outright keeps that
+          # off the remote URL's shape.
+          GH_REPO: ${{ github.repository }}

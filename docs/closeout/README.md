@@ -65,9 +65,12 @@ already-required `test` check, not a new check name. It reads every
   (`git merge-base --is-ancestor <sha> <ref>`), or is not a commit in the
   repository at all;
 - the rows are not in ascending issue order;
-- a listed issue is not closed — only when the run opts in with
-  `AGENTIC_PROVENANCE_LIVE_GH=1`; that half is skipped by default, and the
-  `test` job never sets it. See the paragraph below.
+- a listed issue is not closed, or a `## Left out` bullet accounts for an issue
+  that shipped — both in
+  [`tests/provenance-issues.test.mts`](../../tests/provenance-issues.test.mts),
+  and only when the run opts in with `AGENTIC_PROVENANCE_LIVE_GH=1`; that half
+  is skipped by default, and the `test` job never sets it. See the paragraph
+  below.
 
 That main ref is resolved, not assumed. The pin takes the first of
 `origin/main`, then `main`, then `HEAD` that resolves to a commit in the
@@ -77,6 +80,16 @@ that fetched only the branch under test, or a worktree whose branch was renamed
 — where the alternative is to skip the ancestry check entirely; on a checkout of
 the branch under test that is the right thing to prove reachability against.
 
+The pin is two files, because it asks two kinds of question. The one above is
+the format, the ancestry and the prose, all of which a checkout settles on its
+own. The other is
+[`tests/provenance-issues.test.mts`](../../tests/provenance-issues.test.mts),
+which needs an answer from GitHub and is opt-in for that reason; it is the file
+`.github/workflows/provenance-live.yml` runs on a schedule, deliberately off
+the pull-request path so it can never gate a merge. They parse a closeout
+separately and on purpose: a pin that imports what it pins cannot catch it
+drifting.
+
 Ancestry needs history, which is why `.github/workflows/test.yml` checks out with
 `fetch-depth: 0`; a shallow checkout fails the pin rather than passing quietly.
 The issue-closed check asks GitHub, so it is **opt-in and skipped by default**:
@@ -85,18 +98,32 @@ unset, it leaves one note on stderr naming `AGENTIC_PROVENANCE_LIVE_GH`; set to
 once per row of every closeout, to a quota shared with every agent and tool on
 the account — and exhausting that quota failed this pin as
 `docs/closeout/M*.md is clean`, naming a file when the cause was an HTTP status
-from another machine (#356). With the opt-in set, a `gh` that cannot answer — a
-rate limit, a 5xx, no network — is a note per row rather than a failure, while a
-number that resolves to nothing stays a failure: **the API declining to answer
-and the record being wrong are different answers**, and only the second is
-evidence about a closeout. Every one of those paths, and the real tree's own
+from another machine (#356). With the opt-in set there are **three** answers, not two, and the third was
+added by #422. A `gh` that cannot answer — a rate limit, a 5xx, no network — is
+**one note per failed batch**, naming how many issues went unchecked (per
+*batch*, because #298 replaced the per-row `gh issue view` with one
+`gh api graphql` call per fifty issues). A number that resolves to nothing stays
+a failure. And a token **refused the scope the query needs** is a failure of a
+third kind. So: **the API declining to answer, the record being wrong, and the
+run not being allowed to ask.** The first proves nothing about a closeout; the
+second is evidence about one; the third is a verdict on the **workflow's own
+configuration** and about no closeout at all. The third is separated out because
+it is the only one of the three that never fixes itself, and because its whole
+symptom would otherwise be a green run that checked nothing — the query reads
+pull-request data, and a workflow with an explicit `permissions:` block grants
+`none` to every scope it does not list. It is recognised structurally, as
+`FORBIDDEN` in GraphQL's `errors[]`, read before anything else; a refusal that
+carries no such type falls back to the first answer, so a drift costs a skip and
+never a false red. Every one of those paths, and the real tree's own
 rows, are covered by a controlled `gh` fixture in the test. The `test` job could
 not run the live half anyway (`contents: read`, no token), so in CI it is a no-op by
 design and not an oversight: the run that asks GitHub with a real token is
 `scripts/close-milestone.mts`, the only way a milestone closes. It reads the
 milestone's issues itself and refuses `milestone:open-issues` while one is still
-open, or `evidence:issue-missing` when a closed issue is neither a row above nor
-a `#N` in a `## Left out` bullet — so the close is where that check has to hold,
+open, `evidence:issue-missing` when a closed issue is neither a row above nor
+a `#N` in a `## Left out` bullet, `evidence:row-open` when a row names an issue
+that is not closed, and `evidence:left-out-shipped` when a bullet accounts for
+an issue that shipped — so the close is where those checks have to hold,
 and giving the `test` job a token to repeat it would widen the workflow's
 permissions for a question the close already answers. Both of those reads ask
 GitHub for up to 500 issues, the limit `ci/issue-lint.mts` uses for the same
@@ -154,6 +181,47 @@ The rules the parser applies, in order:
   PR did not ship — it belongs in `## Left out`, not in the table.
 - Issue numbers are strictly ascending down the table, so the same issue never
   appears twice and two rows out of order are named in the failure.
+- A bullet in `## Left out` or `## Dogfood` is its `- ` line **and the indented
+  lines under it**, joined. A `#N` anywhere in a `## Left out` bullet counts,
+  its continuation lines and its "where it went" trailer included: the check
+  that reads this set, `evidence:issue-missing`, is looking for an issue nobody
+  wrote down, not for a bullet worded loosely, so it is deliberately generous.
+  An indented line continues the bullet above it **whatever it opens with**, `- `
+  included: `- Deferred:` followed by `  - #12 …` is one bullet about the
+  deferral, so #12 is mentioned there and not claimed. A bullet begins at the
+  left margin, and nothing else opens one — which is what keeps the parser
+  strict. Nothing closes one either, and that is worth stating rather than
+  leaving to be discovered: a blank line or an unindented paragraph is skipped,
+  and an indented line after it still joins the bullet above. Every one of those
+  readings only ever widens what counts as **mentioned**; none of them splits a
+  bullet in two, and none turns prose into a claim.
+- **Mentioning an issue and accounting for it are not the same thing.** A
+  bullet *accounts for* the issues in the unbroken run of `#N` that opens the bullet
+  — `- #12`, `- #12 and #13`, `- #12, #13 and #14`, separated by nothing
+  but `,`, `and` or `&`. That run is the bullet's subject and its claim: those
+  issues did not ship. A `#N` anywhere else in the bullet is a
+  **cross-reference** — it says where something went, and claims nothing. So
+  ``- #125 (`--agents` install) and #126 (first-run profiling)`` accounts for
+  #125 alone, because the parenthesis ends the run; a grammar that guessed
+  would be one nobody could write against.
+- A bullet may not account for an issue that **shipped**, and `close-milestone`
+  refuses `evidence:left-out-shipped` when one does. An issue shipped when a
+  **merged pull request** closed it *and* that pull request's merge commit is
+  already in the history this file snapshots — an ancestor of the `main SHA`
+  above. The snapshot clause is not a convenience: a closeout is a dated
+  record, and two cases fall out of the sentence rather than being listed as
+  exceptions beside it. The phase's own closeout issue may head a bullet,
+  because the pull request that closes it is the one landing this file and
+  cannot be its own ancestor; and an issue deferred to a later phase may head a
+  bullet in the phase that deferred it, because it shipped outside this
+  snapshot. An issue that is also a row in `## Issues` is the file
+  cross-referencing its own table, and the table is the stronger statement, so
+  the table wins.
+- Each row of `## Issues` says its issue shipped, so each row's issue is
+  closed; `close-milestone` refuses `evidence:row-open` when one is not, or
+  when the number names no issue of the repository at all. That is the opposite
+  direction from `evidence:issue-missing`, which reads the milestone and looks
+  for each of its issues in this file.
 - `## Left out` and `## Dogfood` each carry at least one bullet. Nothing to say
   is written out, not omitted: `- None — every issue shipped.` and
   `- None needed — <why>`. The second holds only for a phase that touched none of
@@ -165,3 +233,25 @@ The rules the parser applies, in order:
   which is what `TEMPLATE.md` is — or **filled** — no placeholder left and at
   least one row. A half-filled document is an error, and an `M<n>.md` left as
   the empty template is an error.
+
+## A dogfood report older than the phase, and why this file is not dated
+
+`DOGFOOD_REPORT_RE` matches a `docs/dogfood/<date>.md` path **anywhere** in a
+`## Dogfood` bullet and reads nothing from the date, so a closeout may cite a
+report that predates its own phase. That is allowed, and it is the retroactive
+closeouts' ordinary case: `M1.md` cites `docs/dogfood/2026-09-06.md`, a pass
+that ran at the tip `main` reached at the end of M5. The condition is that the
+bullet says so in words — which phase the report ran against, and why it is the
+nearest pass that exercised what this phase built. A citation that is older
+than the phase and does not say why is a citation the reader cannot weigh, and
+the parser cannot tell the two apart.
+
+A closeout file carries **no date in its filename**, and that is load-bearing
+rather than a style choice. `M<n>.md` names the phase; the date lives in the
+`- Closed (UTC):` bullet, where it is parsed. If the file were
+`M14-2026-09-17.md`, `DOGFOOD_REPORT_RE`'s "anywhere in a bullet" would have to
+compete with dates in paths that are not reports, `close-milestone.mts` could
+no longer derive the expected evidence path from the milestone's title alone
+(`M14 Closure with evidence` → `docs/closeout/M14.md`), and a phase closed
+twice would have two files instead of one refusal. One phase, one file, one
+date inside it.
