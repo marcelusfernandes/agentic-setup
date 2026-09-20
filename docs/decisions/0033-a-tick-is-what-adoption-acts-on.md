@@ -199,4 +199,42 @@ nothing.
 
 ## Updates
 
-*(none yet)*
+- **2026-09-20 (#423).** The cost above names one direction of the `GAP_PATHS` drift and
+  reads as if it were the whole of it. The forward direction is the vocabulary drifting
+  under the **person**: a plan lists seven gaps, a person ticks `workflow:missing`
+  instead of `workflows:missing`, the typo is accepted and carried through, the real box
+  is counted as declined, and `.github/workflows/` is left out of the branch while every
+  artefact records the decision correctly in the person's own words. Nothing in the
+  output distinguished an accepted name nobody defines from a declined name everybody
+  does. The bullet is not false and was not overtaken — it is incomplete, which is what
+  this section is for.
+
+  Both directions are now covered without making an unknown tick a refusal, which the
+  bullet was right to refuse. `scripts/lib/adopt/decision.mts` writes the seven names
+  out as the keys of `GAP_REMEDIES`, typed `Record<Gap, string>` against
+  `scripts/lib/adopt/inventory.mts`'s `Gap` through an `import type` that
+  `verbatimModuleSyntax` erases. **The names the parser branches on are still this
+  module's own literals, so an unknown tick is still carried through rather than
+  refused** — that is the property the bullet protects, and it is what the erasure buys.
+  It is not a claim that nothing of `inventory.mts` runs: `decision.mts` imports
+  `./workflows.mts`, which imports `OWNED_WORKFLOWS` from `inventory.mts`, so importing
+  the decision module has evaluated the inventory module all along, at this item's date
+  and at the date of this update alike. The type import adds no edge that was not there.
+  What it adds is the check: `npm run check` now refuses a gap renamed in one file and
+  not the other — the reverse drift this bullet accepted as silent. The forward
+  direction is answered in the report rather than in the parser: an unrecognised tick is
+  named as one in the plan-issue comment and the pull-request body, beside the declined
+  gap it was a near-miss of. `docs/adopt-pr.md` carries both.
+
+  Decision point 3's "named as declined and changes no file" also had no mirror on the
+  accepted side, and the same pull request adds it: a gap no file of the diff closes is
+  reported as **recorded, not performed**, with the command that performs it. Accepting
+  `labels:missing` and running nothing was what left `review:approved` absent and
+  `scripts/land.mts` refusing the adoption pull request with `review:not-approved`.
+
+  One thing the first version of that mirror got wrong, corrected before it landed and
+  recorded here because the item is where the rule lives: **whether a gap is carried is
+  a fact about the diff, not about the gap.** Reading it off `GAP_PATHS` alone reported
+  `workflows:missing` as carried on a branch that wrote no workflow — the base already
+  held them, so every one planned as `skipped (unchanged)` — which is decision point 3's
+  own failure mode with the sign flipped. It is read off the paths the plan writes.

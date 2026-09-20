@@ -37,12 +37,13 @@ import {
   PR_TITLE,
   PrError,
   buildBranch,
+  carriedPaths,
   planPullRequest,
   renderBody,
   resolvePlanIssue,
   type PlanCandidate,
 } from './pr.mts';
-import { decidedBy, renderDecisionComment, type DecisionRecord } from './decision.mts';
+import { decidedBy, decisionReport, renderDecisionComment, type DecisionRecord } from './decision.mts';
 import { GENERATED_BY, RECORD_FILE, buildRecord, type AdoptionRecord } from './record.mts';
 import type { CommandResult, GitOptions } from './git.mts';
 import type { Inventory } from './inventory.mts';
@@ -287,7 +288,12 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
   // in `docs/adopt.md`'s crash-policy section, and re-running is the remedy,
   // since the push is then `held` and the run stops before it duplicates
   // anything.
-  const comment = gh(['issue', 'comment', String(planNumber), '--body', renderDecisionComment(decided, context.decidedLabel, ADOPTION_BRANCH)]);
+  // The paths the branch writes go to both renderings and to the JSON: an
+  // accepted gap is **carried** because this diff carries its files, and a
+  // base that already holds the generated workflows is not a branch that
+  // wrote them (#423).
+  const written = carriedPaths(plan);
+  const comment = gh(['issue', 'comment', String(planNumber), '--body', renderDecisionComment(decided, context.decidedLabel, ADOPTION_BRANCH, written)]);
   if (comment.status !== 0) return failure('pr:decision-not-recorded', firstLine(comment.stderr || comment.stdout || ''));
 
   // 7. the pull request. The body is the one `ci/scope-check.mts` reads: the
@@ -311,7 +317,11 @@ export function runPullRequest(context: PrRunContext): PrOutcome {
       base,
       head: branch.head,
       issue: planNumber,
-      decision: decided,
+      // The decision as the person ticked it, plus what this run could do with
+      // each tick: a gap carried in the diff, a gap recorded and performed by
+      // nothing, a name no gap of this version defines. The comment and the
+      // pull-request body said all of it and the JSON said none of it (#423).
+      decision: decisionReport(decided, written),
       pr: created.stdout.trim().split('\n').filter(Boolean).pop() ?? '',
       commits: branch.commits.map(({ subject, sha, paths }) => ({ subject, sha, paths })),
       files: plan.files.map(({ content: _content, ...rest }) => rest),

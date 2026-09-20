@@ -16,6 +16,15 @@
 // granted by the issue's `## Files` for exactly that reason. The cases there
 // prove the branch, the push and the gate; the cases here prove the decision.
 //
+// It has a split target of its own for the same reason (#423):
+// `tests/adopt-pr-vocabulary.test.mts`. The rule the split follows is what a
+// case needs to run. **A case that spawns the real script stays here**, with
+// the plan bodies the fake `gh` answers with — including the parser cases
+// below, which read those same four bodies. **A case that proves a module by
+// importing it moves there**: who decided, the gap vocabulary, the report the
+// JSON carries, the planner's reading of a declined box, and the prose pins of
+// both adoption documents.
+//
 // Invariant 6: every write is proved by spawning the real script against a
 // throwaway git repository whose `origin` is a throwaway bare repository, with
 // a small fake `gh` first on PATH for every GitHub read, for `issue comment`
@@ -28,11 +37,13 @@
 // is imported from `scripts/lib/adopt/inventory.mts` — a pin that reuses the
 // thing it pins cannot catch that thing drifting.
 //
-// Negative control: on the base `--pr` never reads a body, so the "some
-// ticked" and "none ticked" cases fail on their own assertions, no comment is
-// ever posted, and `scripts/lib/adopt/decision.mts` does not exist, so the
-// import below answers `null` and every parser case fails on its own
-// assertion rather than on a missing module.
+// Negative control: when this file was written `--pr` never read a body, so
+// the "some ticked" and "none ticked" cases failed on their own assertions and
+// no comment was ever posted, and `scripts/lib/adopt/decision.mts` did not
+// exist. It does now (#396), so the guarded import below answers with whatever
+// the base exports and every case still fails on its own assertion rather than
+// on a missing module — which is what the guard is for, and what keeps a red
+// here from being read as structural.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -141,6 +152,17 @@ const REWORDED_BODY = planBody([
   '- [x] `test-command:none` — fine',
 ]);
 
+/**
+ * The typo a person produces by dropping one character of `workflows:missing`.
+ * Ticking it accepts a name no version of the inventory defines, while the box
+ * it was nearly is left empty and counted as declined — so the workflows are
+ * left out of the branch and every artefact records the decision as intended.
+ */
+const TYPO = 'workflow:missing';
+
+/** `SOME_BODY`, plus a ticked box for a gap name that does not exist. */
+const TYPO_BODY = planBody([...GAPS.map((gap) => (gap === FILE_GAP ? empty(gap) : ticked(gap))), ticked(TYPO)]);
+
 /** What each body decides, as the run must report it. */
 const ALL_ACCEPTED = [...GAPS];
 const SOME_ACCEPTED = GAPS.filter((gap) => gap !== FILE_GAP);
@@ -162,6 +184,7 @@ const PLAN_ANSWERS: Record<string, string> = {
   some: issueJson(SOME_BODY),
   none: issueJson(NONE_BODY),
   reworded: issueJson(REWORDED_BODY),
+  typo: issueJson(TYPO_BODY),
   // A decided issue whose body carries no checklist at all — the shape a
   // person produces by deleting the section rather than by ticking nothing.
   'no-boxes': issueJson('Tick what should happen, then move this issue to `human:decided`.'),
@@ -339,20 +362,6 @@ try {
   mod = null;
 }
 
-type PlannedFile = { path: string; content: string | null; outcome: string; reason: string };
-type Plan = { files: PlannedFile[]; checks: string[] };
-type PlanModule = {
-  planPullRequest: (record: unknown, options: unknown) => Plan;
-  renderBody: (plan: Plan, context: unknown) => string;
-};
-
-let planner: PlanModule | null = null;
-try {
-  planner = (await import('../scripts/lib/adopt/pr.mts')) as unknown as PlanModule;
-} catch {
-  planner = null;
-}
-
 // --- A: the search has to ask for the body ----------------------------------
 // A gate that asks for `number,title,state,labels` cannot read a tick at all:
 // the boxes are in the body, and no call requested it.
@@ -372,6 +381,19 @@ check(
   [...(aOut?.decision?.accepted ?? [])].sort().join(',') === [...ALL_ACCEPTED].sort().join(',') &&
     (aOut?.decision?.declined ?? []).length === 0,
   JSON.stringify(aOut?.decision),
+);
+// The JSON is the third place a decision is read, and until #423 it said only
+// which boxes were ticked. What each tick did is proved here end to end, over
+// the real run; `tests/adopt-pr-vocabulary.test.mts` holds the shape itself.
+const ticksOf = (out: any): any[] => out?.decision?.ticks ?? [];
+const tickFor = (out: any, gap: string): any => ticksOf(out).find((tick: any) => tick?.gap === gap) ?? null;
+check(
+  'the JSON tells the accepted gap this branch carries from the ones it only recorded, with their remedies',
+  tickFor(aOut, FILE_GAP)?.state === 'carried' &&
+    ALL_ACCEPTED.filter((gap) => gap !== FILE_GAP).every(
+      (gap) => tickFor(aOut, gap)?.state === 'recorded' && String(tickFor(aOut, gap)?.remedy ?? '') !== '',
+    ),
+  JSON.stringify(ticksOf(aOut)),
 );
 const allHead = String(aOut?.head ?? '');
 const allBase = git(['rev-parse', 'HEAD'], all.repo);
@@ -554,6 +576,96 @@ check('and leaves the remote branch exactly where it was', remoteSha(mute.origin
 check('a held run comments nothing: one decision is recorded once', !existsSync(join(again.stateDir, 'issue-comment.args')), again.stateDir);
 check('and opens no pull request', !existsSync(join(again.stateDir, 'pr-create.args')), again.stateDir);
 
+// --- F3: a mistyped tick is carried, and the report says it was one ---------
+// The defect #400 names, end to end: the person ticked `workflow:missing`, so
+// `workflows:missing` is untouched and its files are left out of the branch.
+// The run must not refuse over a typo, and must not leave the two facts to be
+// found apart: the comment and the body name the unrecognised tick and the
+// untouched box it was nearly, side by side.
+const typo = fixture();
+const typoBase = git(['rev-parse', 'HEAD'], typo.repo);
+const g2 = adopt(['--pr'], typo.repo, { FAKE_GH_PLAN: 'typo' });
+const g2Out = parse(g2.stdout);
+check('--pr over a plan carrying a mistyped tick still exits 0', g2.status === 0 && g2Out !== null, `${g2.stdout}\n${g2.stderr}`);
+check(
+  'the mistyped name is carried into the decision rather than refused',
+  (g2Out?.decision?.accepted ?? []).includes(TYPO) && (g2Out?.decision?.declined ?? []).includes(FILE_GAP),
+  JSON.stringify(g2Out?.decision),
+);
+const typoHead = String(g2Out?.head ?? '');
+const typoCarried = typoHead.length === 40 ? pathsIn(typo.repo, `${typoBase}...${typoHead}`) : [];
+check(
+  'and the workflows are left out of the branch, which is the harm the report has to name',
+  WORKFLOW_FILES.every((path) => !typoCarried.includes(path)),
+  typoCarried.join(','),
+);
+check(
+  'the JSON names the tick nothing can act on, what it was nearest, and the declined gap it was aimed at',
+  tickFor(g2Out, TYPO)?.state === 'unrecognised' &&
+    tickFor(g2Out, TYPO)?.nearest === FILE_GAP &&
+    (g2Out?.decision?.shadowed ?? []).some((entry: any) => entry?.gap === FILE_GAP && entry?.tick === TYPO),
+  JSON.stringify(g2Out?.decision),
+);
+const typoComment = bodyOf(g2.stateDir, 'issue-comment.args');
+const typoPr = bodyOf(g2.stateDir, 'pr-create.args');
+const flat = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
+const declinedLineOf = (text: string): string => text.split('\n').find((l) => l.trimStart().startsWith(`- \`${FILE_GAP}\``)) ?? '';
+check(
+  'the comment on the plan issue names the tick nothing can act on',
+  /unrecognised/i.test(typoComment) && flat(typoComment).includes(`\`${TYPO}\``),
+  typoComment.slice(0, 700) || '(no comment)',
+);
+check(
+  'and names the untouched box beside it, in the same line as the gap it declined',
+  flat(declinedLineOf(typoComment)).includes(TYPO),
+  declinedLineOf(typoComment) || typoComment.slice(0, 700),
+);
+check(
+  'the pull request body says both of the same two things',
+  /unrecognised/i.test(typoPr) && flat(typoPr).includes(`\`${TYPO}\``) && flat(declinedLineOf(typoPr)).includes(TYPO),
+  declinedLineOf(typoPr) || typoPr.slice(0, 700),
+);
+
+// --- F4: a base that already carries the workflows is not a branch that does --
+// The reviewer's reproduction of #431's own defect, end to end. `--record` and
+// `--workflows` write the generated files, a commit puts them on the base, and
+// the same all-ticked plan is answered again. Every workflow then plans as
+// `skipped (unchanged)`, no commit touches `.github/workflows/`, and the
+// decision must not say the branch carries them: a gap is carried because this
+// diff carries its files, never because of what kind of gap it is.
+const settled = fixture();
+adopt(['--record'], settled.repo, { FAKE_GH_PLAN: 'all' });
+adopt(['--workflows'], settled.repo, { FAKE_GH_PLAN: 'all' });
+check(
+  'the fixture really does carry the generated workflows before --pr runs',
+  WORKFLOW_FILES.every((path) => existsSync(join(settled.repo, path))),
+  WORKFLOW_FILES.filter((path) => !existsSync(join(settled.repo, path))).join(',') || '(all present)',
+);
+git(['add', '-A'], settled.repo);
+git(['commit', '-q', '-m', 'the workflows this repository already had'], settled.repo);
+git(['push', '-q', 'origin', 'main'], settled.repo);
+const settledBase = git(['rev-parse', 'HEAD'], settled.repo);
+const h = adopt(['--pr'], settled.repo, { FAKE_GH_PLAN: 'all' });
+const hOut = parse(h.stdout);
+check('--pr over a base that already has the workflows exits 0', h.status === 0 && hOut !== null, `${h.stdout}\n${h.stderr}`);
+const settledHead = String(hOut?.head ?? '');
+const settledCarried = settledHead.length === 40 ? pathsIn(settled.repo, `${settledBase}...${settledHead}`) : [];
+check(
+  'no commit of that branch touches the workflows, because the base already has them',
+  WORKFLOW_FILES.every((path) => !settledCarried.includes(path)),
+  settledCarried.join(','),
+);
+check(
+  'so the JSON does not report the workflow gap as carried, though its box was ticked',
+  (hOut?.decision?.accepted ?? []).includes(FILE_GAP) && tickFor(hOut, FILE_GAP)?.state === 'not-in-diff',
+  JSON.stringify(ticksOf(hOut)),
+);
+check(
+  'and the body does not claim it either, fourteen lines under a file list carrying none of it',
+  !bodyOf(h.stateDir, 'pr-create.args').includes(`\`${FILE_GAP}\` — **carried**`),
+  bodyOf(h.stateDir, 'pr-create.args').split('## The decision this acts on')[1]?.slice(0, 400) ?? '(no decision section)',
+);
+
 // --- G: the parser itself, over bodies written out here ---------------------
 // The spawn cases above are what invariant 6 asks for; these prove the reading
 // directly, the way `resolvePlanIssue` is proved in the sibling file. Every
@@ -621,153 +733,13 @@ check(
   JSON.stringify(read('- [x] `labels:missing` — create `state:ready` too')),
 );
 
-// --- G2: who decided is the LAST matching event's actor, absent or not ------
-// Timelines are written out here as literals, the shape GitHub renders.
-const who = (timeline: unknown): string | null | 'not-exported' => {
-  if (!mod?.decidedBy) return 'not-exported';
-  try {
-    return mod.decidedBy(timeline, DECIDED_LABEL);
-  } catch {
-    return 'not-exported';
-  }
-};
-const labeled = (name: string, login: string | null) => ({
-  event: 'labeled',
-  label: { name },
-  ...(login === null ? {} : { actor: { login } }),
-});
-
-check('decidedBy is exported', typeof mod?.decidedBy === 'function');
-check(
-  'the last labeled event for the label is the one reported, not the first',
-  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)])),
-);
-check(
-  'an event for another label never decides',
-  who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)])),
-);
-check('a timeline naming no such event answers null', who([labeled('human:pending', PENDING_BY)]) === null, String(who([labeled('human:pending', PENDING_BY)])));
-check('a timeline that is not a list answers null', who('not a list') === null && who(null) === null, `${who('not a list')} | ${who(null)}`);
-
-// The correction the review caught. GitHub omits `actor` for an event
-// attributed to a deleted user or to an integration, and the guard used to
-// keep the previous login when that happened — reporting *a different person*
-// as the one who decided. A login that is wrong looks exactly like a login
-// that is right; a null announces itself, which is the direction this module
-// fails in everywhere else.
-check(
-  'a last event with no actor answers null, never the earlier decider',
-  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)]) === null,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)])),
-);
-check(
-  'the same for an actor whose login is null rather than absent',
-  who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }]) === null,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }])),
-);
-check(
-  'and an actorless event earlier in the timeline does not erase a later decider',
-  who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)])),
-);
-
-// --- H: only a *declined* box empties the checks ----------------------------
-// A planned workflow carries no content for three different reasons, and only
-// one of them is a decision: `declined`, but also `unchanged` when the base
-// already carries the generated file and `not-generated` when a person wrote
-// it. (`planSettings` has three more, on `.claude/settings.json`, and none of
-// them reaches a workflow — which is why the count is three and not six.)
-// Reading "no content" as "declined" made the body say the box was left
-// empty over a decision that ticked it — a false sentence about the decision,
-// in the artefact whose purpose is recording the decision.
-//
-// The base content here is the planner's own first answer rather than an
-// import of `renderWorkflows`: a second base that agreed with the generator
-// by construction could not tell `unchanged` from anything else.
-const RECORD_VALUE = {
-  version: 1,
-  stack: 'node',
-  commands: { test: 'npm test', check: 'tsc' },
-  checks: [],
-  hooks: ['pre-push'],
-  proof: { dir: 'proof' },
-  labels: { source: 'scripts/init.mts' },
-  generatedAt: '2026-01-01T00:00:00.000Z',
-  generatedBy: 'agentic-setup/adopt',
-};
-
-/** The planner's answer for one base reader, or `null` when it could not run. */
-function planWith(baseFile: (path: string) => string | null, declined?: string[]): Plan | null {
-  if (!planner?.planPullRequest) return null;
-  try {
-    return planner.planPullRequest(RECORD_VALUE, { root: ROOT, baseFile, ...(declined === undefined ? {} : { declined }) });
-  } catch {
-    return null;
-  }
-}
-
-const isWorkflow = (file: PlannedFile): boolean => file.path.startsWith('.github/workflows/');
-const fresh = planWith(() => null);
-const generated = new Map((fresh?.files ?? []).filter(isWorkflow).map((file) => [file.path, file.content]));
-check('the planner answers with the generated workflows at all', generated.size > 0 && fresh !== null, String(generated.size));
-
-const unchanged = planWith((path) => generated.get(path) ?? null);
-const unchangedWorkflows = (unchanged?.files ?? []).filter(isWorkflow);
-check(
-  'a base that already carries the generated workflows plans every one of them as skipped (unchanged)',
-  unchangedWorkflows.length === generated.size && unchangedWorkflows.every((file) => file.reason === 'unchanged' && file.content === null),
-  JSON.stringify(unchangedWorkflows.map((file) => file.reason)),
-);
-check(
-  'and its checks are the ones the record renders: nobody declined anything',
-  (unchanged?.checks ?? []).length > 0,
-  (unchanged?.checks ?? []).join(','),
-);
-
-/** The body for a plan, with a decision that ticked the workflow box. */
-const bodyFor = (plan: Plan | null): string =>
-  !planner?.renderBody || plan === null
-    ? ''
-    : planner.renderBody(plan, {
-        issue: PLAN_ISSUE,
-        defaultBranch: 'main',
-        record: RECORD_VALUE,
-        decision: { accepted: [...GAPS], declined: [], decidedBy: DECIDED_BY },
-        decidedLabel: DECIDED_LABEL,
-      });
-
-// The body is hard-wrapped, so it is read unwrapped: `was left\nempty` is the
-// same sentence and a substring test over the wrapped text would pass a body
-// that does say it, which is the false pass this file exists to avoid.
-const unwrap = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
-const CLAIM = 'because the box for it was left empty';
-
-const unchangedBody = unwrap(bodyFor(unchanged));
-check(
-  'the body of an unchanged-workflow branch never claims a box was left empty',
-  unchangedBody.length > 0 && !unchangedBody.includes(CLAIM),
-  unchangedBody.slice(0, 400),
-);
-
-const declinedPlan = planWith(() => null, [FILE_GAP]);
-check(
-  'a declined workflow box, and only that, empties the checks',
-  (declinedPlan?.checks ?? ['x']).length === 0,
-  (declinedPlan?.checks ?? []).join(','),
-);
-const declinedBody = unwrap(bodyFor(declinedPlan));
-check(
-  'and its body says so, as one unbroken sentence rather than three loose words',
-  declinedBody.includes(CLAIM),
-  declinedBody.slice(0, 600),
-);
-
 // --- I: the documentation says what the flag now does (invariant 8) ---------
-// Both adoption documents are read as text and held to the names this change
-// introduced. Written out here rather than imported from the module that
-// produces them: a pin reading the source it pins cannot catch either drifting.
+// Both adoption documents are read as text and held to the names #368
+// introduced — the subject these cases prove. Written out here rather than
+// imported from the module that produces them: a pin reading the source it
+// pins cannot catch either drifting. The examples `docs/adopt-pr.md` shows of
+// the decision *report* are pinned in `tests/adopt-pr-vocabulary.test.mts`,
+// beside the cases that prove the report.
 const adoptDoc = readFileSync(join(ROOT, 'docs', 'adopt.md'), 'utf8');
 const prDoc = readFileSync(join(ROOT, 'docs', 'adopt-pr.md'), 'utf8');
 const docs = `${adoptDoc}\n${prDoc}`;
@@ -775,11 +747,46 @@ check('the documentation says what a tick does and what leaving one empty does',
 check('it names the refusal a decided plan with nothing ticked gets', docs.includes('pr:plan-nothing-ticked') && docs.includes('plan:nothing-ticked'), 'nothing-ticked');
 check('it names the two failures the decision record can have', docs.includes('pr:timeline-unreadable') && docs.includes('pr:decision-not-recorded'), 'named failures');
 check('it says the decision is commented on the plan issue before the pull request is opened', /before .{0,40}pull request/i.test(prDoc) && /timeline/.test(prDoc), 'comment order');
+// Restored: deleted rather than moved when #423 compacted the pin block in
+// `tests/adopt-pr-vocabulary.test.mts`. A pin a pull request creates and then
+// drops is invisible to any comparison against the base.
+check(
+  'it says what a second entry in GAP_PATHS would do to the same typo',
+  flat(prDoc).includes('GAP_PATHS') && /a second entry/.test(flat(prDoc)),
+  '(second entry prose)',
+);
+check(
+  'and it says the comment names the remedy of a recorded gap and any tick nothing can act on',
+  /the command that performs a gap nothing here performed/.test(flat(prDoc)),
+  '(comment contents)',
+);
 check(
   'the bolded sentence about an existing label is narrowed to the label the inventory read saw',
   adoptDoc.includes('**A label the inventory read saw is left exactly as it is.**') &&
     !adoptDoc.includes('**A label the repository already has is left exactly as it is.**'),
   adoptDoc.split('\n').find((line) => line.startsWith('**A label')) ?? '(no such sentence)',
+);
+
+// The register item this sweep corrected, read as text for the same reason.
+// Here rather than in the split target: that file pins `docs/adopt-pr.md`, and
+// this is a different document — and both files are near the cap.
+const item33 = readFileSync(join(ROOT, 'docs', 'decisions', '0033-a-tick-is-what-adoption-acts-on.md'), 'utf8');
+check(
+  'item 33 gains the forward direction of the cost it already carries, as a dated update',
+  !item33.includes('*(none yet)*') && /## Updates/.test(item33) && flat(item33.split('## Updates')[1] ?? '').includes('2026-09-20'),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
+);
+check(
+  'and that update says the drift it names is now caught by npm run check',
+  flat(item33.split('## Updates')[1] ?? '').includes('npm run check'),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
+);
+check(
+  'the update claims no more than is true: decision.mts already reaches inventory.mts through workflows.mts',
+  flat(item33.split('## Updates')[1] ?? '').includes('workflows.mts') &&
+    !/no runtime import/.test(item33) &&
+    !/no runtime dependency/.test(item33),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 600),
 );
 
 finish();
