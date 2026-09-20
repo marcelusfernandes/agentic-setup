@@ -37,11 +37,14 @@
 // ci/negative-control.mts, which reads this log. Ranking rather than
 // anchoring is what the lower ranks are for. A file that writes a note
 // without terminating the line leaves its summary in the middle of that line
-// — the `e` and `g` fixtures in tests/run.test.mts — and anchoring alone
-// reports it as CRASHED and hands the summary back to the printed note,
-// which is the #429 defect. `g` is why the ranks are ordered this way and not
-// by anchoring first: it holds a stray that starts a line *and* a real
-// summary that only ends one, and the real summary has to win.
+// — the `e` and `g` fixtures in tests/run.test.mts. Anchoring alone reports
+// `e` as CRASHED and `g` by its stray, and hands the summary back to the
+// printed note in both, which is the #429 defect. `g` is why the ranks are
+// ordered this way and not by anchoring first: it holds a stray that starts a
+// line *and* a real summary that only ends one, and the real summary has to
+// win. `p` is why the whole-line rank sits above ends-a-line: its stray ends
+// its line with the runtime parenthetical too, so nothing below that rank
+// separates them.
 //
 // Three things the rule still lets through, none of them new here. A stray
 // that is a whole line of its own is indistinguishable from the protocol

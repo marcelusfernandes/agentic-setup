@@ -40,7 +40,11 @@
 // terminated. Preferring any line-starting summary reports the stray and
 // puts the real summary back inside the printed note, which is the #429
 // defect the `e` fixture exists to keep out. Its stream shape is the point;
-// do not tidy the missing newline.
+// do not tidy the missing newline. The `p` fixture pins the rank above both:
+// its stray ends its line with the runtime parenthetical, exactly as the
+// protocol line does, so only "the line is nothing but the summary"
+// separates them. Without `p`, a runner ranking by ends-a-line alone passes
+// every other case here.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -161,6 +165,18 @@ writeFileSync(
     'process.exit(0);\n',
 );
 
+// Passes one case, and quotes another run's count in a note *carrying the
+// runtime parenthetical*, so the stray ends its line exactly as the protocol
+// line does. Only "the line is nothing but the summary" tells the two apart:
+// a runner that ranks by ends-a-line alone takes the stray, because it comes
+// last. This file is the pin for that rank.
+writeFileSync(
+  join(dir, 'p.test.mts'),
+  "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()})`);\n" +
+    "console.log('note  p: the run it read reported 3 passed, 0 failed (node)');\n" +
+    'process.exit(0);\n',
+);
+
 const r = spawnSync(RUNTIME, [join(ROOT, 'tests', 'run.mts'), dir], { encoding: 'utf8' });
 const out = `${r.stdout}${r.stderr}`;
 
@@ -169,7 +185,7 @@ check('run.mts runs the passing file', /b\.test\.mts[\s\S]*3 passed, 0 failed/.t
 check('run.mts runs the failing file', /a\.test\.mts[\s\S]*1 passed, 1 failed/.test(out), out);
 check('run.mts discovers files in sorted order (a before b)', out.indexOf('a.test.mts') < out.indexOf('b.test.mts'), out);
 check('run.mts ignores files that are not *.test.mts', !/helper\.mts/.test(out), out);
-check('run.mts prints an aggregate line summing all files (14 passed, 1 failed)', /\b14 passed, 1 failed\b/.test(out), out);
+check('run.mts prints an aggregate line summing all files (15 passed, 1 failed)', /\b15 passed, 1 failed\b/.test(out), out);
 check('run.mts spawns test files with the runtime that launched it', out.includes(`1 passed, 1 failed (${RUNTIME.split('/').pop()})`), out);
 check(
   'run.mts parses the summary from stdout only, ignoring a look-alike line on stderr',
@@ -260,6 +276,16 @@ check(
   'run.mts keeps a glued summary out of the note even when the file also wrote a line-starting stray',
   out.includes('g.test.mts: note  g: stdout has no trailing newline either\n') &&
     !out.includes('newline either1 passed'),
+  out,
+);
+check(
+  'run.mts prefers the summary that is a whole line over a stray that merely ends one',
+  out.includes('p.test.mts: 1 passed, 0 failed') && !out.includes('p.test.mts: 3 passed, 0 failed'),
+  out,
+);
+check(
+  'run.mts leaves a note whole when its stray count carries the runtime parenthetical',
+  out.includes('p.test.mts: note  p: the run it read reported 3 passed, 0 failed (node)'),
   out,
 );
 finish();
