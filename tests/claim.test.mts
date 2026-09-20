@@ -16,10 +16,11 @@
 // cases no longer need a lint-noise-free repo) exercises the same
 // "covered path referenced elsewhere" shape issue-lint's entry-point
 // reference check used to warn on before it was removed (#62) — it is
-// just a normal pass now. The fake `gh` also answers `issue list
-// --milestone …` (a canned empty list by default, or an error when
-// `GH_LIST_FAILS` is set) for the one issue below that sets a milestone,
-// and `issue view <blocker>` for the numbers already exercised above.
+// just a normal pass now. The fake `gh` also answers `issue list` (a canned
+// empty list by default, or an error when `GH_LIST_FAILS` is set), which
+// every claim below reaches since #338 widened the lint's candidate set to
+// every open issue, and `issue view <blocker>` for the numbers already
+// exercised above.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,8 +32,9 @@ import { check, cleanup, commit, finish, git, ROOT, RUNTIME, tempRepo } from './
 // set of sections ci/issue-lint.mts requires (Context, Goal, Acceptance
 // criteria, Proof, Files, Dependencies) — claim.mts runs that lint for real
 // (as a child process, not mocked) before the push. `issue list` answers
-// the lint's milestone lookup with a canned empty list; none of these
-// issues sets a milestone, so it is never actually called.
+// the lint's open-issue lookup with a canned empty list. Since #338 that
+// lookup no longer asks for one milestone's issues, so it runs on every
+// claim here, whether or not the issue carries a milestone.
 const FAKE_GH = `#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$1 $2" in
@@ -484,13 +486,15 @@ check(
   noLint.log,
 );
 
-// --- AC3: the lint's own milestone lookup ("gh issue list --milestone …") --
-// is a real gh call, not always dead code: issue #26 sets a milestone, so
-// issue-lint's `gh issue view 26 --json body,milestone` sees it and calls
-// `gh issue list --milestone M2 --state open …` to gather the other issues
-// in flight. When that lookup itself fails, issue-lint can't run at all —
-// it reports `{ error }`, and claim.mts refuses closed rather than let an
-// unreadable lint result through.
+// --- AC3: the lint's own open-issue lookup ("gh issue list --state open …")
+// is a real gh call, not dead code: issue-lint calls it to gather the other
+// issues in flight before it compares globs. It used to ask for one
+// milestone's issues, and #26 — the only issue here that carries a
+// milestone — was what made the call happen at all; since #338 the
+// candidate set is every open issue, so the call happens on every claim and
+// #26 is no longer what triggers it. When the lookup itself fails,
+// issue-lint can't run at all — it reports `{ error }`, and claim.mts
+// refuses closed rather than let an unreadable lint result through.
 const milestoneLookupFails = claim(['26', '--slug', 'x'], { GH_LIST_FAILS: '1' });
 check(
   'a failed milestone lookup refuses the claim, exit 1',
@@ -503,7 +507,7 @@ check('a failed milestone lookup does not touch labels', !milestoneLookupFails.l
 
 const milestoneLookupOk = claim(['26', '--slug', 'y']);
 check('the same issue claims normally once the milestone lookup succeeds, exit 0', milestoneLookupOk.status === 0, `${milestoneLookupOk.stdout}\n${milestoneLookupOk.stderr}`);
-check('the milestone lookup really ran (not skipped as milestone-less)', /issue list --milestone M2/.test(milestoneLookupOk.log), milestoneLookupOk.log);
+check('the open-issue lookup really ran', /issue list --state open/.test(milestoneLookupOk.log), milestoneLookupOk.log);
 
 // --- claim.mts no longer has a --strict flag: issue-lint dropped it, along
 // with the entry-point-reference warnings it used to gate (#62). Issue
