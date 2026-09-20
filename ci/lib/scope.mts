@@ -268,19 +268,41 @@ export function findMisplacedAuthorisedLines(prBody: string): string[] {
 
 export const FILE_LINE_LIMIT = 800;
 
+/**
+ * How close to FILE_LINE_LIMIT a file has to be at the head before `scope`
+ * reports it (#413, absorbing #392). A fixed number of lines, not a
+ * percentage: FILE_LINE_LIMIT is a constant, so a percentage is the same
+ * threshold with a rounding rule attached and one more thing to get wrong.
+ *
+ * Fifty, because a report that arrives with the pull request that crosses is
+ * not a warning. Measured over the eighty most recent landings on `main`, of
+ * the twenty-three that lengthened a file already at 700 lines or more, seven
+ * added more than 20 lines and four added more than 50 — so a band of 20
+ * gives no warning in about 30% of the cases it exists for and a band of 50
+ * in about 17%. The cost runs the other way and runs flat: 24 of those eighty
+ * landings touched a file at 780 or above, 28 touched one at 750 or above.
+ * Thirteen points of coverage for five points of noise. The reasoning and the
+ * numbers are `docs/decisions/0036-a-file-approaching-the-line-limit-is-reported.md`.
+ */
+export const FILE_LINE_APPROACH_BAND = 50;
+
 export type FileLinesEntry = { path: string; baseLines: number | null; headLines: number; generated: boolean };
 export type FileGrowth = { path: string; baseLines: number | null; headLines: number };
 
-export type LengthOutcome = 'exempt-generated' | 'under-limit' | 'pushed-over' | 'inherited-over';
+export type LengthOutcome = 'exempt-generated' | 'under-limit' | 'approaching-limit' | 'pushed-over' | 'inherited-over';
 
 /**
- * What one file's length relation is called. Four relations, four names,
- * decided in one place so the two halves of the old condition cannot drift
- * apart (#310):
+ * What one file's length relation is called. Five relations, five names,
+ * decided in one place so the halves of the old condition cannot drift
+ * apart (#310, #413):
  *
  * - `exempt-generated` — `@generated` on the first line, whatever the length;
- * - `under-limit` — at or below FILE_LINE_LIMIT at the head, whatever it was
- *   at the base;
+ * - `under-limit` — more than FILE_LINE_APPROACH_BAND lines below
+ *   FILE_LINE_LIMIT at the head, whatever it was at the base;
+ * - `approaching-limit` — at or below FILE_LINE_LIMIT at the head and within
+ *   FILE_LINE_APPROACH_BAND lines of it. **Not over the limit**: a file at exactly
+ *   FILE_LINE_LIMIT is at the limit, not past it, and fails nothing. Reported,
+ *   never failed on, and never folded into any caller's exit status (#413);
  * - `pushed-over` — over the limit at the head *and* longer than at the base,
  *   or new at head (`baseLines` null) and landing over it. This diff added
  *   the length, so this diff is answerable for it: it fails the check;
@@ -290,17 +312,20 @@ export type LengthOutcome = 'exempt-generated' | 'under-limit' | 'pushed-over' |
  *   `inherited-over` too: it is still over, and it is still not this diff's
  *   doing.
  *
- * Before #310 the last name did not exist and the case produced nothing at
+ * Before #310 `inherited-over` did not exist and the case produced nothing at
  * all, so a file that had crossed the limit was exempt from then on and the
  * rule stopped applying to exactly the files that had already broken it.
- * Naming the case does not change what fails — `pushed-over` is the old
- * condition, unchanged — it changes what is visible.
+ * Naming the case did not change what fails, and neither does
+ * `approaching-limit`: `pushed-over` is still the #134 condition, verbatim.
+ * What changes each time is what is visible.
  */
 export function lengthOutcome({ baseLines, headLines, generated }: FileLinesEntry): LengthOutcome {
   if (generated) return 'exempt-generated';
-  if (headLines <= FILE_LINE_LIMIT) return 'under-limit';
-  if (baseLines !== null && headLines <= baseLines) return 'inherited-over';
-  return 'pushed-over';
+  if (headLines > FILE_LINE_LIMIT) {
+    return baseLines !== null && headLines <= baseLines ? 'inherited-over' : 'pushed-over';
+  }
+  if (headLines >= FILE_LINE_LIMIT - FILE_LINE_APPROACH_BAND) return 'approaching-limit';
+  return 'under-limit';
 }
 
 const withOutcome = (entries: FileLinesEntry[], wanted: LengthOutcome): FileGrowth[] =>
@@ -329,6 +354,27 @@ export function inheritedOverLimit(entries: FileLinesEntry[]): FileGrowth[] {
   return withOutcome(entries, 'inherited-over');
 }
 
+/**
+ * The files this diff leaves within FILE_LINE_APPROACH_BAND lines of
+ * FILE_LINE_LIMIT without crossing it — the approach report (#413). Reported,
+ * never failed on, and never folded into the caller's exit status: #310 had
+ * already separated "over the limit" from "failing this check", and this
+ * separates "close to the limit" from both.
+ *
+ * Only files the pull request touched are ever entries here, because the
+ * caller builds entries from the diff. That is not a third option beside a
+ * band and a percentage — it is true of every shape the report could take,
+ * since `scope` reads no file the diff does not name.
+ *
+ * What closes it is not what closes `inheritedOverLimit`: that one asks for a
+ * file to come back under the limit, this one asks only that the next pull
+ * request to lengthen the file leaves it room, or splits it. A file at
+ * exactly FILE_LINE_LIMIT is here, not in the over-limit sections.
+ */
+export function approachingLimit(entries: FileLinesEntry[]): FileGrowth[] {
+  return withOutcome(entries, 'approaching-limit');
+}
+
 export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files: string[]; issueGlobs: string[]; authorisedGlobs?: string[] }) {
   const globs = [...issueGlobs, ...authorisedGlobs];
   const violations = files.filter((f) => !matchesAny(f, globs));
@@ -341,11 +387,88 @@ export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files:
 const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
 
 /**
- * Strips fenced code blocks and inline code spans so a keyword quoted as an
+ * Blanks fenced code blocks and inline code spans so a keyword quoted as an
  * example (in a fence or backticks) is never mistaken for a real link.
+ *
+ * Blanked in place — every character replaced by a space, every newline kept —
+ * rather than deleted, so an offset in the result is an offset in the body and
+ * a match's line number is reportable at all (#413). Two consequences beyond
+ * that, both tightenings: an inline span no longer splices the text either side
+ * of it together, so ``clos`e`s #1`` stops reading as `closes #1` and links
+ * nothing; and an unterminated span no longer runs to the next backtick on a
+ * later line, because the inline pattern stops at a newline. Measured before
+ * landing over all 178 merged pull requests of this repository: the issue
+ * numbers this returns are unchanged for every one of them.
  */
 function stripCode(text: string): string {
-  return text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+  const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
+  return text.replace(/```[\s\S]*?```/g, blank).replace(/`[^`\n]*`/g, blank);
+}
+
+/**
+ * One occurrence of a closing keyword in a PR body: the issue it links, the
+ * zero-based line it sits on, that line as written (trimmed), and whether it
+ * is part of the body's **declaration**.
+ */
+export type LinkedIssueMatch = { issue: number; line: number; phrase: string; declared: boolean };
+
+/**
+ * How many lines from the top of the body are the declaration: the run of
+ * non-blank lines, starting at the first, that carry closing-keyword links and
+ * nothing else.
+ *
+ * That form is what `docs/workflow.md` and `skills/issue-and-pr/SKILL.md` have
+ * always asked a pull-request body to open with, and both have always allowed
+ * several issues, so every well-formed body in this repository already has it —
+ * measured over 178 merged pull requests, exactly one would be reported, and
+ * that one is a true positive (#440, whose prose named a second issue). It is a
+ * form ordinary prose cannot reach by accident because it is positional and
+ * exclusive at once: a sentence about an issue has to be the first thing in the
+ * body, and the whole of its line, before it counts as a declaration.
+ *
+ * Deliberately not a discipline and deliberately not a narrower
+ * `LINKED_ISSUE_RE`: GitHub itself links a keyword written in prose, so a
+ * parser that ignored the form would audit a *narrower* set than the issues
+ * GitHub actually closes, and this repository has already measured that
+ * authorial care does not hold a parser reading prose (#359).
+ */
+function declarationLineCount(text: string): number {
+  const onlyLinks = /^(?:(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#\d+[,;]?\s*)+$/i;
+  let n = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || !onlyLinks.test(line)) break;
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Every closing-keyword occurrence in a PR body, in order, with its line and
+ * whether the declaration carries it. Code is blanked first, so a keyword
+ * inside a fence or an inline span is not an occurrence at all.
+ *
+ * The one reader of where a link sits. `parseLinkedIssues` and
+ * `incidentalLinkedIssues` are both derived from it, so "which issues does
+ * this body link" and "which of them were declared" are one answer rather than
+ * two that have to agree — the hazard #231 named for `authorised:` lines.
+ */
+export function findLinkedIssueMatches(prBody: string | null | undefined): LinkedIssueMatch[] {
+  const body = String(prBody ?? '');
+  const text = stripCode(body);
+  const sourceLines = body.split('\n');
+  const declaredLines = declarationLineCount(text);
+  const out: LinkedIssueMatch[] = [];
+  for (const m of text.matchAll(LINKED_ISSUE_RE)) {
+    const line = text.slice(0, m.index).split('\n').length - 1;
+    out.push({
+      issue: Number(m[1]),
+      line,
+      phrase: (sourceLines[line] ?? '').trim(),
+      declared: line < declaredLines,
+    });
+  }
+  return out;
 }
 
 /**
@@ -356,17 +479,42 @@ function stripCode(text: string): string {
  * `parseAuthorisedGlobs`, which reads backticks deliberately).
  */
 export function parseLinkedIssues(prBody: string | null | undefined): number[] {
-  const text = stripCode(String(prBody ?? ''));
   const seen = new Set<number>();
   const result: number[] = [];
-  for (const m of text.matchAll(LINKED_ISSUE_RE)) {
-    const n = Number(m[1]);
-    if (!seen.has(n)) {
-      seen.add(n);
-      result.push(n);
+  for (const { issue } of findLinkedIssueMatches(prBody)) {
+    if (!seen.has(issue)) {
+      seen.add(issue);
+      result.push(issue);
     }
   }
   return result;
+}
+
+/**
+ * The issues this body links from somewhere other than its declaration and
+ * only from there — one entry per issue, at its first such occurrence.
+ *
+ * An issue the declaration already carries is not here however often the prose
+ * repeats it: it contributes no glob the run was not going to audit anyway, and
+ * this exists for scope that was widened, not for every repetition of a number.
+ *
+ * Reported by `ci/scope-check.mts` as a warning and never as a failure. A hard
+ * failure on a second link would refuse bodies that are merely discursive —
+ * a body explaining which earlier pull request closed which issue is a good
+ * body — and what was actually silent was never the match: it is that the
+ * check printed the merged glob list and never the issue numbers the globs
+ * came from, so a widened run and a correct run produced identical output
+ * (#359).
+ */
+export function incidentalLinkedIssues(prBody: string | null | undefined): LinkedIssueMatch[] {
+  const all = findLinkedIssueMatches(prBody);
+  const declared = new Set(all.filter((m) => m.declared).map((m) => m.issue));
+  const seen = new Set<number>();
+  return all.filter((m) => {
+    if (m.declared || declared.has(m.issue) || seen.has(m.issue)) return false;
+    seen.add(m.issue);
+    return true;
+  });
 }
 
 // The mechanism of the loop: a hook, a CI check, a script, a skill card or
