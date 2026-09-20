@@ -66,7 +66,7 @@ structural warning on `1ab0b26` and `unattributed` / exit 1 at this head.
 
 **Why a narrower predicate widens a refusal.** `structural` is read in **three** places in
 `ci/negative-control.mts`: the `structural` verdict itself, the `!structural &&` guard on
-the unattributed branch (`:599` at this head, `:758` on the base), and the `warning:` a
+the unattributed branch (`:599` at this head, `:759` on the base), and the `warning:` a
 vouched `pass` carries (`:619`). Narrowing the predicate is monotone — no block becomes
 structural that was not before. The **verdict mapping** is not monotone, because
 `structural` also *suppresses* the unattributed branch: a run that used to fall out as a
@@ -96,11 +96,27 @@ file. Measured while implementing #297: this repository's own honest red was rep
 comment (#390). Both names are restored in the same diff as this rule, and restoring them
 is the proof it works.
 
-Where the check moves, it moves **fail-closed**. The one transition this item introduces
-in the refusing direction — vouched `pass` to `unattributed`, exit 0 to exit 1 — stops a
-pull request that used to merge on evidence nothing owned. No run that failed to earn a
-`pass` now gets one: the only verdict that moves *toward* `pass` is the reporter shape
-this item is named for, where the overlay owns the red outright.
+**What moves, stated so this section cannot outrank "Cost accepted" below.** Exactly one
+class of run changes verdict: one whose block's structural evidence was *only* a mention.
+Every such run stops being `structural` and is judged by `attributeFailures` instead, and
+where it lands there depends on what that test finds — which is #380's rule, untouched by
+this sweep. Three outcomes, all measured against the real script:
+
+- the overlay **owns** the red, by a source location or a per-file verdict line — the
+  reporter shape this item is named for: `structural`/exit 1 becomes `pass`/exit 0;
+- the overlay owns nothing but is **mentioned**, with no other file reported as owning a
+  red: `structural`/exit 1 becomes `pass`/exit 0 as well, because `attributeFailures`
+  believes an uncontradicted mention while #380's rule stands. The overlay owns nothing
+  and the run passes. That is the weakest `pass` the check gives, it is named in "Cost
+  accepted", and closing it is #380's work and not this item's;
+- the overlay owns nothing, is mentioned or not, and the evidence is **contradicted or
+  absent** — and the run carried a `test(red):` vouch, so it used to fall out as `pass`
+  with the structural warning: `pass`/exit 0 becomes `unattributed`/exit 1.
+
+So the movement is not one-directional and this item does not claim it is. Two of the
+three move toward `pass`, one moves toward refusal, and none of them was earned or lost by
+a change to what a *failure* proves: all three are the same predicate narrowing, read by
+three different sites.
 
 ## Cost accepted
 
@@ -122,9 +138,12 @@ survive the ranking, not one. A case name quoting *both* the signature *and* an 
 path on the same line is read as an owner — and so is **any** block in which some line
 carries a signature string while some other line locates an overlaid file, because the
 second disjunct does not require the two to be the same diagnostic. A stack frame naming
-an overlaid file beside an unrelated `Error:`-shaped log line is enough. Narrowing that
-means pairing the signature to the location within one diagnostic, which the block model
-cannot express; it is named here rather than claimed away.
+an overlaid file beside an unrelated line carrying one of the four structural strings is
+enough — and only those four: `Cannot find module`, `ERR_MODULE_NOT_FOUND`, `SyntaxError`,
+`does not provide an export named`. `Error:` is a *failure* signature and never a
+structural one, so an ordinary error log does not reach this. Narrowing what remains means
+pairing the signature to the location within one diagnostic, which the block model cannot
+express; it is named here rather than claimed away.
 
 **One shape known to be missed, before and after.** Node prints a plain `SyntaxError` with
 a blank line after the caret line, so the `file://` header and the signature land in
