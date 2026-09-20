@@ -62,14 +62,13 @@
 // decision, for whoever wants to require the milestone at claim time.
 //
 // Output: JSON `{ issue, ok, failures, globs, sequenced, disjointness }` on
-// stdout by
-// default — no `warnings` key any more. `globs`/`sequenced`/`disjointness`
-// are additive to
-// the four keys the contract names, reporting AC2's `new` status, AC3's
-// blocked-by exception, and whether AC3 ran at all
-// (`{ checked, compared, reason }`: `compared` is the number of issues in
-// flight this run held the globs against, and `reason` says why it could
-// not when `checked` is `false`). That exception is transitive (#258): the milestone's
+// stdout by default — no `warnings` key any more.
+// `globs`/`sequenced`/`disjointness` are additive to the four keys the
+// contract names, reporting AC2's `new` status, AC3's blocked-by exception,
+// and whether AC3 ran at all (`{ checked, compared, reason }`: `compared` is
+// the number of issues in flight this run held the globs against, and
+// `reason` says why it could not when `checked` is `false`).
+// That exception is transitive (#258): the milestone's
 // open issues form a `Blocked by:` graph, and an overlap is `sequenced` when
 // either issue reaches the other through it, at any depth and in either
 // direction, so a chain A -> B -> C needs no restated predecessor. The graph
@@ -81,7 +80,8 @@
 // hang. The cycle scan starts from every issue in the graph, not only from
 // the linted one (#299), so a cycle between two siblings this issue does not
 // reach is reported too, worded as one this issue is not part of; each
-// cycle is named once however many walks find it. `failures` entries are either a plain string or,
+// cycle is named once however many walks find it.
+// `failures` entries are either a plain string or,
 // for AC3 (glob overlap), the object shape the issue's acceptance criteria
 // name. Each `globs` entry carries `grant: true` when it came from an
 // `authorised:` line and `grant: false` when it came from a bullet, so a
