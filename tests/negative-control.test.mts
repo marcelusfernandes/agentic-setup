@@ -602,31 +602,16 @@ const unrelatedRedHead = commit(attrRepo, {
 }, 'feat: a test that passes on the base, beside a change nothing tests');
 git(['checkout', '-q', 'main'], attrRepo);
 r = attrRun(unrelatedRedHead);
-check(
-  'an overlaid run red only on a non-overlaid file is `unattributed`, not `pass`',
-  r.status === 1 && /unattributed/.test(r.out) && !/negative-control: pass/.test(r.out),
-  r.out,
-);
-check(
-  'the `unattributed` verdict is its own, not folded into `vacuous`',
-  /negative-control: unattributed/.test(r.out) && !/negative-control: vacuous/.test(r.out),
-  r.out,
-);
-check(
-  'the `unattributed` detail names the failures it did see, so the reader can act on them',
-  /unattributed/.test(r.out) && /unrelated\.case\.mts: 0 passed, 1 failed/.test(r.out),
-  r.out,
-);
-check(
-  'the `unattributed` detail names the overlaid files it looked for and found nothing about',
-  /unattributed/.test(r.out) && /tests\/breaker\.case\.mts/.test(r.out),
-  r.out,
-);
-check(
-  'the `unattributed` detail gives the two-argument invocation that reproduces it by hand',
-  /unattributed/.test(r.out) && /--base/.test(r.out) && /--head/.test(r.out),
-  r.out,
-);
+check('an overlaid run red only on a non-overlaid file is `unattributed`, not `pass`',
+  r.status === 1 && /unattributed/.test(r.out) && !/negative-control: pass/.test(r.out), r.out);
+check('the `unattributed` verdict is its own, not folded into `vacuous`',
+  /negative-control: unattributed/.test(r.out) && !/negative-control: vacuous/.test(r.out), r.out);
+check('the `unattributed` detail names the failures it did see, so the reader can act on them',
+  /unattributed/.test(r.out) && /unrelated\.case\.mts: 0 passed, 1 failed/.test(r.out), r.out);
+check('the `unattributed` detail names the overlaid files it looked for and found nothing about',
+  /unattributed/.test(r.out) && /tests\/breaker\.case\.mts/.test(r.out), r.out);
+check('the `unattributed` detail gives the two-argument invocation that reproduces it by hand',
+  /unattributed/.test(r.out) && /--base/.test(r.out) && /--head/.test(r.out), r.out);
 
 // 2. One red on a file the overlay did place: the tests bite, and the verdict
 //    is the unchanged `pass` with no warning.
@@ -641,21 +626,11 @@ const overlayRedHead = commit(attrRepo, {
 }, 'feat: a test that fails on the base');
 git(['checkout', '-q', 'main'], attrRepo);
 r = attrRun(overlayRedHead);
-check(
-  'a red on a file the overlay placed is still `pass`',
-  r.status === 0 && /\bpass\b/.test(r.out) && !/unattributed/.test(r.out),
-  r.out,
-);
-check(
-  'a clean pass carries no warning about an unrelated red',
-  !/warning:/.test(r.out),
-  r.out,
-);
-check(
-  'a bare FAIL line naming no file is not read as another file\'s red',
-  /FAIL the thing this change breaks/.test(r.out) && !/warning:/.test(r.out),
-  r.out,
-);
+check('a red on a file the overlay placed is still `pass`',
+  r.status === 0 && /\bpass\b/.test(r.out) && !/unattributed/.test(r.out), r.out);
+check('a clean pass carries no warning about an unrelated red', !/warning:/.test(r.out), r.out);
+check('a bare FAIL line naming no file is not read as another file\'s red',
+  /FAIL the thing this change breaks/.test(r.out) && !/warning:/.test(r.out), r.out);
 
 // 3. One of each. The overlay's own red is there, so the verdict stays
 //    `pass` — but the unrelated red is real and the operator is told, rather
@@ -732,16 +707,10 @@ const silentHead = commit(silentRepo, {
   'tests/check.mts': "import { v } from '../lib.mts';\nprocess.exit(v === 2 ? 0 : 1);\n",
 }, 'feat: a red that reports nothing');
 r = ci('negative-control.mts', ['--base', silentBase, '--head', silentHead], { cwd: silentRepo });
-check(
-  'a red that reports no failure at all is `unattributed`, not `pass`',
-  r.status === 1 && /unattributed/.test(r.out),
-  r.out,
-);
-check(
-  'its detail says the run reported no failure of its own',
-  /reported no failure of its own/.test(r.out),
-  r.out,
-);
+check('a red that reports no failure at all is `unattributed`, not `pass`',
+  r.status === 1 && /unattributed/.test(r.out), r.out);
+check('its detail says the run reported no failure of its own',
+  /reported no failure of its own/.test(r.out), r.out);
 
 // --- a diff the overlay carries whole cannot be proved by it (#355) --------
 // The overlay is a comparison: head's test files on a base that lacks the
@@ -783,6 +752,42 @@ git(['checkout', '-q', 'feat/1-x'], repo);
 r = ci('negative-control.mts', ['--base', base, '--head', declaredClaimHead, '--branch', 'feat/44-declared-claim'], { cwd: repo });
 check('a `proof/<slug>.json` naming a production file cannot buy `test-only`',
   r.status === 1 && /negative-control: vacuous/.test(r.out), r.out);
+
+// --- a passing file's note line cannot move the verdict (#428) ------------
+// tests/run.mts copies a passing test file's `note` lines into the log this
+// check parses (#415), continuation lines included and marked (#432). The
+// listing is written out here as literal text (invariant 10): building it
+// from that runner would pass against a runner that had stopped printing
+// notes at all. Measured against the base, each of the three notes moved the
+// verdict on its own — `unattributed` to `pass` through `mentioned`, an
+// honest red to `structural`, and `unattributed` to a `pass` that had also
+// lost its collateral warning through `locatesOverlay`. A `test(red):`
+// subject vouches for the red, which moves the structural one to `pass` too,
+// so both subjects are run.
+const noteLog = (note: string) =>
+  `console.log(${JSON.stringify(`a.case.mts: CRASHED (exit 1)\ncheck.mts: 49 passed, 0 failed\n${note}2738 passed, 1 failed (node)`)});\nprocess.exit(1);\n`;
+let noteFixture = 50;
+const notedVerdict = (note: string, subject: string): string => {
+  git(['checkout', '-q', '-b', `fix/${noteFixture++}-note`, base], repo);
+  const noteHead = commit(repo, { 'lib.mts': 'export const v = 9;\n', 'tests/check.mts': noteLog(note) }, subject);
+  git(['checkout', '-q', 'feat/1-x'], repo);
+  const out = nc(noteHead).out;
+  return `${out.match(/negative-control: (\S+)/)?.[1] ?? 'no verdict'}${/warning:/.test(out) ? ' +warning' : ''}`;
+};
+const NOTES: [string, string][] = [
+  ['names an overlaid file beside a failure token', 'check.mts: note  provenance: row #12 skipped, gh declined: Error: HTTP 403 (rate limit)\n'],
+  ['carries a structural token', "check.mts: note  provenance: gh unavailable: Error: Cannot find module 'undici'\n"],
+  ['carries a source location on a continuation line', 'check.mts: note     at clone (/repo/tests/check.mts:12:5)\n'],
+];
+for (const subject of ['feat: a red the overlay did not cause', 'test(red): a red the overlay did not cause']) {
+  const kind = subject.slice(0, subject.indexOf(':'));
+  const bare = notedVerdict('', subject);
+  check(`the captured listing without a note is \`unattributed\` (${kind})`, bare === 'unattributed', bare);
+  for (const [what, note] of NOTES) {
+    const got = notedVerdict(note, subject);
+    check(`a passing file's note that ${what} does not move the verdict (${kind})`, got === bare, `${got}, without the note ${bare}`);
+  }
+}
 
 check(
   'negative-control leaves no worktree behind in the attribution repo',
