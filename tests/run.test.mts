@@ -33,6 +33,14 @@
 // real count would pass against a runner that printed both. The aggregate is
 // pinned as literal text for the same reason: it is built from the per-file
 // counts, so a stray one of them reaches it.
+//
+// The `g` fixture is #439's own regression case and pins the two rules
+// against each other: it holds a stray count that *does* start a line and a
+// real summary that does not, because the note above it was never
+// terminated. Preferring any line-starting summary reports the stray and
+// puts the real summary back inside the printed note, which is the #429
+// defect the `e` fixture exists to keep out. Its stream shape is the point;
+// do not tidy the missing newline.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -108,6 +116,20 @@ writeFileSync(
     'process.exit(0);\n',
 );
 
+// Passes one case, and is both shapes at once: a summary-shaped line at the
+// start of a line, and then its real summary glued onto a note whose line was
+// never terminated. So no line of its stdout starts with *its own* count,
+// while one does start with a count that is not its result. A runner that
+// prefers any line-starting summary reports the stray and lets the real
+// summary ride into the printed note. The missing newline is the case: do not
+// tidy it.
+writeFileSync(
+  join(dir, 'g.test.mts'),
+  "console.log('3 passed, 0 failed  <- the count this file is not reporting');\n" +
+    "process.stdout.write('note  g: stdout has no trailing newline either');\n" +
+    "console.log(`1 passed, 0 failed (${process.argv[0].split('/').pop()})`);\n" +
+    'process.exit(0);\n',
+);
 // Passes one case, and writes a summary-shaped line of its own *before* it —
 // a quoted count at the very start of a line, which is the one place the
 // runner's own summaries appear. Only "the last one" tells the two apart
@@ -147,7 +169,7 @@ check('run.mts runs the passing file', /b\.test\.mts[\s\S]*3 passed, 0 failed/.t
 check('run.mts runs the failing file', /a\.test\.mts[\s\S]*1 passed, 1 failed/.test(out), out);
 check('run.mts discovers files in sorted order (a before b)', out.indexOf('a.test.mts') < out.indexOf('b.test.mts'), out);
 check('run.mts ignores files that are not *.test.mts', !/helper\.mts/.test(out), out);
-check('run.mts prints an aggregate line summing all files (13 passed, 1 failed)', /\b13 passed, 1 failed\b/.test(out), out);
+check('run.mts prints an aggregate line summing all files (14 passed, 1 failed)', /\b14 passed, 1 failed\b/.test(out), out);
 check('run.mts spawns test files with the runtime that launched it', out.includes(`1 passed, 1 failed (${RUNTIME.split('/').pop()})`), out);
 check(
   'run.mts parses the summary from stdout only, ignoring a look-alike line on stderr',
@@ -227,6 +249,17 @@ check(
 check(
   "run.mts leaves a note whole when the note's own text is summary-shaped",
   out.includes('k.test.mts: note  k: the run it read reported 2 passed, 3 failed, which is not this result'),
+  out,
+);
+check(
+  'run.mts prefers a summary glued onto an unterminated note over a stray one that does start a line',
+  out.includes('g.test.mts: 1 passed, 0 failed') && !out.includes('g.test.mts: 3 passed, 0 failed'),
+  out,
+);
+check(
+  'run.mts keeps a glued summary out of the note even when the file also wrote a line-starting stray',
+  out.includes('g.test.mts: note  g: stdout has no trailing newline either\n') &&
+    !out.includes('newline either1 passed'),
   out,
 );
 finish();
