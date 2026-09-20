@@ -31,7 +31,25 @@
 // did not add. Reporting it is the point — before #310 that case produced no
 // message at all, so a file that had crossed the limit was exempt from then
 // on. "Under the limit" and "not failing this check" are two questions, and
-// the summary answers them separately.
+// the summary answers them separately. Since #413 a third: a file left within
+// FILE_LINE_APPROACH_BAND lines of the limit without crossing it is named
+// under `### Approaching the line limit`, also without failing, so the rule
+// speaks before the pull request that crosses rather than after it. A file at
+// exactly FILE_LINE_LIMIT is reported there, and that section says in words
+// that it is not over the limit.
+//
+// Every one of those length questions is answered against the **merge base**
+// of the pull request, and so is the changed-file list — one base per
+// question (#387). The base tip the event carries is named in the summary and
+// read for nothing else; see `showAt`.
+//
+// It also says what it audited and where it learned it: how many globs came
+// from how many linked issues, each issue marked `declared` when the body's
+// opening lines link it and `from prose` when only later prose does, and a
+// `warning:` for each of the second kind naming the phrase, the issue and the
+// globs it adds. `LINKED_ISSUE_RE` is deliberately not narrowed — GitHub
+// closes an issue named in prose too, so a narrower parser would audit less
+// than GitHub actually closes (#359).
 //
 // It also names, as a `warning:` that never changes the exit code, every
 // mechanism file the diff changes when the same diff records no decision
@@ -62,7 +80,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from './lib/args.mts';
-import { checkScope, collectLinkedGlobs, decisionNudge, dogfoodTrigger, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, inheritedOverLimit, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
+import { approachingLimit, checkScope, collectLinkedGlobs, decisionNudge, dogfoodTrigger, FILE_LINE_APPROACH_BAND, FILE_LINE_LIMIT, fileGrowth, findMisplacedAuthorisedLines, incidentalLinkedIssues, inheritedOverLimit, parseAuthorisedGlobs, parseLinkedIssues } from './lib/scope.mts';
 import type { FileLinesEntry } from './lib/scope.mts';
 import { matchesAny } from './lib/globs.mts';
 import { appendSummary } from './lib/summary.mts';
@@ -88,8 +106,34 @@ function gh(ghArgs: string[]): string {
   return r.stdout;
 }
 
+// The one commit every question in this file is answered against: the merge
+// base of the pull request's base branch and its head — the commit the branch
+// forked from, which is what `git diff base...head` has always resolved to
+// internally. Computed once, by name, so the changed-file list and the base
+// line counts read the same commit instead of two that coincide only while the
+// branch is level with `main` (#387, via #413).
+//
+// Fails closed. `git merge-base` answers from the object store alone; when it
+// cannot, the two commits are not both present (a shallow checkout — this
+// repository's workflow sets `fetch-depth: 0` precisely so they are) and every
+// answer below would be computed against the wrong history. A check that
+// guessed here would guess in the direction of passing.
+function mergeBaseOf(base: string, head: string): string {
+  const r = spawnSync('git', ['merge-base', base, head], { cwd: root, encoding: 'utf8' });
+  // `git merge-base` exits 1 with no output at all when the two commits share
+  // no ancestor, so the reason has to be supplied here or the refusal reads as
+  // a blank one.
+  if (r.status !== 0) {
+    const why = (r.stderr || r.stdout).trim();
+    fail(`git merge-base ${base} ${head} found no common commit${why ? `: ${why}` : ' and said nothing'} — the two have unrelated histories, or the checkout is too shallow to hold both (this workflow sets fetch-depth: 0 so that it is not).`);
+  }
+  const sha = r.stdout.trim();
+  if (!sha) fail(`git merge-base ${base} ${head} named no commit.`);
+  return sha;
+}
+
 function changedFiles(base: string, head: string): string[] {
-  const r = spawnSync('git', ['diff', '--no-renames', '--name-only', `${base}...${head}`], { cwd: root, encoding: 'utf8' });
+  const r = spawnSync('git', ['diff', '--no-renames', '--name-only', base, head], { cwd: root, encoding: 'utf8' });
   if (r.status !== 0) fail(`git diff failed: ${r.stderr.trim()}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
@@ -100,7 +144,7 @@ function changedFiles(base: string, head: string): string[] {
 // into a single `R<score>\t<from>\t<to>` line so the "from" path is
 // recoverable at all.
 function removedPaths(base: string, head: string): string[] {
-  const r = spawnSync('git', ['diff', '--name-status', '--find-renames', `${base}...${head}`], { cwd: root, encoding: 'utf8' });
+  const r = spawnSync('git', ['diff', '--name-status', '--find-renames', base, head], { cwd: root, encoding: 'utf8' });
   if (r.status !== 0) fail(`git diff failed: ${r.stderr.trim()}`);
   const out: string[] = [];
   for (const raw of r.stdout.split('\n')) {
@@ -138,6 +182,16 @@ function grepReferences(removedPath: string): string[] {
 
 // The content of `path` at `ref`, or null when it does not exist there (a
 // new file at head, or absent at base).
+//
+// The base side of every call below is the **merge base**, never the base tip
+// (`event.pull_request.base.sha`). The tip is deliberately not used here and
+// this is the place it would have been read: it answers a different question —
+// "what will `main` look like" — and the line rule asks "what did this branch
+// do to this file", which is the merge base. Reading the tip made #290 report
+// a branch that had added 10 lines to `tests/init.test.mts` as having removed
+// 3, because #283 had landed in between (#387, item 0029's own second finding).
+// The tip is still printed in the summary, under its own name, so the number
+// that is not being used is visible rather than merely absent.
 function showAt(base: string, path: string): string | null {
   const r = spawnSync('git', ['show', `${base}:${path}`], { cwd: root, encoding: 'utf8' });
   return r.status === 0 ? r.stdout : null;
@@ -191,8 +245,14 @@ const splitList = (v: string | true | undefined): string[] =>
   typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
 const event = readEvent();
-const baseRef = String(args.base ?? event?.pull_request?.base?.sha ?? '');
+// The base **tip** as the event reports it. Used for exactly one thing: to
+// find the merge base below, and to be named in the summary as the commit the
+// line rule is not measured against (#387).
+const baseTip = String(args.base ?? event?.pull_request?.base?.sha ?? '');
 const headRef = String(args.head ?? event?.pull_request?.head?.sha ?? '');
+// One base per question. Empty only on a --files-file dry run, which has no
+// commits to compare and asks none of the questions that need one.
+const baseRef = baseTip && headRef ? mergeBaseOf(baseTip, headRef) : '';
 
 const files = typeof args['files-file'] === 'string'
   ? lines(args['files-file'])
@@ -225,6 +285,34 @@ const linkedGlobs = collectLinkedGlobs(linked);
 const issueGlobs = linkedGlobs.flatMap((g) => g.globs);
 if (issueGlobs.length === 0) fail('the linked issue(s) declare no globs under `## Files`.');
 const authorisedGlobs = linkedGlobs.flatMap((g) => g.authorised);
+// Where each linked issue was found. An issue linked from prose still counts —
+// GitHub closes it, so auditing it is right — but the run now says so, which is
+// the whole of #359: both incidents were invisible because the merged glob list
+// was printed and the issue numbers behind it never were, so a widened run and
+// a correct run produced identical output.
+const incidental = incidentalLinkedIssues(prBody);
+const incidentalIssues = new Set(incidental.map((m) => m.issue));
+const declaredGlobs = new Set(
+  linkedGlobs.filter(({ issue }) => issue === null || !incidentalIssues.has(issue)).flatMap((g) => [...g.globs, ...g.authorised]),
+);
+// Per incidental issue: the globs it adds that the declaration did not already
+// carry. Distinct paths, not a count of bullets — the reviewer of #359
+// corrected its own wording here, because the accidental issue on PR #389
+// contributed six globs but five paths nothing else granted.
+const incidentalLinks = incidental.map((m) => ({
+  issue: m.issue,
+  line: m.line,
+  phrase: m.phrase,
+  adds: [...new Set(
+    linkedGlobs.filter(({ issue }) => issue === m.issue).flatMap((g) => [...g.globs, ...g.authorised]),
+  )].filter((g) => !declaredGlobs.has(g)),
+}));
+const audited = { globs: issueGlobs.length + authorisedGlobs.length, issues: linkedGlobs.length };
+const AUDITED_LINE = `Audited ${audited.globs} glob(s) from ${audited.issues} linked issue(s): ${
+  linkedGlobs
+    .map(({ issue }) => `#${issue ?? '?'} (${issue !== null && incidentalIssues.has(issue) ? 'from prose' : 'declared'})`)
+    .join(', ')
+}`;
 // Parsed, never applied: a grant in the PR body is the self-grant #155
 // closed. Reported whether or not the check passes — a stale grant that
 // did nothing should not read as accepted.
@@ -241,6 +329,13 @@ const lengths = baseRef && headRef ? growthEntries(baseRef, headRef, files) : []
 // change to it silently exempt.
 const growth = fileGrowth(lengths);
 const inherited = inheritedOverLimit(lengths);
+// The third reading of the same entries (#413): files this diff leaves close
+// to the limit without crossing it. Reported like `inherited`, never folded
+// into `ok`, and never overlapping either over-limit list — one file has one
+// outcome. A file at exactly FILE_LINE_LIMIT is here, and the section says so
+// in words, because "at the limit" and "over the limit" were the same sentence
+// to a reader and are not the same fact.
+const approaching = approachingLimit(lengths);
 const ok = result.ok && dangling.length === 0 && growth.length === 0;
 // A grant written outside ## Files never reaches parseAuthorisedGlobs at
 // all, so it is not even among the ignored grants above; only worth
@@ -262,6 +357,17 @@ const owedDogfood = dogfoodTrigger(files, prBody);
 const dogfoodWarning = owedDogfood.length
   ? `${owedDogfood.length} mechanism file(s) changed and this pull request names no dogfood report — name a \`docs/dogfood/<date>.md\` report, or expect scripts/close-milestone.mts to refuse the phase: ${owedDogfood.join(', ')}`
   : null;
+// A third warning of the same shape, never folded into `ok` either: an issue
+// linked from prose rather than from the declaration at the top of the body.
+// Warned and not failed on purpose — a hard failure would refuse a body that
+// is merely discursive, and a body explaining which pull request closed which
+// issue is a good body, not a broken one (#359).
+const linkedWarnings = incidentalLinks.map(
+  (l) =>
+    `#${l.issue} is linked from prose rather than from the declaration at the top of the body, and ${
+      l.adds.length ? `adds ${l.adds.length} glob(s) the declaration did not: ${l.adds.map((g) => `\`${g}\``).join(', ')}` : 'adds no glob the declaration did not'
+    } — line ${l.line + 1}: "${l.phrase}"`,
+);
 
 let firstLine: string;
 if (!result.ok) {
@@ -284,9 +390,13 @@ const MISPLACED_REASON =
 console.log(JSON.stringify({
   ...result,
   ok,
+  audited,
+  ...(baseRef ? { measuredBase: { mergeBase: baseRef, baseTip, head: headRef } } : {}),
   danglingReferences: dangling,
   growth,
   inherited,
+  approaching,
+  ...(incidentalLinks.length ? { incidentalLinks } : {}),
   ...(ignoredPrGrants.length ? { ignoredPrGrants } : {}),
   ...(misplacedAuthorised.length ? { misplacedAuthorised } : {}),
   ...(decisionWarning ? { decisionNudge: nudged, warning: decisionWarning } : {}),
@@ -311,6 +421,11 @@ appendSummary(
           ...ignoredPrGrants.map((g) => `- ignored: \`${g}\``),
         ]
       : []),
+    '',
+    ...(baseRef
+      ? [`Measured against the merge base \`${baseRef}\` — the commit this branch forked from. The base tip \`${baseTip}\` is not what the line counts below are read from; the head is \`${headRef}\`.`, '']
+      : []),
+    AUDITED_LINE,
     '',
     'Globs by linked issue:',
     ...linkedGlobs.map(({ issue, globs }) => `- #${issue ?? '?'}: ${globs.length ? globs.map((g) => `\`${g}\``).join(', ') : '(none)'}`),
@@ -353,8 +468,29 @@ appendSummary(
           `What closes it: a pull request that brings the file back under ${FILE_LINE_LIMIT} lines — split it, or move part of it out. Until one does, every pull request that touches the file repeats this message, the ones that shorten it included.`,
         ]
       : []),
+    ...(approaching.length
+      ? [
+          '',
+          '### Approaching the line limit',
+          '',
+          // The one sentence that has to be unmistakable, because the two
+          // sections above it are about being over the limit and this one is
+          // about not being over it. It states the band and states that the
+          // head is under the limit. The clause about exactly FILE_LINE_LIMIT
+          // is added only when a file in this run is actually there: it answers
+          // a question a reader arrives with, and a reader who has no file at
+          // the limit did not arrive with it. An assertion printed on every run
+          // whether or not it describes anything in front of it is how a
+          // reported line becomes scenery.
+          `**REPORTED, not failed** — within ${FILE_LINE_APPROACH_BAND} lines of the ${FILE_LINE_LIMIT}-line limit at the head, and not over it${approaching.some((g) => g.headLines === FILE_LINE_LIMIT) ? `: a file at exactly ${FILE_LINE_LIMIT} lines is at the limit, not past it, and fails nothing` : ''}:`,
+          ...approaching.map((g) => `- \`${g.path}\` is at ${g.headLines} line(s), ${FILE_LINE_LIMIT - g.headLines} from the limit${g.baseLines === null ? ', new at head' : ` (${g.baseLines} at the merge base)`}`),
+          '',
+          `What closes it: a pull request that leaves the file with room — split it, or move part of it out — or nothing at all, if the file is finished. This is not a refusal and nothing here changes the exit code; it is the warning the ${FILE_LINE_LIMIT}-line rule never gave before the pull request that crossed.`,
+        ]
+      : []),
     ...(decisionWarning ? ['', `> warning: ${decisionWarning}`] : []),
     ...(dogfoodWarning ? ['', `> warning: ${dogfoodWarning}`] : []),
+    ...linkedWarnings.flatMap((w) => ['', `> warning: ${w}`]),
   ].join('\n'),
 );
 if (!ok) process.exit(1);

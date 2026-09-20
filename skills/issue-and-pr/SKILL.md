@@ -79,7 +79,17 @@ link) as the first line — `Fixes #N` and `Resolves #N` (and their close/closed
 resolve/resolved forms) are also accepted, and a PR may link several issues this way, in
 which case `scope` checks the diff against the union of every linked issue's globs. A
 keyword inside backticks or a fenced code block is ignored, so never quote one as a
-formatted example. Then the test summary, the globs touched, risks. The implementer sets
+formatted example. **The declaration is the opening lines and only those** — the run of
+lines from the first that carry closing-keyword links and nothing else — and a keyword
+further down **still links the issue**, because GitHub closes it and `scope` therefore
+audits its globs. Since #413 `scope` says which issue each glob came from, prints
+`Audited N glob(s) from M linked issue(s)`, and warns (never fails) on an issue linked
+only from prose. The case to avoid is not the quoted example but the incidental
+sentence: PR #440's body opened `Closes #338` and later read
+`PR #426 (which closed #299) made both sentences false`, which linked #299 and widened
+the audited scope with nothing in the output to show it. Write a second issue into the
+declaration if you mean it, and backtick the keyword if you do not. Then the test
+summary, the globs touched, risks. The implementer sets
 `state:in-review` and nothing else: **the orchestrator** copies the issue's `type:` and
 `scope:` labels onto the PR at step 4, because an agent that labels its own work could
 buy its own exemptions. `negative-control` no longer reads `type:` to decide a skip — it
