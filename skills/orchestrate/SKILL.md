@@ -632,7 +632,14 @@ in this order — the closeout lands **before** the close, never after it
   - `evidence:sha` — its `main SHA`, or a row's merge commit, is not an ancestor of
     `origin/main`.
   - `evidence:issue-missing` — a closed issue of the milestone is neither a row in
-    `## Issues` nor a `#N` in a `## Left out` bullet.
+    `## Issues` nor a `#N` in a `## Left out` bullet. Any `#N` anywhere in the bullet
+    counts, its continuation lines included.
+  - `evidence:row-open` — a row of `## Issues` names an issue that is not closed, or
+    names no issue of the repository at all. The opposite direction of the one above.
+  - `evidence:left-out-shipped` — a `## Left out` bullet *accounts for* an issue that
+    shipped: its `#N` opens the bullet, and a merged pull request closed it whose merge
+    commit is already an ancestor of the file's `main SHA`
+    (`docs/closeout/README.md`, "Format").
   - `dogfood` — a pull request merged into the phase changed `hooks/`, `ci/`, `scripts/`
     or a `skills/**/SKILL.md` and `## Dogfood` names no `docs/dogfood/<date>.md` report.
 

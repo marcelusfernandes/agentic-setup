@@ -235,7 +235,12 @@ another path, or a file not on `origin/main` yet), `evidence:format` (does not p
 against `docs/closeout/README.md`, or is still the template), `evidence:sha` (its
 `main SHA` or a row's merge commit is not an ancestor of `origin/main`),
 `evidence:issue-missing` (a closed issue of the milestone is neither a row in `## Issues`
-nor a `#N` in a `## Left out` bullet), `dogfood` (a pull request merged into the phase
+nor a `#N` anywhere in a `## Left out` bullet, its continuation lines included),
+`evidence:row-open` (a row of `## Issues` names an issue that is not closed, or no issue
+at all — the opposite direction of the one before it),
+`evidence:left-out-shipped` (a `## Left out` bullet *accounts for* an issue that shipped:
+its `#N` opens the bullet, and a merged pull request closed it whose merge commit is
+already an ancestor of the file's `main SHA`), `dogfood` (a pull request merged into the phase
 changed `hooks/`, `ci/`, `scripts/` or a `skills/**/SKILL.md` and `## Dogfood` names no
 `docs/dogfood/<date>.md` report). Exit 1 with `{ error }` when `gh` or `git` itself
 could not answer — a tooling problem needing a person, never a verdict on the close and
