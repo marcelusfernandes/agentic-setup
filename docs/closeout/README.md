@@ -98,11 +98,23 @@ unset, it leaves one note on stderr naming `AGENTIC_PROVENANCE_LIVE_GH`; set to
 once per row of every closeout, to a quota shared with every agent and tool on
 the account — and exhausting that quota failed this pin as
 `docs/closeout/M*.md is clean`, naming a file when the cause was an HTTP status
-from another machine (#356). With the opt-in set, a `gh` that cannot answer — a
-rate limit, a 5xx, no network — is a note per row rather than a failure, while a
-number that resolves to nothing stays a failure: **the API declining to answer
-and the record being wrong are different answers**, and only the second is
-evidence about a closeout. Every one of those paths, and the real tree's own
+from another machine (#356). With the opt-in set there are **three** answers, not two, and the third was
+added by #422. A `gh` that cannot answer — a rate limit, a 5xx, no network — is
+**one note per failed batch**, naming how many issues went unchecked (per
+*batch*, because #298 replaced the per-row `gh issue view` with one
+`gh api graphql` call per fifty issues). A number that resolves to nothing stays
+a failure. And a token **refused the scope the query needs** is a failure of a
+third kind. So: **the API declining to answer, the record being wrong, and the
+run not being allowed to ask.** The first proves nothing about a closeout; the
+second is evidence about one; the third is a verdict on the **workflow's own
+configuration** and about no closeout at all. The third is separated out because
+it is the only one of the three that never fixes itself, and because its whole
+symptom would otherwise be a green run that checked nothing — the query reads
+pull-request data, and a workflow with an explicit `permissions:` block grants
+`none` to every scope it does not list. It is recognised structurally, as
+`FORBIDDEN` in GraphQL's `errors[]`, read before anything else; a refusal that
+carries no such type falls back to the first answer, so a drift costs a skip and
+never a false red. Every one of those paths, and the real tree's own
 rows, are covered by a controlled `gh` fixture in the test. The `test` job could
 not run the live half anyway (`contents: read`, no token), so in CI it is a no-op by
 design and not an oversight: the run that asks GitHub with a real token is
@@ -177,8 +189,12 @@ The rules the parser applies, in order:
   An indented line continues the bullet above it **whatever it opens with**, `- `
   included: `- Deferred:` followed by `  - #12 …` is one bullet about the
   deferral, so #12 is mentioned there and not claimed. A bullet begins at the
-  left margin, and an unindented line that is not one ends the bullet above,
-  which is what keeps the parser strict.
+  left margin, and nothing else opens one — which is what keeps the parser
+  strict. Nothing closes one either, and that is worth stating rather than
+  leaving to be discovered: a blank line or an unindented paragraph is skipped,
+  and an indented line after it still joins the bullet above. Every one of those
+  readings only ever widens what counts as **mentioned**; none of them splits a
+  bullet in two, and none turns prose into a claim.
 - **Mentioning an issue and accounting for it are not the same thing.** A
   bullet *accounts for* the issues in the unbroken run of `#N` that opens the bullet
   — `- #12`, `- #12 and #13`, `- #12, #13 and #14`, separated by nothing

@@ -98,7 +98,10 @@ function bulletsOf(lines: string[]): string[] {
     // An indented line continues the bullet above it whatever it opens with,
     // `- ` included: `- Deferred:` / `  - #12 ...` is one bullet about the
     // deferral, not two, so #12 is mentioned and not claimed. A bullet begins
-    // at the left margin; anything else ends the one above and is ignored.
+    // at the left margin and nothing else opens one. Nothing closes one
+    // either: a blank line or an unindented paragraph is skipped without
+    // ending the bullet above, so an indented line after it still joins. Every
+    // reading here only widens the mention set; none splits a bullet in two.
     if (/^\s/.test(line) && bullets.length > 0) bullets[bullets.length - 1] += ` ${text}`;
     else if (text.startsWith('- ')) bullets.push(text);
   }
@@ -357,7 +360,25 @@ if (!existsSync(readmePath)) {
   // onto the base and not this README.
   check('README.md names the opt-in that runs the issue-closed check', /AGENTIC_PROVENANCE_LIVE_GH/.test(honest), honest);
   check('README.md says that check is opt-in and skipped by default', /opt-in/.test(honest) && /skipped by default/.test(honest), honest);
-  check('README.md separates the API declining from the record being wrong', /declining to answer/.test(honest) && /different answers/.test(honest), honest);
+  // #422 made this three answers rather than two: a token refused the scope
+  // the query needs is a failure, and it is a verdict on the workflow's
+  // configuration rather than on any closeout. The batching in the same sweep
+  // also made "a note per row" wrong — it is one note per failed batch.
+  check(
+    'README.md separates the API declining, the record being wrong, and the run not being allowed to ask',
+    /declining to answer/.test(honest) && /not being allowed to ask/.test(honest) && /FORBIDDEN/.test(honest),
+    honest,
+  );
+  check(
+    'README.md says a refused scope is a verdict on the configuration, not on a closeout',
+    /configuration/.test(honest) && /never fixes itself/.test(honest),
+    honest,
+  );
+  check(
+    "README.md says the skip is one note per failed batch, not one per row",
+    /one note per failed batch/.test(honest),
+    honest,
+  );
   check(
     'README.md states that rows are in ascending issue order',
     /issue order/.test(readme) && /ascending/.test(readme),
@@ -412,7 +433,10 @@ if (!existsSync(readmePath)) {
 // keeps its own words.
 // Held to the refusal, not to the file: a whole-file `includes` would pass if
 // the sentence survived only in a comment while the code said something else,
-// which is the drift this pin exists to catch.
+// which is the drift this pin exists to catch. What it still cannot see is a
+// commented-out `errors.push` — this is a substring over source, not a parse
+// of it — but that is a stranger act than prose drifting apart, which is the
+// failure actually observed (#298: three wordings, two of them the same fact).
 const closeMilestoneSource = readFileSync(join(ROOT, 'scripts', 'close-milestone.mts'), 'utf8');
 check(
   'scripts/close-milestone.mts refuses the unfilled template in the pin\'s own words',

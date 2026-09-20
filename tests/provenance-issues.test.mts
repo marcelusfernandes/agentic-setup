@@ -88,7 +88,10 @@ function bulletsOf(lines: string[]): string[] {
     // An indented line continues the bullet above it whatever it opens with,
     // `- ` included: `- Deferred:` / `  - #12 ...` is one bullet about the
     // deferral, not two, so #12 is mentioned and not claimed. A bullet begins
-    // at the left margin; anything else ends the one above and is ignored.
+    // at the left margin and nothing else opens one. Nothing closes one
+    // either: a blank line or an unindented paragraph is skipped without
+    // ending the bullet above, so an indented line after it still joins. Every
+    // reading here only widens the mention set; none splits a bullet in two.
     if (/^\s/.test(line) && bullets.length > 0) bullets[bullets.length - 1] += ` ${text}`;
     else if (text.startsWith('- ')) bullets.push(text);
   }

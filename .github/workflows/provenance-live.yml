@@ -20,9 +20,13 @@
 # view` per row of every closeout. The required suite asks nothing either way:
 # it has since #356.
 #
-# Crash policy: fail open on the API, fail closed on the record. A `gh` that
-# cannot answer leaves a note and the run stays green; a row naming an issue
-# that resolves to nothing, or an issue that is not closed, is red.
+# Crash policy: fail open on what passes by itself, fail closed on what does
+# not. A `gh` that cannot answer — a rate limit, a 5xx, no network — leaves a
+# note and the run stays green. A row naming an issue that resolves to nothing,
+# or an issue that is not closed, is red. So is a token refused the scope the
+# query needs: that is a configuration fact rather than a transient one, it
+# never fixes itself, and its whole symptom would otherwise be a green run that
+# checked nothing (`docs/closeout/README.md`, "What keeps it honest").
 
 name: provenance-live
 
@@ -35,9 +39,13 @@ on:
 # `pull-requests: read` is not optional and not decorative: the query reads
 # `closedByPullRequestsReferences { ... mergeCommit }`, which is pull-request
 # data, and an explicit `permissions:` block makes every unlisted scope `none`.
-# Without it GITHUB_TOKEN answers `Resource not accessible by integration`, the
-# source classifies that as the API declining, and the run goes green having
-# checked nothing — the fail-open this workflow exists to close.
+# Without it GITHUB_TOKEN answers `Resource not accessible by integration`.
+# That answer **reds**: `tests/provenance-issues.test.mts` reads GraphQL's
+# `FORBIDDEN` before anything else and fails with the permission named. Both
+# halves matter and they were added in that order — the scope is what makes the
+# check work, and the refusal class is what makes its absence audible instead of
+# a green run that checked nothing. Striking this line now breaks the run
+# loudly; before the refusal class existed it did not.
 permissions:
   contents: read
   issues: read
