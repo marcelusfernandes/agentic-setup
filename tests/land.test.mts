@@ -780,10 +780,9 @@ for (const [pr, what] of [[51, 'installed gate code'], [52, 'the workflows'], [5
 const bd = land(49, { FAKE_GH_RULES: 'required' });
 check('a docs-only diff without the label merges in mode agent, on its marker', bd.status === 0 && parse(bd.stdout)?.merged === 49 && parse(bd.stdout)?.mode === 'agent' && /pr view 49 --json comments/.test(bd.log), `${bd.stdout}\n${bd.log}`);
 
-// --- BE: one list of documentation path classes, `ci/lib/skip-paths.mts`, read by both
-// gates (#412, from #370). The pin writes the shape out itself (invariant 10), reads all
-// three files from disk, and keeps the carve-outs separate — land.mts's is deliberately
-// narrower — so neither reads as drift. AGENTIC_SKIP_GLOBS is not mirrored either.
+// --- BE: one list of documentation path classes, `ci/lib/skip-paths.mts`, read by both gates
+// (#412, from #370). The pin writes the shape out itself (invariant 10) and reads the three
+// files from disk. The carve-outs stay separate, AGENTIC_SKIP_GLOBS is mirrored nowhere.
 const DOCS_CLASSES_PIN = "['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']";
 const NC_CARVE_OUT_PIN = "['.github/scripts/agentic/**']";
 const LAND_CARVE_OUT_PIN = "['.github/scripts/agentic/**', '.github/workflows/**', 'templates/.github/workflows/**']";

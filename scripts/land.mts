@@ -117,13 +117,14 @@
 //              stays inside the documentation classes.
 //
 //              The classes are the negative control's own (#135 decided its
-//              skip by path class for the same reason), mirrored here rather
-//              than imported: `ci/negative-control.mts` runs its check on
-//              import, so nothing may import a constant out of it.
-//              `tests/land.test.mts` pins both copies against a list it
-//              writes out itself (invariant 10). Two things are deliberately
-//              not mirrored, and the pin states both so neither reads as
-//              drift. AGENTIC_SKIP_GLOBS, the environment extension of that
+//              skip by path class for the same reason), and since #412 they
+//              are literally the same list, imported from
+//              `ci/lib/skip-paths.mts` rather than copied. `tests/land.test.mts`
+//              pins that one list against a shape it writes out itself
+//              (invariant 10) and asserts neither gate holds a second copy.
+//              Two things are deliberately *not* shared, and the pin states
+//              both so neither reads as drift. AGENTIC_SKIP_GLOBS, the
+//              environment extension of that
 //              list, is not read here: it widens what owes a failing test,
 //              and an environment variable that widened a *review* exemption
 //              would be a hole an operator could open from outside the
@@ -251,6 +252,7 @@
 // flag is about modes 'approved' and 'docs', the two that print { queued }.
 import { spawnSync } from 'node:child_process';
 import { matchesAny } from '../ci/lib/globs.mts';
+import { SKIP_PATH_GLOBS } from '../ci/lib/skip-paths.mts';
 
 type Label = { name: string };
 type PRView = {
@@ -274,15 +276,20 @@ const REVIEWED_SHA = /<!--\s*agentic-reviewed-sha:\s*([0-9a-f]{40})\s*-->/gi;
 const USAGE = 'usage: node scripts/land.mts <pr> [--require-review] [--wait [--timeout <seconds>]]';
 /**
  * The documentation path classes: a diff confined to them owes no review.
- * These mirror `SKIP_PATH_GLOBS` in `ci/negative-control.mts` glob for glob —
- * the same question, asked of the same paths — and they are mirrored rather
- * than imported because that file runs its check at import time. The two
- * copies are held together by the pin in `tests/land.test.mts`, which writes
- * the list out itself and reads both files from disk (invariant 10); the
- * duplication is the thing the pin exists to catch, and consolidating the
- * constant into `ci/lib/` is the change that removes it.
+ *
+ * They are not a second list. This is `SKIP_PATH_GLOBS` itself, the classes
+ * the negative control skips by, imported from `ci/lib/skip-paths.mts` — the
+ * same question, asked of the same paths. It used to be a literal copy,
+ * because the constant lived in `ci/negative-control.mts` and that file runs
+ * its check at import time, so nothing could import it; #412 moved the list to
+ * a module of its own and the copy went with it (#370). The name stays because
+ * the documentation and item 26 of the register call it by it, and because the
+ * two gates ask different questions of the same classes: this one asks "may
+ * this diff merge unreviewed", the check asks "does this diff owe a failing
+ * test". `tests/land.test.mts` now pins one list and asserts there is no
+ * second one (invariant 10).
  */
-const DOCS_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
+const DOCS_PATH_GLOBS = SKIP_PATH_GLOBS;
 /**
  * The carve-out no documentation class may cover: a mechanism that can exempt
  * a change to itself is not a gate. The first glob is `NEVER_SKIP_GLOBS` from

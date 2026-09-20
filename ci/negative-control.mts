@@ -193,7 +193,9 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { parseArgs } from './lib/args.mts';
+import { attributeFailures, structuralInOverlay } from './lib/attribution.mts';
 import { detectCommands } from './lib/detect.mts';
+import { SKIP_PATH_GLOBS } from './lib/skip-paths.mts';
 import { branchSlug, headDeclarationPath, KNOWN_KEYS, ProofError, readDeclarationAtHead, validateDeclaredPaths } from './lib/proof.mts';
 import type { Declaration } from './lib/proof.mts';
 import { matchesAny } from './lib/globs.mts';
@@ -203,13 +205,12 @@ import { appendSummary } from './lib/summary.mts';
 // skip the path class already decided. They never skip on their own: the
 // implementer applies its own PR's labels.
 const LEGACY_SKIP_LABELS = ['type:docs', 'type:deps', 'type:infra', 'type:refactor', 'type:spec'];
-// The primary skip. Markdown is a class wherever it lives: `*` never crosses
-// a `/`, so `*.md` alone covered the root only and a pull request touching
-// nothing but `skills/x/SKILL.md` or `agents/y.md` failed as `no-tests`
-// although there was nothing to test. `.claude/**` is session configuration,
-// which no test covers either. Both root forms are kept alongside `**/*.md`:
-// the list is read by people as well as by `matchesAny`.
-const SKIP_PATH_GLOBS = ['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md'];
+// The primary skip is `SKIP_PATH_GLOBS`, imported above from
+// `ci/lib/skip-paths.mts` because `scripts/land.mts` asks the same question of
+// the same classes and used to hold a second copy of them (#412, from #370).
+// The carve-out below is *not* shared: land.mts narrows its own by two more
+// globs, and that difference is a decision rather than drift — see that file.
+//
 // The carve-out from every skipped class, AGENTIC_SKIP_GLOBS included.
 // `scripts/init.mts` copies this repository's `ci/` — this file among them —
 // into an adopting repository's `.github/scripts/agentic/`, which `.github/**`
@@ -262,173 +263,12 @@ type Outcome = 'skipped' | 'pass' | 'test-only' | 'unattributed' | 'structural' 
 const csv = (value: string | undefined): string[] =>
   (value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-// A structural failure (missing module, missing export, syntax error) reads
-// as red for the wrong reason: it says the file could not run at all, not
-// that an assertion caught the PR's change. See safe-worktree §B7.
-const STRUCTURAL_SIGNATURE = /Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|does not provide an export named/;
-
+// What a `pass` says when the overlaid run's red was structural after all: a
+// structural failure reads as red for the wrong reason — the file could not
+// run at all, not that an assertion caught the change. `structuralInOverlay`
+// (`ci/lib/attribution.mts`) decides when that is the case.
 const STRUCTURAL_WARNING =
   'the red on the base looks structural (missing module or export), not an assertion — prefer a throwing stub so the red is a runtime red (safe-worktree §B7)';
-
-/**
- * Whether the overlaid run failed structurally *because of the overlay*.
- *
- * The output is split into diagnostic blocks — maximal runs of consecutive
- * non-blank lines, which is how a runtime prints one diagnostic: the error
- * header, the offending source line, then its stack frames. A block counts
- * only when it carries a structural signature **and** names one of `paths`,
- * the overlaid test files plus every file the diff touches. Node names the
- * file in the header of both shapes — `Cannot find module '…' imported from
- * <file>` on the signature line itself, and `file:///…/<file>:1` three lines
- * above a `SyntaxError`.
- *
- * Reading the whole output instead made any structural-looking line anywhere
- * decide the outcome: a dependency that logs `Cannot find module` and carries
- * on prints its line in a block of its own and says nothing about whether the
- * overlaid file could run, yet it flipped an honest assertion red to
- * `structural` (#214).
- */
-function structuralInOverlay(output: string, paths: string[]): boolean {
-  const named = overlayNames(paths);
-  if (named.length === 0) return false;
-  return blocks(output).some((lines) =>
-    lines.some((line) => STRUCTURAL_SIGNATURE.test(line))
-      && lines.some((line) => namesOverlay(line, named)));
-}
-
-// --- did anything the overlay placed actually fail? (#354) ----------------
-
-/**
- * A line that reports a failure. Deliberately narrow, and deliberately not
- * the structural signature: `Cannot find module` on a line of its own is a
- * dependency logging and carrying on, which is the noise #214 taught this
- * file to ignore. `[1-9]\d* failed` rather than `failed`, because a per-file
- * summary line saying `0 failed` is a *green* file reporting itself, and
- * reading it as a failure is how any red becomes every file's red.
- */
-const FAILURE_SIGNATURE =
-  /\bFAIL(?:ED|URE|URES)?\b|\bCRASHED\b|\bnot ok\b|[✕✗✘×⨯]|Error:|Error \[|\bpanic:|\bTraceback\b|\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
-
-/** The overlaid run's output as diagnostic blocks of lines. */
-const blocks = (output: string): string[][] =>
-  output.split(/\n[ \t]*\n/).map((block) => block.split('\n'));
-
-/**
- * The strings that stand for `paths` in a runner's output: the repository
- * path itself and the file's basename, because a runner that spawns one
- * process per test file prints the basename (`land.test.mts: 61 passed, 14
- * failed`) while a stack frame prints the whole path. The path form alone
- * missed nearly every honest red this repository has produced.
- *
- * What the widening costs, stated in full because a narrower claim was made
- * here first and was wrong: this is a substring match, so a same-named file
- * elsewhere in the tree is one way it can credit the overlay wrongly, and a
- * *prose mention* of an overlaid file — a test case whose own name quotes a
- * path, of which this repository has nineteen — is another. Both are
- * answered by ranking the evidence in `attributeFailures` rather than by
- * narrowing the match: a mention alone never outvotes a failure that says
- * which file it belongs to. The same widened list is shared with
- * `structuralInOverlay`, which is a behaviour change there and not a
- * neutral one: a block naming only a basename beside `Cannot find module`
- * now reads `structural` where it read `pass`. That direction fails closed.
- */
-const overlayNames = (paths: string[]): string[] => {
-  const named = paths.map((p) => p.trim()).filter(Boolean);
-  return [...new Set([...named, ...named.map((p) => p.split('/').pop() ?? p)])];
-};
-
-/** Whether `line` mentions one of `names` at all. */
-const namesOverlay = (line: string, names: string[]): boolean =>
-  names.some((name) => line.includes(name));
-
-/**
- * Whether `line` names one of `names` as a *source location* — `<name>:12`
- * or a `file://` URL — which is the shape a stack frame and a Node error
- * header use to say where a failure happened. It is the one way a failure
- * and the file it happened in may be on different lines and still belong
- * together.
- */
-const locatesOverlay = (line: string, names: string[]): boolean =>
-  names.some((name) => {
-    const at = line.indexOf(name);
-    if (at < 0) return false;
-    return /^:\d/.test(line.slice(at + name.length)) || line.slice(0, at).includes('file://');
-  });
-
-/**
- * A failure line that says *whose* failure it is: a file-shaped token
- * carrying a non-zero failure count on the same line, which is what a runner
- * that spawns one process per test file prints
- * (`negative-control.test.mts: 34 passed, 1 failed`).
- *
- * Only this shape may be called someone else's red. A bare `FAIL <case
- * name>` names no file at all — a runner prints those under the file it is
- * reporting, several lines from the name — and an aggregate
- * (`2397 passed, 1 failed (node)`) is the whole suite, not a file. Counting
- * either as another file's failure would put a warning on nearly every
- * honest `pass`, naming the overlay's own failures as unrelated, which is
- * worse than no warning at all.
- */
-const FILE_VERDICT = /[\w.-]+\.[A-Za-z0-9]{1,6}\b[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/;
-
-/**
- * Whether `line` names one of `names` as the *owner* of a non-zero failure
- * count — the name, then a count on the same line after it. That is a runner
- * reporting a file's own result (`land.test.mts: 61 passed, 14 failed`), and
- * with a source location it is one of the two shapes that say which file a
- * failure belongs to rather than merely mentioning one.
- */
-const ownsFailure = (line: string, names: string[]): boolean =>
-  names.some((name) => {
-    const at = line.indexOf(name);
-    if (at < 0) return false;
-    return /^[^\n]*\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b/.test(line.slice(at + name.length));
-  });
-
-type Attribution = { owned: boolean; mentioned: boolean; failures: string[]; elsewhere: string[] };
-
-/**
- * Which of the overlaid run's failures the overlay accounts for, ranked by
- * how much the evidence actually says.
- *
- * `owned` is a failure that says which file it belongs to and names an
- * overlaid one: a source location, or a name carrying its own non-zero
- * count. `mentioned` is the weaker thing — a failure line that contains an
- * overlaid path anywhere, which a test case whose *name* quotes a path also
- * does. `failures` is everything that reported a failure and named no
- * overlaid file, in the order the run printed it, for a verdict that has to
- * say what it did see; `elsewhere` is the subset of those that names another
- * file as the owner of a non-zero count.
- *
- * An empty `failures` beside neither `owned` nor `mentioned` means the
- * command failed without reporting any failure at all, which cannot be
- * attributed either — there is nothing to read.
- */
-function attributeFailures(output: string, paths: string[]): Attribution {
-  const named = overlayNames(paths);
-  let owned = false;
-  let mentioned = false;
-  const failures: string[] = [];
-  const elsewhere: string[] = [];
-  for (const lines of blocks(output)) {
-    const located = named.length > 0 && lines.some((line) => locatesOverlay(line, named));
-    for (const line of lines) {
-      if (!FAILURE_SIGNATURE.test(line)) continue;
-      if (named.length > 0 && namesOverlay(line, named)) {
-        mentioned = true;
-        if (located || ownsFailure(line, named)) owned = true;
-        continue;
-      }
-      if (located) {
-        owned = true;
-        continue;
-      }
-      failures.push(line.trim());
-      if (FILE_VERDICT.test(line)) elsewhere.push(line.trim());
-    }
-  }
-  return { owned, mentioned, failures, elsewhere };
-}
 
 /** At most `FAILURES_SHOWN` reported failures, one per line, for a detail. */
 const listFailures = (failures: string[]): string => {
