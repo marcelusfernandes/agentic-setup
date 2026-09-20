@@ -457,6 +457,13 @@ run was reported `structural`. The reporter renamed two of this repository's own
 cases to get a green run rather than fix it; the names are back, and the ranking is what
 keeps them safe (#390, #412).
 
+**A `structural` red also suppresses the `unattributed` test**, which is why narrowing the
+rule above does not only relax verdicts. A run whose red nothing owns, vouched by a
+`test(red):` commit and structural only on the strength of a mention, used to fall out as
+`pass` with the warning; it now reaches the attribution test and reports `unattributed`.
+That is exit 0 to exit 1 — a refusal of honest work rather than a pass of dishonest work —
+and it is the only transition in the refusing direction #412 introduced (item 34).
+
 ### `test-only`: the one diff the overlay cannot judge, and passes
 
 The rule above — baseline green and the overlaid run green is a fail — has exactly one

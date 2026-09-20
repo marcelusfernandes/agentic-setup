@@ -159,3 +159,13 @@ replaces and not a claim that the question is settled.
 Nothing. Item 21 (the gate does not exempt its own installed code) and the
 `structuralInOverlay` discrimination written for #214 both stand unchanged; this item adds
 the same discrimination one level up, where the pass is decided.
+
+## Updates
+
+*2026-09-20 (#412, #436):* the last sentence of the third bullet under "Cost accepted" no
+longer holds. A block naming only a basename beside `Cannot find module` is no longer read
+as `structural`: `structuralInOverlay` (now `ci/lib/attribution.mts`) requires a line that
+owns the signature, and that direction was failing closed onto honest work rather than onto
+a dishonest pass — item 34 records the rule and the transition it costs. Everything else
+here stands: `owned`/`mentioned`, the basename widening and `attributeFailures` itself are
+unchanged.

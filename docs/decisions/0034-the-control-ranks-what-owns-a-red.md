@@ -48,10 +48,31 @@ it is one; `structuralInOverlay` does not, because loading is a different questi
 failing. Both now live in `ci/lib/attribution.mts`, which is pure and directly importable
 under invariant 6, and both are tested there as well as through the real check.
 
-**Consequence, stated as a verdict change.** An overlaid run whose only structural evidence
-is a mention, over ordinary assertion failures, reports `pass` and exits 0 where it reported
-`structural` and exited 1. No run that reported `pass` before reports anything else: the
-rule is strictly narrower than the one it replaces.
+**Consequence, stated as a verdict change — and it moves in both directions.**
+
+1. An overlaid run whose only structural evidence is a mention, over failures the overlay
+   owns, reports `pass` and exits 0 where it reported `structural` and exited 1. That is
+   the change this item is for.
+2. An overlaid run whose only structural evidence is a mention, **vouched by a
+   `test(red):` commit**, and whose failures the overlay does *not* own, reports
+   `unattributed` and exits 1 where it reported `pass` and exited 0 with the structural
+   warning. That is exit 0 to exit 1 — a **refusal of honest work, not a pass of
+   dishonest work** — and it is the price of the first.
+
+The second was falsified against the real script, not reasoned about: a fixture whose
+overlaid run prints `Cannot find module 'dep'` on one line and names an overlaid file on
+the next, with a `test(red):` commit in `base..head`, reports `pass` / exit 0 with the
+structural warning on `1ab0b26` and `unattributed` / exit 1 at this head.
+
+**Why a narrower predicate widens a refusal.** `structural` is read in **three** places in
+`ci/negative-control.mts`: the `structural` verdict itself, the `!structural &&` guard on
+the unattributed branch (`:599` at this head, `:758` on the base), and the `warning:` a
+vouched `pass` carries (`:619`). Narrowing the predicate is monotone — no block becomes
+structural that was not before. The **verdict mapping** is not monotone, because
+`structural` also *suppresses* the unattributed branch: a run that used to fall out as a
+vouched `pass` on the strength of a mention now reaches the attribution test and is judged
+there. A claim about what the predicate matches is not a claim about what the check
+returns, and this item is written after that distinction was got wrong here once.
 
 ## Reason
 
@@ -75,24 +96,40 @@ file. Measured while implementing #297: this repository's own honest red was rep
 comment (#390). Both names are restored in the same diff as this rule, and restoring them
 is the proof it works.
 
-The check errs closed in the direction that matters: a red the overlay did not earn is
-still refused, because this changes only how a *structural* red is recognised, never
-whether an unattributed one passes.
+Where the check moves, it moves **fail-closed**. The one transition this item introduces
+in the refusing direction — vouched `pass` to `unattributed`, exit 0 to exit 1 — stops a
+pull request that used to merge on evidence nothing owned. No run that failed to earn a
+`pass` now gets one: the only verdict that moves *toward* `pass` is the reporter shape
+this item is named for, where the overlay owns the red outright.
 
 ## Cost accepted
 
 **A genuine structural red whose diagnostic neither names nor locates the overlaid file is
-now read as an ordinary red.** It would have to be the implementer's own `test(red):`
-business anyway — the verdict then rests on `attributeFailures`, which refuses a red no
-overlaid file owns — but the specific "prefer a throwing stub" advice the `structural`
-verdict gives is not printed for it. That direction is chosen deliberately: the old rule's
-error was a *false refusal of honest work*, which stops a pull request, and the new rule's
-error is a *less specific message on a verdict that still has to be earned*.
+now read as an ordinary red**, and the verdict then rests on `attributeFailures`. That is
+not the same as being refused. While #380's mention rule stands — and this sweep did not
+change it — `attributeFailures` reports `pass` on a *mention* with no contradicting owner,
+so such a red can still pass; what it loses is the "prefer a throwing stub" advice the
+`structural` verdict prints. The claim that the attribution test "refuses a red no
+overlaid file owns" is false today and is not what this item rests on.
 
-**One shape known to be missed, before and after.** Node prints a plain `SyntaxError` with a
-blank line between the `file://` header and the signature, so the two land in different
-blocks and neither rule sees it. That is pre-existing and untouched here; it is named so a
-later reader does not mistake it for a regression this item caused.
+**One `test(red):`-vouched shape now refuses where it passed**, as set out under
+"Consequence". Exit 0 to exit 1 on a run whose red nothing owns: a pull request that used
+to merge now stops. Accepted, and paid by the implementer of such a run, because the
+alternative is a `pass` bought with a mention.
+
+**The residual false positive is broader than "the narrowest one left".** Two shapes
+survive the ranking, not one. A case name quoting *both* the signature *and* an overlaid
+path on the same line is read as an owner — and so is **any** block in which some line
+carries a signature string while some other line locates an overlaid file, because the
+second disjunct does not require the two to be the same diagnostic. A stack frame naming
+an overlaid file beside an unrelated `Error:`-shaped log line is enough. Narrowing that
+means pairing the signature to the location within one diagnostic, which the block model
+cannot express; it is named here rather than claimed away.
+
+**One shape known to be missed, before and after.** Node prints a plain `SyntaxError` with
+a blank line after the caret line, so the `file://` header and the signature land in
+different blocks and neither rule sees it. That is pre-existing and untouched here; it is
+named so a later reader does not mistake it for a regression this item caused.
 
 ## Supersedes
 

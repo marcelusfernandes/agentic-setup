@@ -182,4 +182,7 @@ zero exit is not by itself a failure to prove.
 
 ## Updates
 
-*(none yet)*
+*2026-09-20 (#412, #436):* `SKIP_PATH_GLOBS`, named here as a constant
+`ci/negative-control.mts` declares, has moved to `ci/lib/skip-paths.mts` and is imported by
+that file and by `scripts/land.mts`. `NEVER_SKIP_GLOBS` is unmoved. The decision is
+unchanged; only where one of the constants it cites is declared.
