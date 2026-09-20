@@ -16,6 +16,12 @@
 // granted by the issue's `## Files` for exactly that reason. The cases there
 // prove the branch, the push and the gate; the cases here prove the decision.
 //
+// It has a split target of its own for the same reason (#423): the cases that
+// prove *who decided* and the cases over the gap vocabulary — an unrecognised
+// tick, a near-miss of a gap name, and the wording of a decision nobody is
+// named for — are in `tests/adopt-pr-vocabulary.test.mts`. What stays here is
+// every case that spawns the real script, including the mistyped tick below.
+//
 // Invariant 6: every write is proved by spawning the real script against a
 // throwaway git repository whose `origin` is a throwaway bare repository, with
 // a small fake `gh` first on PATH for every GitHub read, for `issue comment`
@@ -141,6 +147,17 @@ const REWORDED_BODY = planBody([
   '- [x] `test-command:none` — fine',
 ]);
 
+/**
+ * The typo a person produces by dropping one character of `workflows:missing`.
+ * Ticking it accepts a name no version of the inventory defines, while the box
+ * it was nearly is left empty and counted as declined — so the workflows are
+ * left out of the branch and every artefact records the decision as intended.
+ */
+const TYPO = 'workflow:missing';
+
+/** `SOME_BODY`, plus a ticked box for a gap name that does not exist. */
+const TYPO_BODY = planBody([...GAPS.map((gap) => (gap === FILE_GAP ? empty(gap) : ticked(gap))), ticked(TYPO)]);
+
 /** What each body decides, as the run must report it. */
 const ALL_ACCEPTED = [...GAPS];
 const SOME_ACCEPTED = GAPS.filter((gap) => gap !== FILE_GAP);
@@ -162,6 +179,7 @@ const PLAN_ANSWERS: Record<string, string> = {
   some: issueJson(SOME_BODY),
   none: issueJson(NONE_BODY),
   reworded: issueJson(REWORDED_BODY),
+  typo: issueJson(TYPO_BODY),
   // A decided issue whose body carries no checklist at all — the shape a
   // person produces by deleting the section rather than by ticking nothing.
   'no-boxes': issueJson('Tick what should happen, then move this issue to `human:decided`.'),
@@ -554,6 +572,49 @@ check('and leaves the remote branch exactly where it was', remoteSha(mute.origin
 check('a held run comments nothing: one decision is recorded once', !existsSync(join(again.stateDir, 'issue-comment.args')), again.stateDir);
 check('and opens no pull request', !existsSync(join(again.stateDir, 'pr-create.args')), again.stateDir);
 
+// --- F3: a mistyped tick is carried, and the report says it was one ---------
+// The defect #400 names, end to end: the person ticked `workflow:missing`, so
+// `workflows:missing` is untouched and its files are left out of the branch.
+// The run must not refuse over a typo, and must not leave the two facts to be
+// found apart: the comment and the body name the unrecognised tick and the
+// untouched box it was nearly, side by side.
+const typo = fixture();
+const typoBase = git(['rev-parse', 'HEAD'], typo.repo);
+const g2 = adopt(['--pr'], typo.repo, { FAKE_GH_PLAN: 'typo' });
+const g2Out = parse(g2.stdout);
+check('--pr over a plan carrying a mistyped tick still exits 0', g2.status === 0 && g2Out !== null, `${g2.stdout}\n${g2.stderr}`);
+check(
+  'the mistyped name is carried into the decision rather than refused',
+  (g2Out?.decision?.accepted ?? []).includes(TYPO) && (g2Out?.decision?.declined ?? []).includes(FILE_GAP),
+  JSON.stringify(g2Out?.decision),
+);
+const typoHead = String(g2Out?.head ?? '');
+const typoCarried = typoHead.length === 40 ? pathsIn(typo.repo, `${typoBase}...${typoHead}`) : [];
+check(
+  'and the workflows are left out of the branch, which is the harm the report has to name',
+  WORKFLOW_FILES.every((path) => !typoCarried.includes(path)),
+  typoCarried.join(','),
+);
+const typoComment = bodyOf(g2.stateDir, 'issue-comment.args');
+const typoPr = bodyOf(g2.stateDir, 'pr-create.args');
+const flat = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
+const declinedLineOf = (text: string): string => text.split('\n').find((l) => l.trimStart().startsWith(`- \`${FILE_GAP}\``)) ?? '';
+check(
+  'the comment on the plan issue names the tick nothing can act on',
+  /unrecognised/i.test(typoComment) && flat(typoComment).includes(`\`${TYPO}\``),
+  typoComment.slice(0, 700) || '(no comment)',
+);
+check(
+  'and names the untouched box beside it, in the same line as the gap it declined',
+  flat(declinedLineOf(typoComment)).includes(TYPO),
+  declinedLineOf(typoComment) || typoComment.slice(0, 700),
+);
+check(
+  'the pull request body says both of the same two things',
+  /unrecognised/i.test(typoPr) && flat(typoPr).includes(`\`${TYPO}\``) && flat(declinedLineOf(typoPr)).includes(TYPO),
+  declinedLineOf(typoPr) || typoPr.slice(0, 700),
+);
+
 // --- G: the parser itself, over bodies written out here ---------------------
 // The spawn cases above are what invariant 6 asks for; these prove the reading
 // directly, the way `resolvePlanIssue` is proved in the sibling file. Every
@@ -619,58 +680,6 @@ check(
   'only the first backticked span of a line is the gap name',
   read('- [x] `labels:missing` — create `state:ready` too').accepted.join(',') === 'labels:missing',
   JSON.stringify(read('- [x] `labels:missing` — create `state:ready` too')),
-);
-
-// --- G2: who decided is the LAST matching event's actor, absent or not ------
-// Timelines are written out here as literals, the shape GitHub renders.
-const who = (timeline: unknown): string | null | 'not-exported' => {
-  if (!mod?.decidedBy) return 'not-exported';
-  try {
-    return mod.decidedBy(timeline, DECIDED_LABEL);
-  } catch {
-    return 'not-exported';
-  }
-};
-const labeled = (name: string, login: string | null) => ({
-  event: 'labeled',
-  label: { name },
-  ...(login === null ? {} : { actor: { login } }),
-});
-
-check('decidedBy is exported', typeof mod?.decidedBy === 'function');
-check(
-  'the last labeled event for the label is the one reported, not the first',
-  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, DECIDED_BY)])),
-);
-check(
-  'an event for another label never decides',
-  who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, DECIDED_BY), labeled('human:pending', PENDING_BY)])),
-);
-check('a timeline naming no such event answers null', who([labeled('human:pending', PENDING_BY)]) === null, String(who([labeled('human:pending', PENDING_BY)])));
-check('a timeline that is not a list answers null', who('not a list') === null && who(null) === null, `${who('not a list')} | ${who(null)}`);
-
-// The correction the review caught. GitHub omits `actor` for an event
-// attributed to a deleted user or to an integration, and the guard used to
-// keep the previous login when that happened — reporting *a different person*
-// as the one who decided. A login that is wrong looks exactly like a login
-// that is right; a null announces itself, which is the direction this module
-// fails in everywhere else.
-check(
-  'a last event with no actor answers null, never the earlier decider',
-  who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)]) === null,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), labeled(DECIDED_LABEL, null)])),
-);
-check(
-  'the same for an actor whose login is null rather than absent',
-  who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }]) === null,
-  String(who([labeled(DECIDED_LABEL, 'first-decider'), { event: 'labeled', label: { name: DECIDED_LABEL }, actor: { login: null } }])),
-);
-check(
-  'and an actorless event earlier in the timeline does not erase a later decider',
-  who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)]) === DECIDED_BY,
-  String(who([labeled(DECIDED_LABEL, null), labeled(DECIDED_LABEL, DECIDED_BY)])),
 );
 
 // --- H: only a *declined* box empties the checks ----------------------------
