@@ -5,8 +5,8 @@
 // `new`), the `authorised:` grants of `## Files` held to those same two
 // rules — a grant resolves like a glob and is compared for overlap like one,
 // because it is what widens the scope check (#232) — globs disjoint from the
-// issues already in flight in the same milestone, a `Blocked by:` graph with
-// no cycle in it, and every
+// issues already in flight, whatever milestone each carries, a `Blocked by:`
+// graph with no cycle in it, and every
 // `Blocked by: #N` number in the issue actually
 // exists. It never
 // reads a diff — the mechanical form of the #3 guard (a rename that drops a
@@ -37,12 +37,19 @@
 //     [--milestone-issues-file <path>] [--markdown] [--root <path>]
 //
 // <n> (or --issue) is the issue number. Without --issue-body-file, the
-// issue's body and milestone come from `gh issue view`, and the other
-// issues in the same open milestone from `gh issue list --milestone
-// <title> --state open`. --issue-body-file/--milestone-issues-file (a JSON
-// array of `{ number, labels, body }` for the *other* issues) let the whole
-// lint run without `gh` — used by the workflow (which already has the data
-// from the `issues` event and one `gh issue list` call) and by tests.
+// issue's body comes from `gh issue view` and the other issues from `gh
+// issue list --state open` — every open issue of the repository, not the
+// linted one's milestone (#338). A merge conflict does not read the
+// milestone field: two issues editing one file collide identically whether
+// they share a milestone or not, and an issue carrying no milestone used to
+// be invisible on both sides of the comparison. The milestone is not
+// fetched at all any more, so nothing here depends on the issue having one.
+// --issue-body-file/--milestone-issues-file (a JSON array of
+// `{ number, labels, body }` for the *other* issues) let the whole lint run
+// without `gh` — used by the workflow (which already has the data from the
+// `issues` event and one `gh issue list` call) and by tests. That flag keeps
+// its name, which is now historical: the list is whatever open issues the
+// caller gathered, and the lint holds the globs against all of them.
 // AC5 (`Blocked by:` numbers exist) always calls `gh issue view` for each
 // number, in both modes — a fake `gh` on PATH covers it in tests.
 //
@@ -51,18 +58,19 @@
 // `Declaration:` line, the two grant refusals, each glob's matched/new
 // classification, and AC5's existence check on every `Blocked by:` number —
 // runs either way. The two that read more than one issue do not: AC3's glob
-// disjointness, and the `Blocked by:` cycle scan. There are two ways to run
-// without the list — `--issue-body-file` with no `--milestone-issues-file`,
-// and a `gh`-mode run on an issue that carries no milestone — and neither is
-// reported as a pass: `disjointness.checked` is `false` with the reason in
-// it, and the Markdown heading reads `PASS (disjointness not checked)`. The
+// disjointness, and the `Blocked by:` cycle scan. Since #338 there is one
+// way left to run without the list — `--issue-body-file` with no
+// `--milestone-issues-file` — and it is not reported as a pass:
+// `disjointness.checked` is `false` with the reason in it, and the Markdown
+// heading reads `PASS (disjointness not checked)`. (A `gh`-mode run on an
+// issue with no milestone was the second way, and is not one any more: it
+// lists the open issues like any other run.) The
 // field is named for the check an orchestrator acts on; both checks are
 // gone, so the Markdown section says the cycle scan was equally blind (the
 // graph such a run builds holds the linted issue alone). The
 // verdict itself is left alone. A run that could not look found nothing, and
-// `ok: false` here would refuse every milestone-less claim
-// `scripts/claim.mts` makes today over a check that never ran — a different
-// decision, for whoever wants to require the milestone at claim time.
+// `ok: false` here would refuse such a caller over a check that never ran —
+// a different decision, for whoever wants to require the list at claim time.
 //
 // Output: JSON `{ issue, ok, failures, globs, sequenced, disjointness }` on
 // stdout by default — no `warnings` key any more.
@@ -71,19 +79,25 @@
 // and whether AC3 ran at all (`{ checked, compared, reason }`: `compared` is
 // the number of issues in flight this run held the globs against, and
 // `reason` says why it could not when `checked` is `false`).
-// That exception is transitive (#258): the milestone's
-// open issues form a `Blocked by:` graph, and an overlap is `sequenced` when
+// That exception is transitive (#258): the open
+// issues form a `Blocked by:` graph, and an overlap is `sequenced` when
 // either issue reaches the other through it, at any depth and in either
 // direction, so a chain A -> B -> C needs no restated predecessor. The graph
-// spans every open issue of the milestone, whatever its labels and whether
-// or not it declares a `## Files` section of its own: an intermediate of a
-// chain orders its two ends without being in flight itself. A shared
+// spans every open issue the run was given, whatever its labels, whatever
+// milestone it carries and whether or not it declares a `## Files` section
+// of its own: an intermediate of a chain orders its two ends without being
+// in flight itself, and a chain that crosses a milestone boundary has to be
+// followed or the widened comparison above would refuse a pair the
+// dependency graph already orders (#338). A shared
 // blocker orders nothing — the edges are followed in their own direction —
 // and a cycle in that graph is a failure naming the issues in it, never a
 // hang. The cycle scan starts from every issue in the graph, not only from
 // the linted one (#299), so a cycle between two siblings this issue does not
 // reach is reported too, worded as one this issue is not part of; each
-// cycle is named once however many walks find it.
+// cycle is named once however many walks find it. Widening the candidate set
+// widens that scan with it — a cycle anywhere among the open issues is
+// reported on every lint — which is a consequence of the graph being one
+// graph, not a goal of #338.
 // `failures` entries are either a plain string or,
 // for AC3 (glob overlap), the object shape the issue's acceptance criteria
 // name. Each `globs` entry carries `grant: true` when it came from an
@@ -97,11 +111,11 @@
 // the workflow greps for; it no longer has a Warnings section, and it
 // carries a **Disjointness not checked** section, with the heading
 // qualified to match, on a run that could not make that check — or a
-// **Disjointness: nothing to compare** line when the list was read and held
-// no issue in flight with a scope (`checked: true, compared: 0`), which a
+// **Disjointness: nothing to compare** line when the open issues were read
+// and none was in flight with a scope (`checked: true, compared: 0`), which a
 // plain PASS renders the same as a run that compared against a dozen. Exit 0 when
 // `ok`, 1 otherwise; `{ "error": "..." }` (still exit 1) when `gh` cannot
-// answer for the issue/milestone lookups themselves (not for a single
+// answer for the issue/open-issue lookups themselves (not for a single
 // missing `Blocked by:` number, which is a normal failure entry). Any flag
 // this script does not know is ignored, with a one-line note on stderr —
 // `scripts/claim.mts` no longer passes `--strict` (removed with this
@@ -117,7 +131,12 @@ import { blockedBy, checkboxes, PROOF_DECLARATION_PATH, PROOF_HEADINGS, proofDec
 const MARKER = '<!-- agentic-issue-lint -->';
 const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
 
-const GH_LIST_LIMIT = '500'; // gh defaults to 30; a milestone can hold more in-flight issues
+// gh defaults to 30, and since #338 the list is every open issue of the
+// repository rather than one milestone's. A truncated list is a silently
+// narrower candidate set — the defect #338 closed, in another shape — so
+// this is deliberately far above the number of issues a run of this loop
+// keeps open at once.
+const GH_LIST_LIMIT = '500';
 
 type Failure = string | { issue: number; files: string[] };
 type GlobReport = { glob: string; status: 'matched' | 'new'; matches: number; grant: boolean };
@@ -175,7 +194,7 @@ function git(gitArgs: string[]): { status: number | null; stdout: string; stderr
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-// --- gather: this issue's number/body, and the other issues in its milestone
+// --- gather: this issue's number/body, and the other open issues ----------
 const positionalNumber = /^\d+$/.test(rawArgv[0] ?? '') ? Number(rawArgv[0]) : null;
 const issueNumber = positionalNumber ?? (typeof args.issue === 'string' && /^\d+$/.test(args.issue) ? Number(args.issue) : null);
 if (issueNumber === null) fail('no issue number given (positional <n>, or --issue <n> with --issue-body-file).');
@@ -184,9 +203,9 @@ type OtherIssue = { number: number; labels: string[]; body: string };
 
 let body: string;
 let others: OtherIssue[];
-// Null once a list of the other issues in the milestone has been obtained —
-// including an empty one, which is an answer ("nothing else is in flight"),
-// not a missing input. A string while there is no such list: it names, for
+// Null once a list of the other open issues has been obtained — including
+// an empty one, which is an answer ("nothing else is in flight"), not a
+// missing input. A string while there is no such list: it names, for
 // the report and for the reader of the comment, why the disjointness check
 // and the cycle scan below could not be made (#299).
 let noOthersReason: string | null = null;
@@ -196,7 +215,7 @@ if (typeof args['issue-body-file'] === 'string') {
   others = [];
   if (typeof args['milestone-issues-file'] !== 'string') {
     noOthersReason =
-      '--issue-body-file was given without --milestone-issues-file, so this run never saw the other issues of the milestone';
+      '--issue-body-file was given without --milestone-issues-file, so this run never saw the other open issues';
   } else {
     let raw: unknown;
     try {
@@ -214,7 +233,12 @@ if (typeof args['issue-body-file'] === 'string') {
       }));
   }
 } else {
-  const raw = gh(['issue', 'view', String(issueNumber), '--json', 'body,milestone']);
+  // The milestone is not read. It used to narrow the list below, and that
+  // narrowing was the defect (#338): the candidate set is every open issue,
+  // so an issue with no milestone is linted and compared like any other
+  // instead of being skipped for want of a field the comparison never
+  // needed.
+  const raw = gh(['issue', 'view', String(issueNumber), '--json', 'body']);
   let parsed: any;
   try {
     parsed = JSON.parse(raw);
@@ -222,22 +246,16 @@ if (typeof args['issue-body-file'] === 'string') {
     fail('gh issue view returned invalid JSON.');
   }
   body = String(parsed.body ?? '');
-  const milestoneTitle = parsed.milestone?.title;
-  if (!milestoneTitle) {
-    others = [];
-    noOthersReason = 'the issue carries no milestone, so there is no set of issues in flight to hold its globs against';
-  } else {
-    const listRaw = gh(['issue', 'list', '--milestone', milestoneTitle, '--state', 'open', '--limit', GH_LIST_LIMIT, '--json', 'number,labels,body']);
-    let list: any[];
-    try {
-      list = JSON.parse(listRaw);
-    } catch {
-      fail('gh issue list returned invalid JSON.');
-    }
-    others = list
-      .filter((i) => Number(i.number) !== issueNumber)
-      .map((i) => ({ number: Number(i.number), labels: (i.labels ?? []).map((l: any) => l.name), body: String(i.body ?? '') }));
+  const listRaw = gh(['issue', 'list', '--state', 'open', '--limit', GH_LIST_LIMIT, '--json', 'number,labels,body']);
+  let list: any[];
+  try {
+    list = JSON.parse(listRaw);
+  } catch {
+    fail('gh issue list returned invalid JSON.');
   }
+  others = list
+    .filter((i) => Number(i.number) !== issueNumber)
+    .map((i) => ({ number: Number(i.number), labels: (i.labels ?? []).map((l: any) => l.name), body: String(i.body ?? '') }));
 }
 
 const failures: Failure[] = [];
@@ -426,9 +444,10 @@ function newPathsOverlap(a: string, b: string): boolean {
 
 // --- the `Blocked by:` graph, and its transitive closure (#258) -----------
 // An edge `n -> m` reads "n is blocked by m". The graph spans this issue and
-// every other open issue of the milestone — deliberately not only the ones
-// in flight: an intermediate issue of a chain may carry any label, or no
-// `## Files` at all, and still be what orders the two ends. Built once, read
+// every other open issue — deliberately not only the ones in flight, and
+// deliberately not only the ones sharing a milestone: an intermediate issue
+// of a chain may carry any label, no `## Files` at all and a milestone of
+// its own, and still be what orders the two ends (#338). Built once, read
 // by the overlap check below.
 const blockedByGraph = new Map<number, number[]>();
 blockedByGraph.set(issueNumber, selfBlockedBy ?? []);
@@ -487,8 +506,8 @@ const lintedIssue: number = issueNumber;
  * turn — the linted one first, so a cycle it is part of keeps the wording
  * and the position in `failures` it had when that was the only start
  * (#299). A cycle between two siblings this issue does not reach is a
- * cycle all the same: it orders nothing, and the milestone cannot be
- * dispatched out of it either. Two starts that reach the same cycle report
+ * cycle all the same: it orders nothing, and none of the issues in it can
+ * be dispatched either. Two starts that reach the same cycle report
  * it once — the key is its set of issues, so `[A, B, A]` and `[B, A, B]`
  * are the one cycle they are.
  */
@@ -512,11 +531,15 @@ for (const cycle of findCycles()) {
   failures.push(
     cycle.includes(lintedIssue)
       ? `"Blocked by:" forms a cycle: ${path} — a cycle is no order at all, so none of these issues can be dispatched`
-      : `"Blocked by:" forms a cycle among other issues of this milestone, one #${lintedIssue} is not part of: ${path} — a cycle is no order at all, so none of those issues can be dispatched, and the milestone's graph stays wrong until one of those lines is fixed`,
+      : `"Blocked by:" forms a cycle among other open issues, one #${lintedIssue} is not part of: ${path} — a cycle is no order at all, so none of those issues can be dispatched, and the dependency graph stays wrong until one of those lines is fixed`,
   );
 }
 
-// --- AC3: disjointness against issues in flight in the same milestone -----
+// --- AC3: disjointness against every open issue in flight -----------------
+// Whatever milestone each of them carries, and whether or not it carries
+// one (#338). A merge conflict does not read the milestone field: two
+// issues editing one file collide identically across milestones, and this
+// check reported the pair as clean when they did not share one.
 // Both sides of every comparison below are "what this issue may touch" —
 // its bullet globs plus its grants — because that is the set `scope` checks
 // a diff against (`checkScope` in `ci/lib/scope.mts` — named, not cited by
@@ -604,23 +627,23 @@ function renderMarkdown(result: Result): string {
       '**Disjointness not checked** — the globs of this issue were held against no other issue:',
       '',
       `- ${result.disjointness.reason}`,
-      '- Two issues in flight may claim the same file without this run seeing it. Rerun with `--milestone-issues-file`, or on an issue that carries a milestone, to make the check.',
+      '- Two issues in flight may claim the same file without this run seeing it. Rerun with `--milestone-issues-file`, or without `--issue-body-file` so the run lists the open issues itself, to make the check.',
       // The key is named for the check an orchestrator acts on, but it is not
       // the only one the missing list takes away: the `Blocked by:` graph is
       // this issue's own line and nothing else, so the cycle scan saw one
       // node. Said here rather than left for a reader to infer from the
       // absence of a failure that could not have been raised.
-      '- The `Blocked by:` cycle scan is equally blind: the graph this run built holds this issue alone, so a cycle among the milestone\'s other issues would not have been reported either.',
+      '- The `Blocked by:` cycle scan is equally blind: the graph this run built holds this issue alone, so a cycle among the other open issues would not have been reported either.',
       '',
     );
   } else if (result.disjointness.compared === 0) {
-    // `checked: true, compared: 0` is an answer — the list was read and held
-    // no issue in flight declaring a scope — and a plain PASS renders it
+    // `checked: true, compared: 0` is an answer — the open issues were read
+    // and none was in flight declaring a scope — and a plain PASS renders it
     // identically to a run that compared against a dozen. That is exactly
     // the distinction `compared` was added to make, so the Markdown says it
     // too and does not leave it to the JSON alone.
     lines.push(
-      '**Disjointness: nothing to compare** — the milestone\'s other issues were read, and none of them is in flight with a scope of its own, so these globs were held against no issue. Nothing else claims these files, as far as that list goes.',
+      '**Disjointness: nothing to compare** — the repository\'s other open issues were read, and none of them is in flight with a scope of its own, so these globs were held against no issue. Nothing else claims these files, as far as that list goes.',
       '',
     );
   }
