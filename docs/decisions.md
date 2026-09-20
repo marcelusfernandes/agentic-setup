@@ -660,7 +660,7 @@ file under `decisions/` whose name begins with its four digits, or the `## n.` h
 this file when no such file exists. Both things the table was read for are computed from
 the register's two files by the two commands under "Reading the register": every item
 with its file and its `Status:`, and the next free number, one past the highest number
-*either* file carries. `tests/doctrine.test.mts` runs both commands on every `npm test`
+*either* file carries. `tests/register.test.mts` runs both commands on every `npm test`
 against a scan of the same two files written out separately, and holds no item number of
 its own, so adding an item never edits it either. The rule that follows, and the point of
 this item: **a pull request that adds a numbered decision touches its own file and
@@ -690,7 +690,7 @@ its file, `decisions/0034-the-control-ranks-what-owns-a-red.md`, was also the
 highest-numbered file in the directory, so a directory-only maximum happened to give the
 right answer. This item restores the gap: 35 is the highest number and it is in *this*
 file, so a directory-only derivation now returns 35 — a number already taken. The
-commands read both files for that reason, and `tests/doctrine.test.mts` pins the property
+commands read both files for that reason, and `tests/register.test.mts` pins the property
 that outlives any one arrangement: this file carries numbers no file in that directory
 carries, and no number is carried twice.
 
@@ -727,7 +727,7 @@ that relocation cheaper than it was: there is no index to keep in step with the 
 gone; a race is not. Two pull requests that compute the number in the same window compute
 the same number, and nothing in a register of flat files can order them without being the
 shared file again. It is caught rather than ordered — the case in
-`tests/doctrine.test.mts` that fails when two items carry one number reds on the second
+`tests/register.test.mts` that fails when two items carry one number reds on the second
 pull request's merge commit — but **only when that case runs after the sibling landed**,
 and here nothing guarantees it does. `.github/workflows/test.yml` fires on `pull_request`
 with the default types, so a base-branch update re-triggers no sibling's check; the `main`
@@ -744,7 +744,7 @@ to a script, and so its own issue and its own item.
 **What counts as an item, for both commands.** A `#` or `##` heading whose first word is
 its number, outside a fenced block, with its `Status:` under it. Two depths and no more,
 so a numbered `###` sub-heading is prose; and a heading quoted inside a fence is a
-quotation. Both commands and the scan `tests/doctrine.test.mts` checks them against read
+quotation. Both commands and the scan `tests/register.test.mts` checks them against read
 that rule, which means they share it: two implementations catch one drifting from the
 other, not both being wrong together. The cases that hold this rule are therefore run
 against a register written inside the test rather than against this file.

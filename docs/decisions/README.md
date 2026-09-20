@@ -104,10 +104,10 @@ not a detail of item 8:
   this directory.** There is no index row to add and no next-number sentence to advance,
   so two such pull requests never need the same file and `ci/issue-lint.mts` has no
   overlap to refuse (item 35 of [`../decisions.md`](../decisions.md);
-  `tests/doctrine.test.mts` holds it against the lint itself). What is left is narrower:
+  `tests/register.test.mts` holds it against the lint itself). What is left is narrower:
   two pull requests that compute the number in the same window compute the same number.
   Nothing here orders them. The duplicate is caught by the case in
-  `tests/doctrine.test.mts` that fails when two items carry one number — but **only when
+  `tests/register.test.mts` that fails when two items carry one number — but **only when
   that case runs after the sibling landed**. This repository does not guarantee that it
   does: `.github/workflows/test.yml` fires on `pull_request`, so a base-branch update
   re-triggers nothing, and the `main` ruleset sets
@@ -197,7 +197,7 @@ An item is a `#` or `##` heading whose first word is its number, outside a fence
 with its `Status:` two lines under it — the two depths the register uses and no other, so
 a numbered `###` sub-heading is not an item and neither is a heading quoted in a fence.
 
-`tests/doctrine.test.mts` runs both commands on every `npm test`, against a scan of the
+`tests/register.test.mts` runs both commands on every `npm test`, against a scan of the
 same two files written out separately: the number they print is one past the highest, is
 free, and the view reaches both files. It runs them again against a register written
 inside the test, which is where the two shapes above are held. It holds no item number of
