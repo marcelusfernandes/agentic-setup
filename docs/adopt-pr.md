@@ -101,6 +101,102 @@ head as well as on the base, which proves nothing. The body says so in its `## P
 section, and says that no generated check is expected red or green on that pull request
 because none of them is installed by it.
 
+**What accepting one changes depends on the same thing, and the report now says
+which.** Five of the seven remedies are a GitHub API call, an environment variable or
+a file no pull request can carry, so accepting them records an answer and performs
+nothing.
+
+| Accepted gap | What the pull request does |
+| --- | --- |
+| `workflows:missing` | **carried** — `.github/workflows/**` is in this diff; the body's file list says which files were written and which the base already carried identically |
+| `ruleset:absent`, `ruleset:review-not-required` | **recorded, not performed** — run `node scripts/init.mts --rules` |
+| `labels:missing` | **recorded, not performed** — run `node scripts/init.mts`, which is what calls `gh label create` for every label of the dictionary |
+| `hooks:not-installed` | **recorded, not performed** — run `node scripts/adopt.mts --hooks`, once in each clone |
+| `test-command:none` | **recorded, not performed** — set `AGENTIC_TEST_CMD`, or add a test command detection can find |
+| `record:stale` | **recorded, not performed** — run `node scripts/adopt.mts --record --force`; `--pr` uses the record it was handed as it stands |
+
+The plan-issue comment and the pull-request body name the command beside each recorded
+gap. Before this they rendered a bare list of names, so a gap the branch carried and a
+gap the run had written down read alike, and "accepted" read as "done".
+
+**Accepting `labels:missing` and running nothing is what stops the pull request
+landing.** It is the one case where the missing distinction costs an hour rather than a
+sentence, and the chain is:
+
+1. The box is ticked, so the decision records `labels:missing` as accepted — and **no
+   mode of the six performs that gap's remedy**. (`--plan-issue` does create the two
+   `human:` labels its own question needs; that is the only label write any mode of
+   `adopt` makes, and it is not this remedy.)
+2. `review:approved` is one of the labels `node scripts/init.mts` seeds, so it is still
+   absent from the repository.
+3. `node scripts/land.mts <pr>` — step 6 of the sequence — refuses:
+
+```json
+{ "refused": "PR #2 is not ready to merge: review:not-approved.", "pr": 2, "missing": ["review:not-approved"], "mode": "agent" }
+```
+
+exit 1, nothing queued. Run `node scripts/init.mts` in a clone of the adopted
+repository, which seeds the whole label dictionary, then have the pull request reviewed
+and run `land.mts` again. **Do not create `review:approved` by hand to get past the
+refusal**: the label is the record of a review, and writing it without one fabricates a
+review nobody cast — the same reason `adopt` never merges.
+
+**The sequence stays six steps, and the label creation is not one of them.** Both
+answers were defensible: the sequence is documented as complete, so a gap it leaves
+unperformed is a gap in the document; but a flag that created labels because a box was
+ticked would be `adopt` acting on a decision instead of recording one, which is the line
+every mode of it holds. `land.mts`'s refusal is the right place to catch it — it names
+the exact missing label, it is the step that needs it, and it refuses before anything
+merges rather than after. So the answer is: the report names the remedy, this document
+names the chain, and the refusal stays where it is. No script gains a write it did not
+have, so this earns no numbered decision item beside item 33; the one correction it does
+owe that item is a dated line under its `## Updates`.
+
+### A tick nobody can act on is named, not refused
+
+A ticked name that is not one of the seven gaps
+`scripts/lib/adopt/inventory.mts` defines is **unrecognised**: it is carried into the
+decision exactly as written — a typo in a box is not a reason to stop an adoption — and
+the comment and the body both say that nothing acted on it.
+
+That matters because of what silence costs. A person who ticks `workflow:missing`
+accepts a name no version defines, while `workflows:missing` is left empty and counted
+as declined, so `.github/workflows/**` is left out of the branch and every artefact
+records the decision correctly, in the person's own vocabulary, naming a gap they did
+not mean and declining one they did not decline. The report now prints the two facts
+side by side: the unrecognised tick names the gap it was nearest, and that gap's own
+declined bullet names the tick that missed it. It is a word in the report and never a
+refusal — the run cannot know which of the two a person meant, and only they can.
+
+**Where the vocabulary comes from.** The seven names are written out in
+`scripts/lib/adopt/decision.mts` as the keys of `GAP_REMEDIES`, typed `Record<Gap,
+string>` against the `Gap` type of `scripts/lib/adopt/inventory.mts`. The import is
+`import type`, erased by `verbatimModuleSyntax`, so nothing is imported at runtime and
+an unknown tick still cannot become a refusal — the coupling item 33 declined to take
+is taken only at compile time, where `npm run check` refuses a gap renamed in one file
+and not the other. Item 33's cost list named the reverse direction of this same drift
+(`GAP_PATHS` silently ceasing to map a renamed gap to its files) and is updated to say
+so.
+
+A near-miss is a name within two edits of a gap name; no two of the seven are that close
+to each other, so a correct tick is never reported as a miss of another. A name further
+away than that is reported as unrecognised with no guess attached.
+
+**`workflows:missing` is the only gap whose remedy is a file today**, so the measurable
+harm — files silently left out of the branch — is confined to it; a second entry in
+`GAP_PATHS` widens it without changing anything else. The same single mistyped character
+would then drop two unrelated sets of files for one reason, and the person would read
+two correct-looking declines instead of one. The report is what scales here, not the
+map — every entry added to `GAP_PATHS` is covered by the same carried/recorded split and
+the same near-miss note the moment it exists.
+
+**The `--pr` JSON is not part of this yet.** Its `decision` object still carries
+`accepted` and `declined` exactly as the boxes were ticked, with no carried/recorded
+split and no unrecognised list: that object is assembled in
+`scripts/lib/adopt/pr-run.mts`, which is outside the files #423 declared. The two places
+a person reads a decision — the comment on the plan issue and the pull-request body —
+carry the whole of it.
+
 ### A decision that accepts nothing is refused
 
 ```json

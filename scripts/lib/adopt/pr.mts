@@ -53,7 +53,7 @@
 //
 // Node built-ins only.
 import { CHECKS_WORKFLOW, MARKER, WORKFLOW_DIR, isGenerated, readTemplates, renderWorkflows, type RenderedWorkflow } from './workflows.mts';
-import { GAP_PATHS, decidedByPhrase, isDeclined, parseDecision, type DecisionRecord } from './decision.mts';
+import { GAP_PATHS, acceptedLines, decidedByPhrase, isDeclined, parseDecision, tickShadowing, unrecognisedNotes, type DecisionRecord } from './decision.mts';
 import { SETTINGS_FILE, mergeDeny, readShipped, type DenyMerge, type Shipped } from './hooks.mts';
 import { PROOF_DIR, RECORD_FILE, type AdoptionRecord } from './record.mts';
 
@@ -619,25 +619,35 @@ export const COPIED_CHECKS = ['scope', 'negative-control'];
  * not tell an adoption of everything from an adoption of two gaps out of five.
  * A declined gap whose remedy is a file names that file, so the absence is
  * legible; a declined gap whose remedy is not a file is named and nothing more.
+ *
+ * **Both sides answer the same question now (#423).** The accepted list was a
+ * bare list of names, so a gap this branch carries and a gap the run wrote
+ * down and performed nothing about read alike — the one that matters being
+ * `labels:missing`, whose unperformed remedy leaves `review:approved` absent
+ * and `scripts/land.mts` refusing the very pull request this body describes.
+ * `acceptedLines` makes the split `GAP_PATHS` always knew, and the declined
+ * bullets say when an unrecognised tick was aimed at the box they name.
  */
 function decisionSection(decision: DecisionRecord, label: string): string[] {
-  const accepted = decision.accepted.length === 0
-    ? ['Nothing was ticked.']
-    : decision.accepted.map((gap) => `- \`${gap}\``);
+  const accepted = decision.accepted.length === 0 ? ['Nothing was ticked.'] : acceptedLines(decision.accepted);
   const declined = decision.declined.length === 0
     ? ['Nothing: every box of the plan was ticked.']
     : decision.declined.map((gap) => {
         const paths = GAP_PATHS[gap] ?? [];
+        const tick = tickShadowing(gap, decision.accepted);
+        const shadow = tick === null ? '' : `; \`${tick}\` was ticked, a near-miss of this name, so this box may have been meant`;
         return paths.length === 0
-          ? `- \`${gap}\` — its remedy is not a file, so nothing here changes because of it`
-          : `- \`${gap}\` — so \`${paths.join('`, `')}\` is **not** in this diff`;
+          ? `- \`${gap}\` — its remedy is not a file, so nothing here changes because of it${shadow}`
+          : `- \`${gap}\` — so \`${paths.join('`, `')}\` is **not** in this diff${shadow}`;
       });
   return [
     '## The decision this acts on',
     '',
     `The plan issue was ticked box by box, and this branch is what those ticks say. ${decidedByPhrase(decision, label)}`,
     '',
-    '**Accepted:**',
+    '**Accepted** — a gap whose remedy is a file is carried in this diff, which the file',
+    'list above accounts for exactly; a gap whose remedy is not a file is recorded and',
+    'performed by nothing, so what performs it is named beside it:',
     '',
     ...accepted,
     '',
@@ -645,6 +655,7 @@ function decisionSection(decision: DecisionRecord, label: string): string[] {
     '',
     ...declined,
     '',
+    ...unrecognisedNotes(decision),
   ];
 }
 

@@ -199,4 +199,29 @@ nothing.
 
 ## Updates
 
-*(none yet)*
+- **2026-09-20 (#423).** The cost above names one direction of the `GAP_PATHS` drift and
+  reads as if it were the whole of it. The forward direction is the vocabulary drifting
+  under the **person**: a plan lists seven gaps, a person ticks `workflow:missing`
+  instead of `workflows:missing`, the typo is accepted and carried through, the real box
+  is counted as declined, and `.github/workflows/` is left out of the branch while every
+  artefact records the decision correctly in the person's own words. Nothing in the
+  output distinguished an accepted name nobody defines from a declined name everybody
+  does. The bullet is not false and was not overtaken — it is incomplete, which is what
+  this section is for.
+
+  Both directions are now covered without making an unknown tick a refusal, which the
+  bullet was right to refuse. `scripts/lib/adopt/decision.mts` writes the seven names
+  out as the keys of `GAP_REMEDIES`, typed `Record<Gap, string>` against
+  `scripts/lib/adopt/inventory.mts`'s `Gap` through an `import type` that
+  `verbatimModuleSyntax` erases: **no runtime import, so the parser still carries an
+  unknown name through**, and `npm run check` now refuses a gap renamed in one file and
+  not the other — the reverse drift this bullet accepted as silent. The forward
+  direction is answered in the report rather than in the parser: an unrecognised tick is
+  named as one in the plan-issue comment and the pull-request body, beside the declined
+  gap it was a near-miss of. `docs/adopt-pr.md` carries both.
+
+  Decision point 3's "named as declined and changes no file" also had no mirror on the
+  accepted side, and the same pull request adds it: a gap whose remedy is not a file is
+  reported as **recorded, not performed**, with the command that performs it. Accepting
+  `labels:missing` and running nothing was what left `review:approved` absent and
+  `scripts/land.mts` refusing the adoption pull request with `review:not-approved`.
