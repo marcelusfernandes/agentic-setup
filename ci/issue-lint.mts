@@ -136,6 +136,13 @@ const RELEVANT_STATES = ['state:ready', 'state:in-progress', 'state:in-review'];
 // narrower candidate set — the defect #338 closed, in another shape — so
 // this is deliberately far above the number of issues a run of this loop
 // keeps open at once.
+//
+// This bounds how many issues `gh` prints, and nothing else. The other
+// bound is on how many bytes this process can read back, and it is the one
+// that binds first: `spawnSync` truncates at `maxBuffer`, whose default is
+// 1 MiB, and 31 open issues already serialise to 347 KB in this shape. Both
+// halves are needed, so `gh()` sets `maxBuffer` explicitly; a raised
+// `--limit` on its own would just make `gh` print more than can be read.
 const GH_LIST_LIMIT = '500';
 
 type Failure = string | { issue: number; files: string[] };
@@ -184,8 +191,21 @@ function fail(message: string): never {
 }
 
 function gh(ghArgs: string[]): string {
-  const r = spawnSync('gh', ghArgs, { encoding: 'utf8' });
-  if (r.status !== 0) fail(`gh ${ghArgs.join(' ')} failed: ${(r.stderr || r.stdout || 'failed').trim().split('\n')[0]}`);
+  // `maxBuffer` matches `git()` below, and for the same reason: `spawnSync`
+  // defaults to 1 MiB and truncates past it. Since #338 the list this reads
+  // is the whole repository's rather than one milestone's, which turns that
+  // default from a ceiling nothing approached into one the loop reaches —
+  // see `GH_LIST_LIMIT`, which bounds the other half of the same read.
+  const r = spawnSync('gh', ghArgs, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // A spawn that never produced an exit status (`status: null`) failed
+  // before or outside the command: ENOBUFS past `maxBuffer`, ENOENT for a
+  // missing `gh`, a signal. `r.error` names it; `r.stdout` in that case is
+  // whatever partial output there was, which as a failure message is at best
+  // useless and at worst the truncated megabyte itself.
+  if (r.status !== 0) {
+    const detail = r.error ? r.error.message : (r.stderr || r.stdout || 'failed').trim().split('\n')[0];
+    fail(`gh ${ghArgs.join(' ')} failed: ${detail}`);
+  }
   return r.stdout;
 }
 

@@ -28,7 +28,9 @@
 //
 // Negative control: the #338 block at the foot of this file is the red. On
 // the base an overlap between two issues of different milestones is reported
-// as no overlap at all, so those cases fail there. Everything above it passes
+// as no overlap at all, so those cases fail there. Its last two cases are red
+// against this branch as well as against the base — they cover the read
+// itself, which widening the candidate set outgrew. Everything above it passes
 // on the base too: the cases #352 split out of tests/issue-lint.test.mts, and
 // the three #299 blocks #338 moved across, whose only edits are the comments
 // that named the milestone as the scope. No assertion above the #338 block
@@ -518,8 +520,16 @@ check(
 // tests/lib/issue-lint-harness.mts (whose fake answers AC5's
 // `issue view <n> --json number` and nothing else) because #338's `## Files`
 // does not include that file.
-const GH_MODE_FAKE = `import { appendFileSync, readFileSync } from 'node:fs';
+const GH_MODE_FAKE = `import { appendFileSync, readFileSync, writeSync } from 'node:fs';
 const argv = process.argv.slice(2);
+// Written with \`writeSync\` to fd 1, never \`console.log\` + \`process.exit\`.
+// stdout to a pipe is asynchronous, so an immediate exit drops whatever has
+// not drained: the buffer case below hands back 1.2 MB and would otherwise
+// arrive truncated at the 64 KiB pipe buffer, failing that case for a defect
+// of this fake rather than of the script. The real \`gh\` does not do this,
+// and a fake that fails differently from the command it stands in for proves
+// nothing (the reason tests/lib/issue-lint-harness.mts exists).
+const emit = (text) => writeSync(1, text + '\\n');
 const log = process.env.FAKE_GH_ARGV_LOG;
 if (log) appendFileSync(log, JSON.stringify(argv) + '\\n');
 const issues = JSON.parse(readFileSync(process.env.FAKE_GH_ISSUES, 'utf8'));
@@ -539,13 +549,13 @@ if (argv[0] === 'issue' && argv[1] === 'view') {
     if (field === 'body') out.body = found.body || '';
     if (field === 'milestone') out.milestone = found.milestone || null;
   }
-  console.log(JSON.stringify(out));
+  emit(JSON.stringify(out));
   process.exit(0);
 }
 if (argv[0] === 'issue' && argv[1] === 'list') {
   const milestone = flag('milestone');
   const listed = issues.filter((issue) => milestone === null || (issue.milestone && issue.milestone.title) === milestone);
-  console.log(JSON.stringify(listed.map((issue) => ({ number: issue.number, labels: issue.labels || [], body: issue.body || '' }))));
+  emit(JSON.stringify(listed.map((issue) => ({ number: issue.number, labels: issue.labels || [], body: issue.body || '' }))));
   process.exit(0);
 }
 console.error('fake-gh: unexpected args: ' + argv.join(' '));
