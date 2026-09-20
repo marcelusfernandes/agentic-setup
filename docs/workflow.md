@@ -370,13 +370,17 @@ this very head, and never falls back to the label alone).
 26). `land.mts` reads the pull request's diff — `gh api repos/{owner}/{repo}/pulls/<pr>/files
 --paginate` — and enters mode `docs` only when every changed path sits in a documentation
 path class and none sits in the carve-out. The classes are the ones the negative control
-skips by (`SKIP_PATH_GLOBS`), mirrored in `land.mts` as `DOCS_PATH_GLOBS`. The carve-out,
+skips by, and since #412 they are literally the same list: `SKIP_PATH_GLOBS` lives in
+`ci/lib/skip-paths.mts` and both gates import it, `land.mts` under the name
+`DOCS_PATH_GLOBS`. It used to be a second copy held against the first by a drift pin,
+because the constant lived in `ci/negative-control.mts` and that file runs its check at
+import time, so nothing could import it. The carve-out,
 `NEVER_DOCS_GLOBS`, is the negative control's `NEVER_SKIP_GLOBS` — `.github/scripts/agentic/**`,
 the gate's own installed code — **narrowed** by `.github/workflows/**` and
 `templates/.github/workflows/**`, because those declare the required checks `land.mts`
 itself gates on and `.github/**` would otherwise exempt a change to them from the review
-(#308, item 26). The two lists answer different questions, so one is narrower; both are
-pinned against each other by `tests/land.test.mts`, so the divergence cannot read as drift;
+(#308, item 26). The two carve-outs answer different questions, so one is narrower; both
+are pinned by `tests/land.test.mts`, so the divergence cannot read as drift;
 `AGENTIC_SKIP_GLOBS` extends the negative control's list and is deliberately **not** read
 by `land.mts`, because an environment variable that widened a *review* exemption would be a
 hole openable from outside the repository. The label stays necessary as well: a docs-only
@@ -430,11 +434,35 @@ fails.
 
 The signature is read per **diagnostic block** — a maximal run of consecutive non-blank
 lines, which is how a runtime prints one diagnostic: the header, the offending source
-line, then its frames. A block counts only when it both carries a structural signature and
-names one of the overlaid test files or a file the diff touches. Matching the overlaid
-run's whole output let a structural-looking line from anywhere decide the verdict: a
-dependency that logs `Cannot find module` and carries on prints it in a block of its own,
-and flipped an honest assertion red to `structural` (#214).
+line, then its frames. A block counts only when something in it **owns** the signature,
+which is one of exactly two shapes: the signature line itself names an overlaid file
+(`Error: Cannot find module '/…/scripts/added.mts'`), or some line in the block gives an
+overlaid file as a source location (`file:///…/src/importer.mts:1`, the header a missing
+export prints above its `SyntaxError`, which names the imported module and never the file
+that failed). A bare **mention** of an overlaid path elsewhere in the block is not an
+owner, and neither is a per-file verdict line (`one.test.mts: 0 passed, 2 failed`): that
+line owns an *assertion* red and says nothing about whether the file loaded. This is the
+one point where `structural` and `unattributed` rank evidence differently, and it is
+deliberate — `attributeFailures` reads a per-file verdict line as an owner because for an
+assertion red it is one.
+
+Two measured failures produced that rule. Matching the overlaid run's whole output let a
+structural-looking line from anywhere decide the verdict: a dependency that logs
+`Cannot find module` and carries on prints it in a block of its own, and flipped an honest
+assertion red to `structural` (#214). Reading a bare mention as evidence was the same
+mistake one level in: `tests/run.mts` prints a file's verdict line and then that file's own
+output with no blank line between, so a failing case whose **name** quotes
+`Cannot find module` landed in the same block as the overlaid file's name, and an honest
+run was reported `structural`. The reporter renamed two of this repository's own test
+cases to get a green run rather than fix it; the names are back, and the ranking is what
+keeps them safe (#390, #412).
+
+**A `structural` red also suppresses the `unattributed` test**, which is why narrowing the
+rule above does not only relax verdicts. A run whose red nothing owns, vouched by a
+`test(red):` commit and structural only on the strength of a mention, used to fall out as
+`pass` with the warning; it now reaches the attribution test and reports `unattributed`.
+That is exit 0 to exit 1 — a refusal of honest work rather than a pass of dishonest work —
+and it is the only transition in the refusing direction #412 introduced (item 34).
 
 ### `test-only`: the one diff the overlay cannot judge, and passes
 
@@ -561,8 +589,8 @@ condition of that mode is met:
 - `docs`, the documentation exemption: no review at all, and so no marker to read. It is an
   exemption from the *review*, never from the checks. It is selected by the pull request's
   **changed paths and** the `type:docs` label, both (#308, item 26): every changed path in
-  a documentation class (`DOCS_PATH_GLOBS`, mirroring the negative control's
-  `SKIP_PATH_GLOBS`), none in the carve-out (`NEVER_DOCS_GLOBS`: the gate's own installed
+  a documentation class (`DOCS_PATH_GLOBS`, which *is* the negative control's
+  `SKIP_PATH_GLOBS`, imported from `ci/lib/skip-paths.mts`), none in the carve-out (`NEVER_DOCS_GLOBS`: the gate's own installed
   code, plus `.github/workflows/**` and `templates/.github/workflows/**`, which declare the
   required checks this very script gates on), and the label on the pull request. The label alone used to select it, which let it beat a
   base ruleset that *requires* a review — an override, not a relaxation. A label on a diff

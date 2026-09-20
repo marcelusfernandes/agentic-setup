@@ -42,18 +42,18 @@ const failingOnAbsentModule = (module: string): string => [
   'finish();',
 ].join('\n');
 
-// A note on the case names below, because the omission is deliberate: none of
-// them quotes `Cannot find module` literally, although that is exactly what
-// they are about. A failing case prints its name, `tests/run.mts` prints the
-// file's `N passed, M failed` line immediately above it with no blank line
-// between, and `structuralInOverlay` reads a diagnostic *block* — so a case
-// name carrying the signature sits in the same block as the overlaid file's
-// own name and reports this pull request's honest red as `structural`. That
-// is the prose-mention hazard `ci/negative-control.mts` documents on
-// `overlayNames`, measured here: with the literal string in two case names
-// this branch's own negative control passed with a `warning:` that described
-// nothing real. The assertions still match the literal header; only the names
-// avoid it.
+// A note on the case names below, because their history is the subject of one
+// of the cases: #297 renamed two of them so that neither quoted
+// `Cannot find module` literally. A failing case prints its name, `tests/run.mts`
+// prints the file's `N passed, M failed` line immediately above it with no blank
+// line between, and `structuralInOverlay` read a diagnostic *block* — so a case
+// name carrying the signature sat in the same block as the overlaid file's own
+// name and reported this pull request's honest red as `structural`. The rename
+// bought a green run and left the defect. #412 fixed the ranking instead: a
+// block is structural only when something in it *owns* the signature — names
+// the overlaid path on the signature line, or locates that file as a source
+// location — and a per-file verdict line beside a case name owns neither. The
+// two names are restored below, and restoring them is the proof.
 
 // --- AC1: the error header survives the truncation -------------------------
 // The detail a failure carries is truncated, and must stay truncated — the
@@ -73,7 +73,7 @@ const headerAt = pinLines.findIndex((line) => line.includes('Cannot find module'
 const tailAt = pinLines.findIndex((line) => line.includes('MODULE_NOT_FOUND'));
 
 check('the fixture failure is a real MODULE_NOT_FOUND, not a synthetic string', tailAt >= 0, pinOut);
-check("a failure's detail carries the missing-module header, not only its tail", headerAt >= 0, pinOut);
+check("a failure's detail carries the `Cannot find module` header", headerAt >= 0, pinOut);
 check("a failure's detail still carries the truncated tail", tailAt >= 0, pinOut);
 check(
   'the error header is printed ahead of the tail, not inside it',
@@ -110,7 +110,7 @@ const nc = (head: string, base = structuralBase, cwd = structural) =>
 
 let r = nc(structuralHead);
 check(
-  'an overlaid run whose harness output carries the missing-module header is `structural`',
+  'an overlaid run whose harness output carries `Cannot find module` is `structural`',
   r.status === 1 && /negative-control: structural/.test(r.out),
   r.out,
 );
@@ -137,5 +137,64 @@ check(
 );
 
 check('negative-control leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], structural)));
+
+// --- #412 (from #390): a case *name* quoting the signature is not a structural red ---
+// The exact shape the reporter of #390 hit, reproduced rather than described.
+// The fixture carries this repository's real `tests/run.mts` as well as its
+// harness, because the false positive needs both: `run.mts` prints
+// `<file>: N passed, M failed` and then writes the child's own output straight
+// after it with no blank line, so the per-file verdict line, the aggregate and
+// every `FAIL <case name>` land in one diagnostic block.
+//
+// In that block the overlaid file is named — by its verdict line — and the
+// structural signature is present — inside a case name. Nothing owns it: the
+// signature line names no overlaid path and no line locates one. The run's
+// failures are ordinary assertion failures over a value the head changed, so
+// the honest verdict is `pass`, with no `warning:` and nothing to vouch for.
+// On the base this reported `structural` and the check failed.
+const RUNNER = readFileSync(join(ROOT, 'tests', 'run.mts'), 'utf8');
+
+/** A fixture test file whose first case name quotes the structural signature. */
+const quotingTheSignature = [
+  "import { check, finish } from './lib/harness.mts';",
+  "import { value } from '../src/thing.mts';",
+  "check('a failure detail carries the `Cannot find module` header', value === 2, `value is ${value}`);",
+  "check('an ordinary assertion also fails here', value === 2, `value is ${value}`);",
+  'finish();',
+].join('\n');
+
+const reporter = tempRepo();
+const reporterBase = commit(reporter, {
+  'package.json': JSON.stringify({ name: 'x', private: true, scripts: { test: 'node tests/run.mts' } }),
+  'tests/lib/harness.mts': HARNESS,
+  'tests/run.mts': RUNNER,
+  'src/thing.mts': 'export const value = 1;\n',
+  'tests/one.test.mts': "import { check, finish } from './lib/harness.mts';\ncheck('nothing to prove yet', true);\nfinish();\n",
+}, 'chore: base');
+
+git(['checkout', '-q', '-b', 'fix/1-reporter', reporterBase], reporter);
+const reporterHead = commit(reporter, {
+  'src/thing.mts': 'export const value = 2;\n',
+  'tests/one.test.mts': quotingTheSignature,
+}, 'fix: bump the value the tests assert');
+
+const reported = ci('negative-control.mts', ['--base', reporterBase, '--head', reporterHead], { cwd: reporter });
+check(
+  'the overlaid run really did print the signature inside a case name, beside the overlaid file',
+  /FAIL {2}a failure detail carries the `Cannot find module` header/.test(reported.out)
+    && /one\.test\.mts: 0 passed, 2 failed/.test(reported.out),
+  reported.out,
+);
+check(
+  'a case name quoting the signature, over ordinary assertion failures, is `pass`',
+  reported.status === 0 && /negative-control: pass/.test(reported.out),
+  reported.out,
+);
+check(
+  'that pass carries no `warning:` — there is no structural red to warn about',
+  !/^warning:/m.test(reported.out),
+  reported.out,
+);
+check('the reporter fixture leaves no worktree behind', !/negative-control-/.test(git(['worktree', 'list'], reporter)));
 
 finish();

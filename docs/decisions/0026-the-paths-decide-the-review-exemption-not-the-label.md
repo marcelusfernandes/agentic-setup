@@ -220,4 +220,10 @@ of the downstream documents lands.
 
 ## Updates
 
-None yet.
+*2026-09-20 (#412, #436):* the consolidation this item deferred has landed.
+`SKIP_PATH_GLOBS` now lives in `ci/lib/skip-paths.mts` and `scripts/land.mts` imports it as
+`DOCS_PATH_GLOBS`, so the two copies named under "Cost accepted" are one list and the route
+said not to exist does: the constant no longer sits behind a module that runs its check at
+import time. The decision itself is unchanged — the paths still decide the exemption, the
+carve-outs stay two deliberately different lists, and `AGENTIC_SKIP_GLOBS` is still never
+read by `land.mts`.

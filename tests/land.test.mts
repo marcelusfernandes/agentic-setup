@@ -780,19 +780,18 @@ for (const [pr, what] of [[51, 'installed gate code'], [52, 'the workflows'], [5
 const bd = land(49, { FAKE_GH_RULES: 'required' });
 check('a docs-only diff without the label merges in mode agent, on its marker', bd.status === 0 && parse(bd.stdout)?.merged === 49 && parse(bd.stdout)?.mode === 'agent' && /pr view 49 --json comments/.test(bd.log), `${bd.stdout}\n${bd.log}`);
 
-// --- BE: the path classes are the negative control's, not a second list land.mts
-// invented — except where they are deliberately narrower, which it pins too, so the
-// divergence cannot later read as drift. The pin writes both shapes out itself rather than
-// importing either constant (invariant 10); the copies exist only because
-// `ci/negative-control.mts` runs its check on import. AGENTIC_SKIP_GLOBS is not mirrored.
+// --- BE: one list of documentation path classes, `ci/lib/skip-paths.mts`, read by both gates
+// (#412, from #370). The pin writes the shape out itself (invariant 10) and reads the three
+// files from disk. The carve-outs stay separate, AGENTIC_SKIP_GLOBS is mirrored nowhere.
 const DOCS_CLASSES_PIN = "['docs/**', '.github/**', 'templates/**', '.claude/**', '*.md', '**/*.md']";
 const NC_CARVE_OUT_PIN = "['.github/scripts/agentic/**']";
 const LAND_CARVE_OUT_PIN = "['.github/scripts/agentic/**', '.github/workflows/**', 'templates/.github/workflows/**']";
 const declaredGlobs = (src: string, n: string): string | null => new RegExp(`const ${n}\\b[^=]*=\\s*(\\[[^\\]]*\\])`).exec(src)?.[1] ?? null;
-const ncSrc = readFileSync(join(ROOT, 'ci', 'negative-control.mts'), 'utf8');
-const landSrc = readFileSync(join(ROOT, 'scripts', 'land.mts'), 'utf8');
-check('ci/negative-control.mts declares exactly the pinned classes and carve-out', declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS') === DOCS_CLASSES_PIN && declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS') === NC_CARVE_OUT_PIN, `${declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS')} / ${declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS')}`);
-check('scripts/land.mts declares the same classes, and a carve-out narrowed by the two workflow globs', declaredGlobs(landSrc, 'DOCS_PATH_GLOBS') === DOCS_CLASSES_PIN && declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS') === LAND_CARVE_OUT_PIN, `${declaredGlobs(landSrc, 'DOCS_PATH_GLOBS')} / ${declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS')}`);
+const source = (...parts: string[]): string => readFileSync(join(ROOT, ...parts), 'utf8');
+const skipSrc = source('ci', 'lib', 'skip-paths.mts'), ncSrc = source('ci', 'negative-control.mts'), landSrc = source('scripts', 'land.mts');
+check('ci/lib/skip-paths.mts declares exactly the pinned classes', declaredGlobs(skipSrc, 'SKIP_PATH_GLOBS') === DOCS_CLASSES_PIN, String(declaredGlobs(skipSrc, 'SKIP_PATH_GLOBS')));
+check('neither gate declares a second copy of that list, and both import it from ci/lib/skip-paths.mts', declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS') === null && declaredGlobs(landSrc, 'DOCS_PATH_GLOBS') === null && /SKIP_PATH_GLOBS[^;]*from '\.\/lib\/skip-paths\.mts'/.test(ncSrc) && /SKIP_PATH_GLOBS[^;]*from '\.\.\/ci\/lib\/skip-paths\.mts'/.test(landSrc), `${declaredGlobs(ncSrc, 'SKIP_PATH_GLOBS')} / ${declaredGlobs(landSrc, 'DOCS_PATH_GLOBS')}`);
+check('each gate keeps its own carve-out, land.mts narrowed by the two workflow globs', declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS') === NC_CARVE_OUT_PIN && declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS') === LAND_CARVE_OUT_PIN, `${declaredGlobs(ncSrc, 'NEVER_SKIP_GLOBS')} / ${declaredGlobs(landSrc, 'NEVER_DOCS_GLOBS')}`);
 check('land.mts never reads AGENTIC_SKIP_GLOBS outside its header', !/AGENTIC_SKIP_GLOBS/.test(landSrc.replace(/^\/\/.*$/gm, '')), 'land.mts reads AGENTIC_SKIP_GLOBS');
 const bf = land(47, { FAKE_GH_RULES: 'required', AGENTIC_SKIP_GLOBS: 'scripts/**' });
 check('AGENTIC_SKIP_GLOBS cannot buy the exemption: the mixed diff still refuses', bf.status === 1 && JSON.stringify(parse(bf.stdout)?.missing) === JSON.stringify(['docs:label-mismatch']), bf.stdout);

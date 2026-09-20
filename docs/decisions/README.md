@@ -184,3 +184,4 @@ that was false when it was written, and what may not is the decision it sits und
 | 31 | [A bare glob with a backticked justification is refused](0031-a-bare-glob-with-a-backticked-justification-is-refused.md) | proposed |
 | 32 | [A refused ruleset write exits 1; a failed read still exits 0](0032-a-refused-ruleset-write-exits-1.md) | proposed |
 | 33 | [A tick is what adoption acts on; `human:decided` alone authorises nothing](0033-a-tick-is-what-adoption-acts-on.md) | proposed |
+| 34 | [A `structural` verdict rests on a diagnostic that owns the red, not on one that mentions a path](0034-the-control-ranks-what-owns-a-red.md) | proposed |
