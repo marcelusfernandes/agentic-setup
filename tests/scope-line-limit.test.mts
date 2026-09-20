@@ -209,4 +209,147 @@ check('lengthOutcome: over the limit and equal to the base is inherited-over', o
 check('lengthOutcome: over the limit and shorter than the base is inherited-over', outcome(900, 850) === 'inherited-over', outcome(900, 850));
 check('lengthOutcome: under the limit is under-limit', outcome(500, 700) === 'under-limit', outcome(500, 700));
 
+// --- #413 (#392): a file approaching the limit is reported --------------------
+// #310 removed the silence for a file that has *crossed* the limit and bought
+// nothing for one pressed against it — item 0029's own last cost bullet says
+// so. The band is a fixed number of lines below FILE_LINE_LIMIT, not a
+// percentage: FILE_LINE_LIMIT is a constant, so a percentage is the same
+// threshold with a rounding rule attached. The four cases below are the ones
+// the band has to get right, each with the name the classifier answers with,
+// written out here rather than read back from it (invariant 10).
+const APPROACH_BAND = 50; // FILE_LINE_LIMIT - 50 = 750, the threshold
+check(
+  'ci/lib/scope.mts exports FILE_LINE_APPROACH_BAND',
+  (scopeLib as Record<string, unknown>).FILE_LINE_APPROACH_BAND === APPROACH_BAND,
+  String((scopeLib as Record<string, unknown>).FILE_LINE_APPROACH_BAND),
+);
+check('lengthOutcome: below the band is under-limit', outcome(700, 749) === 'under-limit', outcome(700, 749));
+check('lengthOutcome: on the threshold itself is approaching-limit', outcome(700, 750) === 'approaching-limit', outcome(700, 750));
+check('lengthOutcome: inside the band is approaching-limit', outcome(700, 780) === 'approaching-limit', outcome(700, 780));
+check('lengthOutcome: at exactly the limit is approaching-limit, not over it', outcome(700, 800) === 'approaching-limit', outcome(700, 800));
+check('lengthOutcome: one line over the limit is pushed-over', outcome(700, 801) === 'pushed-over', outcome(700, 801));
+check(
+  'lengthOutcome: @generated still wins over the band',
+  lengthOutcome ? lengthOutcome({ path: 'a.ts', baseLines: 700, headLines: 780, generated: true }) === 'exempt-generated' : false,
+);
+const approachingLimit = (scopeLib as Record<string, unknown>).approachingLimit as
+  ((entries: FileLinesEntry[]) => Array<{ path: string; headLines: number }>) | undefined;
+check('ci/lib/scope.mts exports approachingLimit', typeof approachingLimit === 'function');
+const bandSample: FileLinesEntry[] = [
+  { path: 'below.ts', baseLines: 700, headLines: 749, generated: false },
+  { path: 'inside.ts', baseLines: 700, headLines: 780, generated: false },
+  { path: 'at-limit.ts', baseLines: 700, headLines: 800, generated: false },
+  { path: 'over.ts', baseLines: 700, headLines: 900, generated: false },
+];
+check(
+  'approachingLimit selects the band and nothing else',
+  approachingLimit
+    ? JSON.stringify(approachingLimit(bandSample).map((e) => e.path)) === JSON.stringify(['inside.ts', 'at-limit.ts'])
+    : false,
+  approachingLimit ? JSON.stringify(approachingLimit(bandSample)) : 'not exported',
+);
+
+// Spawned, against a real repository: the report is a section of its own, it
+// never changes the exit code, it states the headroom, it names what closes
+// it, and it says in words that a file at exactly the limit is not over it.
+// The sentences are written out here, not imported (invariant 10).
+const APPROACH_SENTENCE =
+  '**REPORTED, not failed** — within 50 lines of the 800-line limit at the head, and not over it: a file at exactly 800 lines is at the limit, not past it, and fails nothing.';
+git(['checkout', '-q', '-b', 'feat/413-approach', growthBase], growthRepo);
+const approachHead = commit(growthRepo, { 'src/big.ts': linesOf(780) }, 'feat: grow src/big.ts to 780 lines');
+const rApproach = scopeGrowth(growthBase, approachHead, growthRepo);
+check(
+  'scope reports a file inside the band in a section of its own and still exits 0',
+  rApproach.status === 0
+    && /### Approaching the line limit/.test(rApproach.out)
+    && rApproach.out.includes(APPROACH_SENTENCE)
+    && /`src\/big\.ts` is at 780 line\(s\), 20 from the limit/.test(rApproach.out),
+  rApproach.out,
+);
+check(
+  'the approach report names what closes it, the way the inherited report does',
+  /What closes it: a pull request that leaves the file with room/.test(rApproach.out),
+  rApproach.out,
+);
+check(
+  "scope JSON's approaching key names the file and its headroom",
+  JSON.stringify(scopeJson(rApproach.out).approaching)
+    === JSON.stringify([{ path: 'src/big.ts', baseLines: 700, headLines: 780 }]),
+  rApproach.out,
+);
+// A file at exactly FILE_LINE_LIMIT is reported with zero headroom and is not
+// over the limit — the sentence the criterion asks for, proved by the verdict.
+git(['checkout', '-q', '-b', 'feat/413-at-limit', growthBase], growthRepo);
+const atLimitHead = commit(growthRepo, { 'src/big.ts': linesOf(800) }, 'feat: grow src/big.ts to exactly 800 lines');
+const rAtLimit = scopeGrowth(growthBase, atLimitHead, growthRepo);
+check(
+  'scope reports a file at exactly the limit as approaching with zero headroom, and does not fail it',
+  rAtLimit.status === 0
+    && !/### File growth/.test(rAtLimit.out)
+    && /`src\/big\.ts` is at 800 line\(s\), 0 from the limit/.test(rAtLimit.out),
+  rAtLimit.out,
+);
+// Below the band: no section at all. 749 is one line short of the threshold,
+// which is the case a band has to get right at its own edge.
+git(['checkout', '-q', '-b', 'feat/413-below-band', growthBase], growthRepo);
+const belowBandHead = commit(growthRepo, { 'src/big.ts': linesOf(749) }, 'feat: grow src/big.ts to 749 lines');
+const rBelowBand = scopeGrowth(growthBase, belowBandHead, growthRepo);
+check(
+  'scope prints no approach section for a file one line below the threshold',
+  rBelowBand.status === 0
+    && !/### Approaching the line limit/.test(rBelowBand.out)
+    && JSON.stringify(scopeJson(rBelowBand.out).approaching) === '[]',
+  rBelowBand.out,
+);
+// An over-limit file is reported as over, never as approaching: the two
+// sections are different sentences and a file belongs to exactly one.
+check(
+  'an inherited over-limit file is not also reported as approaching',
+  JSON.stringify(scopeJson(rGrowthEdited.out).approaching) === '[]',
+  rGrowthEdited.out,
+);
+
+// --- #413 (#387): one base per question ---------------------------------------
+// `changedFiles` diffs `base...head` (the merge base) while `growthEntries`
+// read `git show <base tip>:<path>`. The two coincide only while the branch is
+// level with `main`. This fixture pulls them apart and asserts the *verdict*,
+// not only the number: the branch adds 25 lines to a file that is already over
+// the limit at the merge base, and `main` meanwhile grows the same file past
+// the branch's head. Measured against the base tip the branch looks like it
+// shortened the file (inherited-over, exit 0); measured against the merge base
+// it is what added the length (pushed-over, exit 1). The merge base is the
+// commit the line rule asks about — "what did this branch do to this file" —
+// and it is the commit the changed-file list already came from.
+const baseRepo = tempRepo();
+const forkPoint = commit(baseRepo, { 'src/big.ts': linesOf(785) }, 'chore: src/big.ts at 785 lines');
+git(['checkout', '-q', '-b', 'fix/387-branch'], baseRepo);
+const branchHead = commit(baseRepo, { 'src/big.ts': linesOf(810) }, 'fix: branch takes src/big.ts to 810 lines');
+git(['checkout', '-q', 'main'], baseRepo);
+const mainTip = commit(baseRepo, { 'src/big.ts': linesOf(815) }, 'chore: main takes src/big.ts to 815 lines');
+const rBase = scopeGrowth(mainTip, branchHead, baseRepo);
+check(
+  'scope measures the line rule against the merge base, so a branch that added lines fails',
+  rBase.status === 1 && /### File growth/.test(rBase.out),
+  rBase.out,
+);
+check(
+  'the reported base count is the merge base count, not the base tip count',
+  JSON.stringify(scopeJson(rBase.out).growth)
+    === JSON.stringify([{ path: 'src/big.ts', baseLines: 785, headLines: 810 }]),
+  rBase.out,
+);
+check(
+  'the job summary says which base it measured against, by sha, and names the base tip it did not use',
+  rBase.out.includes(forkPoint) && rBase.out.includes(mainTip) && /Measured against the merge base/.test(rBase.out),
+  rBase.out,
+);
+check(
+  "scope JSON carries measuredBase: the merge base sha and the base tip it is not",
+  (() => {
+    const m = scopeJson(rBase.out).measuredBase;
+    return !!m && m.mergeBase === forkPoint && m.baseTip === mainTip;
+  })(),
+  rBase.out,
+);
+
 finish();
