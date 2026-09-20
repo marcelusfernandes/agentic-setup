@@ -19,9 +19,10 @@
 // moving those would have duplicated the bodies rather than the budget. A case
 // that proves a module by importing it lives here: who decided, the gap
 // vocabulary, the report the JSON carries, the planner's reading of a declined
-// box, and the examples `docs/adopt-pr.md` shows of the report itself. A pin
-// over prose lives with the cases whose subject that prose describes, which is
-// why the five #368 sentences went back to the sibling file.
+// box, and `docs/adopt-pr.md`'s account of the report — its prose and its
+// worked examples, read through the fence machinery below. Pins over any
+// *other* document live in the sibling file: the five #368 sentences went back
+// there, and the register item's `## Updates` with them.
 //
 // **This file now sits where that one did, and the next change splits again.**
 // A pin that writes out the shape it expects costs more lines than a grep for
@@ -86,6 +87,21 @@ const RECORDED_GAP = 'labels:missing';
 /** What performs it, which is the thing the bare list dropped. */
 const RECORDED_REMEDY = 'node scripts/init.mts';
 
+/**
+ * The command each gap's remedy is. One oracle for two things — the code's
+ * `GAP_REMEDIES` and every remedy the document prints — so the two cannot
+ * drift apart with the suite green, which is item 33's invariant-8 cost.
+ */
+const REMEDIES: Record<string, string> = {
+  'ruleset:absent': 'node scripts/init.mts --rules',
+  'ruleset:review-not-required': 'node scripts/init.mts --rules',
+  'labels:missing': RECORDED_REMEDY,
+  'hooks:not-installed': 'node scripts/adopt.mts --hooks',
+  'workflows:missing': 'node scripts/adopt.mts --workflows',
+  'test-command:none': 'export AGENTIC_TEST_CMD=<the command that runs your tests>',
+  'record:stale': 'node scripts/adopt.mts --record --force',
+};
+
 /** The typo a person produces by dropping one character of `FILE_GAP`. */
 const TYPO = 'workflow:missing';
 
@@ -98,10 +114,8 @@ const TYPO2 = 'workflows:missng';
 /**
  * The paths a branch carries, as `--pr` plans them. **A gap is carried because
  * the diff carries its files, never because of what kind of gap it is:** a base
- * that already holds the generated workflows plans every one of them as
- * `skipped (unchanged)`, and a workflow a person wrote is skipped as
- * `not-generated`, so `workflows:missing` is accepted and no commit touches
- * `.github/workflows/`.
+ * that already holds them plans every one as `skipped (unchanged)`, so the box
+ * is ticked and no commit touches `.github/workflows/`.
  */
 const WITH_WORKFLOWS = ['agentic.config.json', '.github/workflows/agentic-checks.yml'];
 const WITHOUT_WORKFLOWS = ['agentic.config.json', 'proof/adopt-agentic-setup.test.mjs'];
@@ -158,7 +172,8 @@ check(
 );
 check(
   'every gap of that vocabulary has a named remedy, so no accepted gap is reported without one',
-  VOCABULARY.every((gap) => typeof (mod?.GAP_REMEDIES ?? {})[gap] === 'string' && (mod?.GAP_REMEDIES ?? {})[gap].length > 0),
+  VOCABULARY.every((gap) => (mod?.GAP_REMEDIES ?? {})[gap] === REMEDIES[gap]) &&
+    Object.keys(mod?.GAP_REMEDIES ?? {}).join(',') === VOCABULARY.join(','),
   JSON.stringify(mod?.GAP_REMEDIES ?? null),
 );
 check(
@@ -495,7 +510,6 @@ check(
 // Read as text and held to the sentences this change introduces, written out
 // here rather than imported from anything that produces them.
 const prDoc = readFileSync(join(ROOT, 'docs', 'adopt-pr.md'), 'utf8');
-const item33 = readFileSync(join(ROOT, 'docs', 'decisions', '0033-a-tick-is-what-adoption-acts-on.md'), 'utf8');
 
 check(
   'the document carries an accepted-gap table, the mirror of the declined one',
@@ -522,6 +536,14 @@ check(
   unwrap(prDoc).includes('"ticks"') && unwrap(prDoc).includes('"shadowed"') && !/JSON is not part of this/.test(prDoc),
   unwrap(prDoc).split('```json')[1]?.slice(0, 300) ?? '(no JSON example)',
 );
+// The prose behind section E's phrase. Restored here rather than beside those
+// cases because `prDoc` is read in this section, and hoisting the read to place
+// one pin earlier is churn for nothing.
+check(
+  'the document describes both shapes of a decision nobody is named for, not just the empty timeline',
+  unwrap(prDoc).includes('carries no actor') && unwrap(prDoc).includes('there is no such event'),
+  unwrap(prDoc).split('two shapes')[1]?.slice(0, 300) ?? '(no such paragraph)',
+);
 check(
   'and it says what `paths` holds, since a prefix is not the glob the table shows',
   /path prefix, not a glob/.test(unwrap(prDoc)),
@@ -529,24 +551,20 @@ check(
 );
 
 // --- the examples are held to being producible, not to containing a word ----
-// The pin this replaced was `includes('"state": "carried"')`, and a fabricated
-// row pasted into the fence satisfied it: a grep for a token does not write out
-// the shape it expects. These properties are written out here.
+// The pin this replaced was `includes('"state": "carried"')`, which a fabricated
+// row satisfied: a grep for a token does not write out the shape it expects.
 const STATES = ['carried', 'not-in-diff', 'recorded', 'unrecognised'];
 const parsed = [...prDoc.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => {
   try { return JSON.parse(match[1] ?? ''); } catch { return null; }
 });
 check('every fenced JSON example of the document parses', parsed.length > 0 && parsed.every((v) => v !== null), String(parsed.length));
 
-// What each documented gap must say, written out here: a shape check cannot see
-// content, and a fabricated remedy or a `nearest` pointing at the wrong gap is
-// the same substitution one level down. A gap the document shows and these maps
-// do not name fails, which is the direction that cannot pass by omission.
-const DOC_REMEDY: Record<string, string> = {
-  'ruleset:absent': 'node scripts/init.mts --rules',
-  [RECORDED_GAP]: RECORDED_REMEDY,
-  [FILE_GAP]: 'node scripts/adopt.mts --workflows',
-};
+// What each documented gap must say: a shape check cannot see content, and a
+// fabricated remedy or a `nearest` pointing at the wrong gap is the same
+// substitution one level down. The remedies are `REMEDIES` above — the same
+// literal the code is held to — so document, pin and code agree by transitivity.
+// A gap the document shows that these do not name fails, which is the direction
+// that cannot pass by omission.
 const DOC_PATHS: Record<string, string> = { [FILE_GAP]: '.github/workflows/' };
 const DOC_NEAREST: Record<string, string> = { [TYPO]: FILE_GAP };
 
@@ -554,10 +572,10 @@ const shaped = (tick: any): boolean =>
   tick?.state === 'unrecognised'
     ? tick.remedy === null && tick.paths.length === 0 && tick.nearest === (DOC_NEAREST[tick.gap] ?? '(unpinned)')
     : tick?.state === 'recorded'
-      ? tick.remedy === DOC_REMEDY[tick.gap] && tick.paths.length === 0 && tick.nearest === null
+      ? tick.remedy === REMEDIES[tick.gap] && tick.paths.length === 0 && tick.nearest === null
       : STATES.includes(tick?.state) &&
         tick.paths.join(',') === DOC_PATHS[tick.gap] &&
-        tick.remedy === DOC_REMEDY[tick.gap] &&
+        tick.remedy === REMEDIES[tick.gap] &&
         tick.nearest === null;
 const producible = (shown: any): boolean =>
   shown.ticks.map((tick: any) => tick.gap).join(',') === shown.accepted.join(',') &&
@@ -569,28 +587,16 @@ check(
   examples.length > 0 && examples.every(producible),
   JSON.stringify(examples.find((shown) => !producible(shown)) ?? '(all producible)'),
 );
+const fileStates = examples.flatMap((shown) => shown.ticks.filter((tick: any) => tick.gap === FILE_GAP).map((tick: any) => tick.state));
+check(
+  'the paired examples are in the order the sentence above them promises, so the two states cannot be swapped unseen',
+  fileStates.join(',') === 'carried,not-in-diff' && /on the left the branch writes the generated workflows/.test(unwrap(prDoc)),
+  fileStates.join(','),
+);
 check(
   'all four states appear in them, the one word new to a consumer included',
   STATES.every((state) => examples.some((shown) => shown.ticks.some((tick: any) => tick.state === state))),
   STATES.filter((state) => !examples.some((shown) => shown.ticks.some((tick: any) => tick.state === state))).join(',') || '(all four)',
-);
-
-check(
-  'item 33 gains the forward direction of the cost it already carries, as a dated update',
-  !item33.includes('*(none yet)*') && /## Updates/.test(item33) && unwrap(item33.split('## Updates')[1] ?? '').includes('2026-09-20'),
-  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
-);
-check(
-  'and that update says the drift it names is now caught by npm run check',
-  unwrap(item33.split('## Updates')[1] ?? '').includes('npm run check'),
-  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
-);
-check(
-  'the update claims no more than is true: decision.mts already reaches inventory.mts through workflows.mts',
-  unwrap(item33.split('## Updates')[1] ?? '').includes('workflows.mts') &&
-    !/no runtime import/.test(item33) &&
-    !/no runtime dependency/.test(item33),
-  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 600),
 );
 
 // --- G2: the object the `--pr` JSON carries -------------------------------
@@ -743,9 +749,8 @@ check(
 );
 
 // The pin this file was missing. `unchanged` is a plan whose base already
-// carries every generated workflow, so its diff writes none of them while the
-// decision ticked that box. The body said "carried" over it, fourteen lines
-// below its own file list saying the branch carries nothing there.
+// carries every generated workflow, so its diff writes none while the decision
+// ticked that box; the body said "carried" over it, under its own file list.
 const unchangedAccepted = unwrap(bodyFor(unchanged));
 check(
   'the body of an unchanged-workflow branch does not call the workflow gap carried',

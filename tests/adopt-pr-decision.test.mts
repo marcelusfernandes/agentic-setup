@@ -747,11 +747,46 @@ check('the documentation says what a tick does and what leaving one empty does',
 check('it names the refusal a decided plan with nothing ticked gets', docs.includes('pr:plan-nothing-ticked') && docs.includes('plan:nothing-ticked'), 'nothing-ticked');
 check('it names the two failures the decision record can have', docs.includes('pr:timeline-unreadable') && docs.includes('pr:decision-not-recorded'), 'named failures');
 check('it says the decision is commented on the plan issue before the pull request is opened', /before .{0,40}pull request/i.test(prDoc) && /timeline/.test(prDoc), 'comment order');
+// Restored: deleted rather than moved when #423 compacted the pin block in
+// `tests/adopt-pr-vocabulary.test.mts`. A pin a pull request creates and then
+// drops is invisible to any comparison against the base.
+check(
+  'it says what a second entry in GAP_PATHS would do to the same typo',
+  flat(prDoc).includes('GAP_PATHS') && /a second entry/.test(flat(prDoc)),
+  '(second entry prose)',
+);
+check(
+  'and it says the comment names the remedy of a recorded gap and any tick nothing can act on',
+  /the command that performs a gap nothing here performed/.test(flat(prDoc)),
+  '(comment contents)',
+);
 check(
   'the bolded sentence about an existing label is narrowed to the label the inventory read saw',
   adoptDoc.includes('**A label the inventory read saw is left exactly as it is.**') &&
     !adoptDoc.includes('**A label the repository already has is left exactly as it is.**'),
   adoptDoc.split('\n').find((line) => line.startsWith('**A label')) ?? '(no such sentence)',
+);
+
+// The register item this sweep corrected, read as text for the same reason.
+// Here rather than in the split target: that file pins `docs/adopt-pr.md`, and
+// this is a different document — and both files are near the cap.
+const item33 = readFileSync(join(ROOT, 'docs', 'decisions', '0033-a-tick-is-what-adoption-acts-on.md'), 'utf8');
+check(
+  'item 33 gains the forward direction of the cost it already carries, as a dated update',
+  !item33.includes('*(none yet)*') && /## Updates/.test(item33) && flat(item33.split('## Updates')[1] ?? '').includes('2026-09-20'),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
+);
+check(
+  'and that update says the drift it names is now caught by npm run check',
+  flat(item33.split('## Updates')[1] ?? '').includes('npm run check'),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
+);
+check(
+  'the update claims no more than is true: decision.mts already reaches inventory.mts through workflows.mts',
+  flat(item33.split('## Updates')[1] ?? '').includes('workflows.mts') &&
+    !/no runtime import/.test(item33) &&
+    !/no runtime dependency/.test(item33),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 600),
 );
 
 finish();

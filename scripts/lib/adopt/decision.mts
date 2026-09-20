@@ -150,7 +150,7 @@ export const GAP_REMEDIES: Record<Gap, string> = {
   'labels:missing': 'node scripts/init.mts',
   'hooks:not-installed': 'node scripts/adopt.mts --hooks',
   'workflows:missing': 'node scripts/adopt.mts --workflows',
-  'test-command:none': 'set `AGENTIC_TEST_CMD`, or add a test command detection can find',
+  'test-command:none': 'export AGENTIC_TEST_CMD=<the command that runs your tests>',
   'record:stale': 'node scripts/adopt.mts --record --force',
 };
 
