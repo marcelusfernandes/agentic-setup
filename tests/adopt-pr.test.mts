@@ -526,7 +526,7 @@ check(
   'the ## Proof section names the command scripts/proof.mts will run',
   /^## Proof$/m.test(prBody) &&
     prBody.split('## Proof')[1].includes(`scripts/proof.mts ${SLUG}`) &&
-    prBody.split('## Proof')[1].includes(String(cOut?.proof?.command ?? ' ')),
+    prBody.split('## Proof')[1].includes(String(cOut?.proof?.command ?? '\u0000')),
   `${cOut?.proof?.command} | ${prBody.split('## Proof')[1]?.slice(0, 400)}`,
 );
 check('the reported proof command is the one the record holds', cOut?.proof?.command === 'npm test' && cOut?.proof?.slug === SLUG, JSON.stringify(cOut?.proof));

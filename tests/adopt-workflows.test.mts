@@ -221,7 +221,7 @@ check('the generated checks workflow is not a verbatim copy', checksFile?.verbat
 
 for (const name of ['guard-main.yml', 'issue-lint.yml']) {
   const rendered = fileNamed(full, name);
-  check(`${name} is still copied verbatim, under the marker`, rendered?.verbatim === true && rendered.content.endsWith(templates[name] ?? ' '), name);
+  check(`${name} is still copied verbatim, under the marker`, rendered?.verbatim === true && rendered.content.endsWith(templates[name] ?? '\u0000'), name);
 }
 
 // --- B: one list of check names, for the workflow and for the ruleset -------
@@ -439,8 +439,8 @@ check('docs/adopt.md names that refusal', docs.includes('workflows:jobs-not-last
 // to a follow-up.
 const NUL_FREE_DIRS = ['tests', 'ci', 'scripts', 'hooks'];
 
-/** The NUL byte as a one-character string, spelled as an escape so this file carries none. */
-const NUL_CHAR = ' ';
+/** The NUL byte as a one-character string, built rather than written so this file carries none. */
+const NUL_CHAR = String.fromCharCode(0);
 
 /**
  * One `path:offset (line N)` entry per tracked file under `dirs` that holds a

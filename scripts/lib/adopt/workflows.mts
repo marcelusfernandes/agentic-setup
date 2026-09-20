@@ -181,7 +181,7 @@ const header = (): string =>
  * rendered on one line at all, and is refused rather than truncated.
  */
 function yamlCommand(command: string, field: string): string {
-  if (/[ -]/.test(command)) {
+  if (/[\u0000-\u001f\u007f]/.test(command)) {
     throw new WorkflowError(
       'workflows:command-not-renderable',
       `${field} holds a newline or a control character and cannot be rendered into a workflow`,
