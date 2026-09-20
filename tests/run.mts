@@ -24,7 +24,8 @@
 // ends at the first line that is blank or unindented. That is the shape a
 // FAIL detail already uses in tests/lib/harness.mts, so an author writing a
 // note is not asked to learn a second one — with one difference that is not
-// cosmetic: that precedent is capped at six lines (DETAIL_TAIL) and this
+// cosmetic: that precedent is capped (DETAIL_TAIL, six tail lines, seven
+// when an error header above the cut is carried down with them) and this
 // rule caps at nothing. The cap is not copied for the reason no cap was put
 // on notes in the first place (#382) — a cap discards exactly the detail the
 // note exists to carry, silently, which is the defect #429 is about — so a
@@ -72,12 +73,10 @@
 // both streams verbatim — there, the run's readers want what the child said,
 // in the order it said it.
 //
-// Reading the streams apart also changes the order of a passing file's
-// notes, for a file that writes to both: every note it put on stdout is
-// printed before any note it put on stderr, where the concatenated scan
-// interleaved them as the two streams happened to land. Nothing depends on
-// the old order — the streams were already glued in an order the child did
-// not control — but the change is real and this is where it is written down.
+// Reading the streams apart does not reorder a passing file's notes: `out`
+// was already stdout followed by stderr, so notes were already grouped by
+// stream. What changed is that a note at the head of stderr is no longer
+// glued onto an unterminated stdout tail and lost.
 //
 // Takes an optional directory argument (default: this file's own directory)
 // so tests/run.test.mts can point it at a temp directory instead of tests/.
