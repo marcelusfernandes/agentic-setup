@@ -5,7 +5,8 @@
 # parsing and matching a tracked file, or being new; every `authorised:`
 # grant in that section held to that same rule, and named as a grant rather
 # than a bullet glob when it fails (#232); those globs *and* grants disjoint
-# from the issues already in flight in the same milestone, since a granted
+# from the issues already in flight, whatever milestone each of them carries
+# and whether or not it carries one, since a granted
 # file is a file that pull request may touch; and every
 # `Blocked by: #N` number naming an issue that exists. It reads no diff:
 # the entry-point check — every file the issue's globs cover grepped for
@@ -13,16 +14,25 @@
 # in M4 (#62), because it could not tell a rename from an in-place edit and
 # fired on every ordinary import or mention; see `ci/issue-lint.mts:14-19`.
 # The shape it aimed at is caught at PR time instead, by `scope`'s
-# dangling-reference rule. Runs only once the issue carries a milestone (a
-# milestone is set right after triage; running before that would just fail
-# AC1's "not applicable yet" cases with noise).
+# dangling-reference rule. It runs on every issue, including one that
+# carries no milestone: such an issue used to be skipped here and invisible
+# on both sides of the comparison, which is exactly the blind spot #338
+# closed one layer further in. The old reason for the skip — a milestone is
+# set right after triage, and running before that would fail AC1's "not
+# applicable yet" cases with noise — was a trade against a check that could
+# not see the issue anyway; now it can, and a noisy comment on an untriaged
+# issue is the lesser cost.
 #
-# Fetches the other open issues in the same milestone with `gh`, then runs
+# Fetches the other open issues of the repository with `gh` — every one of
+# them, not the linted issue's milestone, because a merge conflict does not
+# read the milestone field (#338) — then runs
 # the lint with the file-flag inputs (no further `gh` needed except AC5's
 # per-number existence check), and creates or updates its own comment on
 # the issue — found by the `<!-- agentic-issue-lint -->` marker the lint's
 # `--markdown` output starts with, so an edit never produces a second
-# comment.
+# comment. The flag that carries the list is still called
+# `--milestone-issues-file`; the name is historical, and the file holds
+# whatever open issues this step gathered.
 
 name: issue-lint
 
@@ -40,7 +50,6 @@ permissions:
 
 jobs:
   lint:
-    if: github.event.issue.milestone != null
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -49,15 +58,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22 # 22.18+ runs the .mts scripts directly
-      - name: gather milestone issues
+      - name: gather open issues
         env:
           GH_TOKEN: ${{ github.token }}
-          MILESTONE: ${{ github.event.issue.milestone.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           set -euo pipefail
           printf '%s' "$ISSUE_BODY" > issue-body.md
-          gh issue list --milestone "$MILESTONE" --state open --limit 500 --json number,labels,body > milestone-issues.json
+          gh issue list --state open --limit 500 --json number,labels,body > open-issues.json
       - name: issue-lint
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,7 +74,7 @@ jobs:
           set -euo pipefail
           node ci/issue-lint.mts --issue "$ISSUE" \
             --issue-body-file issue-body.md \
-            --milestone-issues-file milestone-issues.json \
+            --milestone-issues-file open-issues.json \
             --markdown > comment.md
       - name: comment
         if: ${{ !cancelled() }}
