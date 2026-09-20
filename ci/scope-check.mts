@@ -475,11 +475,14 @@ appendSummary(
           '',
           // The one sentence that has to be unmistakable, because the two
           // sections above it are about being over the limit and this one is
-          // about not being over it. It states the band, states that the head
-          // is under the limit, and answers the question a reader arrives with
-          // — is 800 over 800 — rather than leaving it to be inferred from an
-          // absent failure.
-          `**REPORTED, not failed** — within ${FILE_LINE_APPROACH_BAND} lines of the ${FILE_LINE_LIMIT}-line limit at the head, and not over it: a file at exactly ${FILE_LINE_LIMIT} lines is at the limit, not past it, and fails nothing.`,
+          // about not being over it. It states the band and states that the
+          // head is under the limit. The clause about exactly FILE_LINE_LIMIT
+          // is added only when a file in this run is actually there: it answers
+          // a question a reader arrives with, and a reader who has no file at
+          // the limit did not arrive with it. An assertion printed on every run
+          // whether or not it describes anything in front of it is how a
+          // reported line becomes scenery.
+          `**REPORTED, not failed** — within ${FILE_LINE_APPROACH_BAND} lines of the ${FILE_LINE_LIMIT}-line limit at the head, and not over it${approaching.some((g) => g.headLines === FILE_LINE_LIMIT) ? `: a file at exactly ${FILE_LINE_LIMIT} lines is at the limit, not past it, and fails nothing` : ''}:`,
           ...approaching.map((g) => `- \`${g.path}\` is at ${g.headLines} line(s), ${FILE_LINE_LIMIT - g.headLines} from the limit${g.baseLines === null ? ', new at head' : ` (${g.baseLines} at the merge base)`}`),
           '',
           `What closes it: a pull request that leaves the file with room — split it, or move part of it out — or nothing at all, if the file is finished. This is not a refusal and nothing here changes the exit code; it is the warning the ${FILE_LINE_LIMIT}-line rule never gave before the pull request that crossed.`,

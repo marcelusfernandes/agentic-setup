@@ -15,13 +15,37 @@
 // `ci/lib/`. Every expected sentence is written out here rather than read
 // back from `ci/scope-check.mts` (invariant 10).
 //
-// Negative control: every case here is red on the base. The parsers
-// `findLinkedIssueMatches` and `incidentalLinkedIssues` do not exist there,
-// and `ci/scope-check.mts` prints neither an audited-glob count with its
-// sources nor a warning for an incidentally linked issue. The new exports
-// come in through the namespace, not a named import: a named import of an
-// export the base checkout does not have kills the whole file at load time,
-// which reads as a structural red rather than an assertion.
+// Negative control, stated case by case rather than as a blanket claim, because
+// the blanket claim was false when it was first written here and a header that
+// overstates its own red is worse than one that admits a green.
+//
+// **Red on the base** — every case that reads `findLinkedIssueMatches` or
+// `incidentalLinkedIssues` (neither exists there), every case that reads the
+// `Audited N glob(s)` line or the incidental-link warning out of
+// `ci/scope-check.mts` (it prints neither), and the `stripCode` splice case,
+// whose prose links an issue on the base and links nothing here.
+//
+// **Green on the base, and named here because they are:**
+//
+// - `a keyword inside a span written across two lines links nothing` — a
+//   regression guard, not a red. An earlier draft of this pull request made
+//   that prose link an issue the base ignored; the case stands so the next
+//   author who touches `stripCode`'s inline pattern turns it red instead of
+//   widening the gate in silence.
+// - `the incidental issue is still a linked issue` — a positive assertion that
+//   `parseLinkedIssues` was **not** narrowed, which is #359's explicit
+//   instruction. It has to pass either side or the parser was narrowed.
+// - `a widened run still passes` — the same, for the exit code: the new
+//   reporting is a warning, so the run passed on the base and must still.
+//
+// A missing export is made to **fail** rather than to read as "nothing found":
+// the fallbacks below return a sentinel, because a fallback of `[]` turns every
+// `…length === 0` assertion green on a checkout that has no parser at all, and
+// four cases here passed that way before it was measured.
+//
+// The new exports come in through the namespace, not a named import: a named
+// import of an export the base checkout does not have kills the whole file at
+// load time, which reads as a structural red rather than an assertion.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,8 +72,13 @@ const incidentalLinkedIssues = (scopeLib as Record<string, unknown>).incidentalL
   ((body: string | null | undefined) => LinkedIssueMatch[]) | undefined;
 check('ci/lib/scope.mts exports findLinkedIssueMatches', typeof findLinkedIssueMatches === 'function');
 check('ci/lib/scope.mts exports incidentalLinkedIssues', typeof incidentalLinkedIssues === 'function');
-const matches = (body: string): LinkedIssueMatch[] => (findLinkedIssueMatches ? findLinkedIssueMatches(body) : []);
-const incidental = (body: string): LinkedIssueMatch[] => (incidentalLinkedIssues ? incidentalLinkedIssues(body) : []);
+// A missing export answers with a sentinel, never with an empty list. `[]` is
+// the right answer to "nothing is incidental here" and is therefore the wrong
+// stand-in for "there is no parser to ask": it made four cases below green on
+// a checkout that had none.
+const NOT_EXPORTED: LinkedIssueMatch[] = [{ issue: -1, line: -1, phrase: '<not exported by this checkout>', declared: false }];
+const matches = (body: string): LinkedIssueMatch[] => (findLinkedIssueMatches ? findLinkedIssueMatches(body) : NOT_EXPORTED);
+const incidental = (body: string): LinkedIssueMatch[] => (incidentalLinkedIssues ? incidentalLinkedIssues(body) : NOT_EXPORTED);
 
 // --- the four outcomes, each named -------------------------------------------
 // The declaration is the run of lines at the top of the body that carry
@@ -122,20 +151,47 @@ check(
   JSON.stringify(incidental(repeated)),
 );
 
-// Invariant 5, the exact prose: stripping a code span used to splice the text
-// either side of it together, so `clos`e`s #1` read as `closes #1` and linked
-// an issue nobody wrote. Code is now blanked in place, keeping every offset,
-// which is what makes a line number reportable at all — and the splice goes
-// with it. This is the parser getting stricter, and this is the prose.
+// --- what `stripCode` changed, and what it deliberately did not --------------
+// Invariant 5 asks for a test for **the exact prose that used to break**, and
+// prose that behaves the same either side of the change is not that test. The
+// first draft of this file pinned ``clos`e`s #1``, which links nothing on the
+// base either — deleting the span leaves `closs #1`, and `closs` is not a
+// keyword. It was green at the red commit and pinned nothing while three other
+// places claimed it proved a tightening. This is the prose that actually moved.
+const SPLICE = 'clo`X`ses #1\n';
 check(
-  'a keyword split by an inline code span does not link an issue',
-  parseLinkedIssues('clos`e`s #1\n').length === 0,
-  JSON.stringify(parseLinkedIssues('clos`e`s #1\n')),
+  'the prose that used to break: a span whose removal spliced a keyword together links nothing now',
+  parseLinkedIssues(SPLICE).length === 0,
+  JSON.stringify(parseLinkedIssues(SPLICE)),
+);
+// The other half of the same invariant, and the one that matters more, because
+// it runs the other way. Deleting a span was wrong; declining to treat a
+// line-crossing span as a span is worse. CommonMark allows one, the base
+// blanked it, and an earlier draft of this pull request excluded `\n` from the
+// inline pattern — which made this body link #5, audit another issue's globs
+// and widen a required check, all because a quotation wrapped. A regression
+// guard, green on the base on purpose, so the next edit to that pattern reds.
+const WRAPPED_SPAN = 'Closes #1\n\nSee `git log\ncloses #5` for the shape.\n';
+check(
+  'a keyword inside a span written across two lines links nothing, as on the base',
+  JSON.stringify(parseLinkedIssues(WRAPPED_SPAN)) === JSON.stringify([1]),
+  JSON.stringify(parseLinkedIssues(WRAPPED_SPAN)),
+);
+check(
+  'a keyword inside a span written across two lines is not incidental either',
+  incidental(WRAPPED_SPAN).length === 0,
+  JSON.stringify(incidental(WRAPPED_SPAN)),
 );
 check(
   'blanking code in place does not move a line number',
   JSON.stringify(matches('`a`\n\nCloses #1\n').map((m) => m.line)) === JSON.stringify([2]),
   JSON.stringify(matches('`a`\n\nCloses #1\n')),
+);
+// A span that wraps still holds its place, so a link *after* it keeps its line.
+check(
+  'a line-crossing span keeps the line numbers of everything after it',
+  JSON.stringify(matches('`a\nb`\n\nCloses #1\n').map((m) => m.line)) === JSON.stringify([3]),
+  JSON.stringify(matches('`a\nb`\n\nCloses #1\n')),
 );
 
 // --- spawned: what the check says it audited ---------------------------------

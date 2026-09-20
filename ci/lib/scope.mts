@@ -275,14 +275,18 @@ export const FILE_LINE_LIMIT = 800;
  * threshold with a rounding rule attached and one more thing to get wrong.
  *
  * Fifty, because a report that arrives with the pull request that crosses is
- * not a warning. Measured over the eighty most recent landings on `main`, of
- * the twenty-three that lengthened a file already at 700 lines or more, seven
- * added more than 20 lines and four added more than 50 — so a band of 20
- * gives no warning in about 30% of the cases it exists for and a band of 50
- * in about 17%. The cost runs the other way and runs flat: 24 of those eighty
- * landings touched a file at 780 or above, 28 touched one at 750 or above.
- * Thirteen points of coverage for five points of noise. The reasoning and the
- * numbers are `docs/decisions/0036-a-file-approaching-the-line-limit-is-reported.md`.
+ * not a warning. Measured over the eighty most recent first-parent landings on
+ * `main`, counting one observation per changed `.mts`/`.md` file that already
+ * stood at 700 lines or more at that landing's parent — 36 observations — the
+ * growth exceeded 20 lines in 12 of them and 50 lines in 4. A band of 20
+ * therefore gives no warning at all in 33% of the cases it exists for, and a
+ * band of 50 in 11%. The cost runs the other way and runs flat: of the same
+ * eighty landings, 24 touched a file standing at 780 or above at their head and
+ * 28 touched one at 750 or above. Twenty-two points of coverage for five points
+ * of noise. The method is stated because an earlier draft of it measured a
+ * narrower file set and got numbers that argued less well for the same answer.
+ * The reasoning is
+ * `docs/decisions/0036-a-file-approaching-the-line-limit-is-reported.md`.
  */
 export const FILE_LINE_APPROACH_BAND = 50;
 
@@ -384,7 +388,14 @@ export function checkScope({ files, issueGlobs, authorisedGlobs = [] }: { files:
 // GitHub closes an issue on Closes/Fixes/Resolves (and close/closed,
 // fix/fixed, resolve/resolved), each optionally followed by a colon before
 // the `#N`. See docs/workflow.md, "PR": `Closes #N` is plain text.
-const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
+//
+// Written once, as source, because two readers need it: the matcher below
+// that finds a link anywhere in a body, and `declarationLineCount`'s anchored
+// pattern for a line that is *nothing but* links. Spelling the alternation
+// twice is the hazard #231 named for `authorised:` lines — two patterns that
+// have to agree, and nothing making them.
+const LINKED_ISSUE_SOURCE = '(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?\\s*#';
+const LINKED_ISSUE_RE = new RegExp(`\\b${LINKED_ISSUE_SOURCE}(\\d+)`, 'gi');
 
 /**
  * Blanks fenced code blocks and inline code spans so a keyword quoted as an
@@ -392,17 +403,31 @@ const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d
  *
  * Blanked in place — every character replaced by a space, every newline kept —
  * rather than deleted, so an offset in the result is an offset in the body and
- * a match's line number is reportable at all (#413). Two consequences beyond
- * that, both tightenings: an inline span no longer splices the text either side
- * of it together, so ``clos`e`s #1`` stops reading as `closes #1` and links
- * nothing; and an unterminated span no longer runs to the next backtick on a
- * later line, because the inline pattern stops at a newline. Measured before
- * landing over all 178 merged pull requests of this repository: the issue
- * numbers this returns are unchanged for every one of them.
+ * a match's line number is reportable at all (#413).
+ *
+ * That is the **only** intended change, and it is a tightening: deleting a span
+ * spliced the text either side of it together, so ``clo`X`ses #1`` read as
+ * `closes #1` and linked an issue nobody wrote. Blanking leaves whitespace
+ * where the span was and the splice cannot happen. `tests/scope-linked.test.mts`
+ * holds that exact prose, and holds it as a case that is **red on the base** —
+ * invariant 5 asks for a test for the prose that used to break, and prose that
+ * behaves identically either side of the change is not that test.
+ *
+ * **The inline pattern still crosses newlines, deliberately.** An earlier draft
+ * of this function excluded `\n` from it, which read as a second tightening and
+ * was the opposite: a span written across a line break stopped being a span at
+ * all, so ``See `git log\ncloses #5` `` linked #5 where the base linked nothing,
+ * and a required check audited another issue's globs because a quotation
+ * happened to wrap. CommonMark lets an inline span cross a line, so the base's
+ * reading was also the correct one; the exclusion was a markdown bug, not a
+ * policy. Nothing in #359 asked for it. Measured over all 178 merged pull
+ * requests of this repository, this function's issue numbers are identical to
+ * the base's on every one of them — which is the claim this comment is allowed
+ * to make and the newline-excluding draft was not.
  */
 function stripCode(text: string): string {
   const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
-  return text.replace(/```[\s\S]*?```/g, blank).replace(/`[^`\n]*`/g, blank);
+  return text.replace(/```[\s\S]*?```/g, blank).replace(/`[^`]*`/g, blank);
 }
 
 /**
@@ -431,9 +456,21 @@ export type LinkedIssueMatch = { issue: number; line: number; phrase: string; de
  * parser that ignored the form would audit a *narrower* set than the issues
  * GitHub actually closes, and this repository has already measured that
  * authorial care does not hold a parser reading prose (#359).
+ *
+ * **The form is strict, and a body it rejects loses its whole declaration** —
+ * `declaredLines` becomes 0 and every issue the body links, the primary one
+ * included, is reported as incidental. `Closes #1 and Fixes #2` on the first
+ * line is the shape: the line carries prose as well as links, so it is not a
+ * declaration. Zero of this repository's 178 merged bodies have it and the
+ * template asks for `Closes #N` alone, so it is a live edge rather than a live
+ * defect, and it is left strict on purpose: loosening it needs a rule for what
+ * prose may sit beside a declaration, which is the question the strict form
+ * exists to avoid. The failure is at least loud — a body in that shape draws a
+ * warning naming its own primary issue, which reads as obviously wrong rather
+ * than as a silently narrowed audit.
  */
 function declarationLineCount(text: string): number {
-  const onlyLinks = /^(?:(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#\d+[,;]?\s*)+$/i;
+  const onlyLinks = new RegExp(`^(?:${LINKED_ISSUE_SOURCE}\\d+[,;]?\\s*)+$`, 'i');
   let n = 0;
   for (const raw of text.split('\n')) {
     const line = raw.trim();

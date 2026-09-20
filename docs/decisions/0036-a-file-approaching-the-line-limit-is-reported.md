@@ -82,8 +82,27 @@ reported, and is not over the limit.**
 - One consequence of making a line number reportable: `stripCode` now blanks code in
   place instead of deleting it, so an offset in the stripped text is an offset in the
   body. That also stops an inline span splicing the text either side of it together, so
-  ``clos`e`s #1`` no longer reads as a link. The parser gets stricter, never looser
-  (invariant 5), and `tests/scope-linked.test.mts` holds the exact prose.
+  ``clo`X`ses #1`` no longer reads as `closes #1` and links nothing. The parser gets
+  stricter, never looser (invariant 5), and `tests/scope-linked.test.mts` holds that
+  exact prose as a case that is red on the base.
+
+  **What the inline pattern does not do, because a draft of this change made it do it
+  and was wrong.** It still crosses newlines, as it always did. An earlier draft
+  excluded `\n` from it and described that as a second tightening; it was a loosening,
+  and in the direction a gate must never loosen. A span written across a line break
+  stopped being a span, so a body reading ``See `git log⏎closes #5` `` linked #5 where
+  the base linked nothing, and `scope` would have unioned another issue's globs into its
+  audit because a quotation happened to wrap. CommonMark allows an inline span to cross
+  a line, so the base's reading was the correct one and the exclusion was a markdown bug
+  rather than a policy. It is named here, in the item rather than only in a commit,
+  because the draft of this item asserted the opposite — that the change was two
+  tightenings — and an item is what the next agent reads *instead of* measuring. The
+  sentence was false on its own date, so it is corrected in the body, which is what
+  [`README.md`](README.md) ("Correcting an item that is already written") prescribes for
+  a statement that was never true rather than one the ground moved under.
+  `tests/scope-linked.test.mts` holds the wrapped-span case as a regression guard, green
+  on the base on purpose, so the next edit to that pattern reds instead of widening the
+  gate in silence.
 
 ## Reason
 
@@ -111,15 +130,20 @@ The threshold is the part that has to be argued rather than asserted.
   the limit ever varies per path class, a percentage becomes worth revisiting; it does
   not today.
 - **Fifty, because a report that arrives with the pull request that crosses is not a
-  warning.** Measured over the eighty most recent landings on `main` at `38bff59`: of the
-  twenty-three that lengthened a file already at 700 lines or more, seven added more than
-  20 lines and four added more than 50. A band of 20 therefore gives no warning at all in
-  about 30% of the cases it exists for, and a band of 50 in about 17%.
-- **The cost runs the other way, and it runs flat.** 17 of those eighty landings touched a
-  file at 795 or above, 20 at 790, 24 at 780, 26 at 770, 28 at 750. Moving from 780 to 750
-  buys thirteen points of coverage for five points of noise. Below 750 the curve is flat
-  for a different reason — nothing in this tree sits between 750 and 770 — so a wider band
-  would cost nothing today and would cost on a tree that is not this one.
+  warning.** The method is stated first, because an earlier draft of this bullet measured
+  a narrower set of files and reported figures that do not reproduce: population is the
+  eighty most recent **first-parent** landings on `main` at `38bff59`; one observation per
+  changed `.mts`/`.md` file that existed at that landing's parent with **700 lines or
+  more**; growth is head minus parent. That gives **36 observations**, of which 23 grew at
+  all, **12 grew by more than 20 lines and 4 by more than 50**. A band of B gives no
+  warning where growth exceeds B, because the file crosses from outside the band in one
+  landing: **band 20 misses 33%, band 50 misses 11%.**
+- **The cost runs the other way, and it runs flat.** Of the same eighty landings, 17
+  touched a file standing at 795 or above at their head, 20 at 790, 24 at 780, 26 at 770,
+  28 at 750. Moving from 780 to 750 buys **twenty-two points of coverage for five points
+  of noise**. Below 750 the curve is flat for a different reason — nothing in this tree
+  sits between 750 and 770 — so a wider band would cost nothing today and would cost on a
+  tree that is not this one.
 - **Over the tracked files rather than over landings**, the same thresholds report 8 files
   at 795, 9 at 790, 11 at 780 and 16 at 750, of 208 tracked. #392 computed nine at 780 and
   six at 795 when it was drafted; both figures had drifted by the time this landed, which
@@ -147,11 +171,24 @@ useful question, "what will `main` look like", but no rule in `scope` asks it: t
 changed-file list never did, and the line rule should not have.
 
 The error it could produce ran both ways, which is why it is a verdict and not only a
-number. Against the tip, a branch that added lines to a file `main` lengthened further
-reads as `inherited-over` and passes; a branch that shortened a file `main` shortened
-more reads as `pushed-over` and fails. `tests/scope-line-limit.test.mts` pins the first
-shape with the verdict, not just the count: fork at 785, branch head at 810, `main` at
-815 — exit 0 measured against the tip, exit 1 measured against the merge base.
+number — and it has **four** reachable shapes, not two, because the base side of the
+comparison can be *absent* as well as different. An earlier draft of this item said two;
+that was a statement about the fixtures that had been written, not about the code, and it
+was false on its own date. All four are pinned in `tests/scope-line-limit.test.mts` with
+their verdicts, not only their counts:
+
+| what `main` does | what the branch does | against the base tip | against the merge base |
+|---|---|---|---|
+| lengthens the file past the head (785 → 815) | 785 → 810 | `inherited-over`, passes | **`pushed-over`, fails** |
+| shortens it below the head (900 → 840) | 900 → 850 | **`pushed-over`, fails** | `inherited-over`, passes |
+| **deletes** it (900 → absent) | 900 → 850 | **new at head, `pushed-over`, fails** | `inherited-over`, passes |
+| **adds** it (absent → 900) | absent → 850 | `inherited-over`, passes | **new at head, `pushed-over`, fails** |
+
+Two of the four have the base **refusing** a branch that shortened a file or left it
+alone, and those are the ones worth naming twice: a check that wrongly fails loudly gets
+argued with, and a check that wrongly refuses honest work gets routed around, so nobody
+reports it. The fourth is the only shape where the base lets something through — a branch
+that creates an 850-line file reads as having shortened somebody else's.
 
 ### What was silent was never the match
 
@@ -228,6 +265,15 @@ whole of its line, before it counts.
 - **`stripCode` changed shape.** The issue numbers it yields are unchanged over all 178
   merged bodies, measured before landing, and the change is a tightening. It is still a
   parser that behaves differently than it did.
+- **A measurement over merged bodies did not catch the one thing that went wrong with
+  it.** All 178 agreed either side of the newline-excluding draft, and that draft widened
+  the gate. The corpus was real and the inference from it was not: no merged body of this
+  repository happens to carry a closing keyword inside a wrapped code span, so agreement
+  across it was evidence about those bodies and not about the parser. What caught it was
+  a reviewer enumerating what the *pattern* could match, and the lesson is written down
+  here rather than in a pull request because it generalises past this one: a corpus can
+  only falsify, and a parser change needs a case built from the rule it changed, not only
+  a replay of what has already been written.
 
 ## Supersedes
 
