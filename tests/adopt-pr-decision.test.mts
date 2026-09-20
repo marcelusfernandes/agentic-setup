@@ -626,6 +626,46 @@ check(
   declinedLineOf(typoPr) || typoPr.slice(0, 700),
 );
 
+// --- F4: a base that already carries the workflows is not a branch that does --
+// The reviewer's reproduction of #431's own defect, end to end. `--record` and
+// `--workflows` write the generated files, a commit puts them on the base, and
+// the same all-ticked plan is answered again. Every workflow then plans as
+// `skipped (unchanged)`, no commit touches `.github/workflows/`, and the
+// decision must not say the branch carries them: a gap is carried because this
+// diff carries its files, never because of what kind of gap it is.
+const settled = fixture();
+adopt(['--record'], settled.repo, { FAKE_GH_PLAN: 'all' });
+adopt(['--workflows'], settled.repo, { FAKE_GH_PLAN: 'all' });
+check(
+  'the fixture really does carry the generated workflows before --pr runs',
+  WORKFLOW_FILES.every((path) => existsSync(join(settled.repo, path))),
+  WORKFLOW_FILES.filter((path) => !existsSync(join(settled.repo, path))).join(',') || '(all present)',
+);
+git(['add', '-A'], settled.repo);
+git(['commit', '-q', '-m', 'the workflows this repository already had'], settled.repo);
+git(['push', '-q', 'origin', 'main'], settled.repo);
+const settledBase = git(['rev-parse', 'HEAD'], settled.repo);
+const h = adopt(['--pr'], settled.repo, { FAKE_GH_PLAN: 'all' });
+const hOut = parse(h.stdout);
+check('--pr over a base that already has the workflows exits 0', h.status === 0 && hOut !== null, `${h.stdout}\n${h.stderr}`);
+const settledHead = String(hOut?.head ?? '');
+const settledCarried = settledHead.length === 40 ? pathsIn(settled.repo, `${settledBase}...${settledHead}`) : [];
+check(
+  'no commit of that branch touches the workflows, because the base already has them',
+  WORKFLOW_FILES.every((path) => !settledCarried.includes(path)),
+  settledCarried.join(','),
+);
+check(
+  'so the JSON does not report the workflow gap as carried, though its box was ticked',
+  (hOut?.decision?.accepted ?? []).includes(FILE_GAP) && tickFor(hOut, FILE_GAP)?.state === 'not-in-diff',
+  JSON.stringify(ticksOf(hOut)),
+);
+check(
+  'and the body does not claim it either, fourteen lines under a file list carrying none of it',
+  !bodyOf(h.stateDir, 'pr-create.args').includes(`\`${FILE_GAP}\` — **carried**`),
+  bodyOf(h.stateDir, 'pr-create.args').split('## The decision this acts on')[1]?.slice(0, 400) ?? '(no decision section)',
+);
+
 // --- G: the parser itself, over bodies written out here ---------------------
 // The spawn cases above are what invariant 6 asks for; these prove the reading
 // directly, the way `resolvePlanIssue` is proved in the sibling file. Every

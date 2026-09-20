@@ -84,6 +84,24 @@ const TYPO = 'workflow:missing';
 /** A ticked name that is near nothing at all. */
 const NONSENSE = 'everything:please';
 
+/** A second typo of the same gap name, to prove one shadowed gap can hold both. */
+const TYPO2 = 'workflows:missng';
+
+/**
+ * The paths a branch carries, as `--pr` plans them: what the pull request
+ * writes, and nothing else.
+ *
+ * **A gap is carried because the diff carries its files, never because of what
+ * kind of gap it is.** A base that already holds the generated workflows plans
+ * every one of them as `skipped (unchanged)`, and a workflow a person wrote is
+ * skipped as `not-generated` — in both, `workflows:missing` is accepted and no
+ * commit touches `.github/workflows/`. A report that calls that carried says
+ * something true-sounding about a state that is not the state, which is the
+ * defect this whole sweep exists to close.
+ */
+const WITH_WORKFLOWS = ['agentic.config.json', '.github/workflows/agentic-checks.yml'];
+const WITHOUT_WORKFLOWS = ['agentic.config.json', 'proof/adopt-agentic-setup.test.mjs'];
+
 type AcceptedGap = { gap: string; state: string; paths: string[]; remedy: string | null; nearest: string | null };
 type DecisionRecord = { accepted: string[]; declined: string[]; decidedBy: string | null };
 
@@ -91,13 +109,17 @@ type Module = {
   KNOWN_GAPS?: readonly string[];
   GAP_REMEDIES?: Record<string, string>;
   nearestGap?: (name: string) => string | null;
-  classifyAccepted?: (accepted: readonly string[]) => AcceptedGap[];
+  classifyAccepted?: (accepted: readonly string[], carried: readonly string[]) => AcceptedGap[];
   tickShadowing?: (gap: string, accepted: readonly string[]) => string | null;
   unrecognisedNotes?: (record: DecisionRecord) => string[];
+  ticksShadowing?: (gap: string, accepted: readonly string[]) => string[];
   decidedByPhrase?: (record: DecisionRecord, label: string) => string;
-  decisionReport?: (record: DecisionRecord) => DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
+  decisionReport?: (record: DecisionRecord, carried: readonly string[]) => DecisionRecord & {
+    ticks?: AcceptedGap[];
+    shadowed?: { gap: string; tick: string }[];
+  };
   decidedBy?: (timeline: unknown, label: string) => string | null;
-  renderDecisionComment?: (record: DecisionRecord, label: string, branch: string) => string;
+  renderDecisionComment?: (record: DecisionRecord, label: string, branch: string, carried: readonly string[]) => string;
 };
 
 let mod: Module | null = null;
@@ -143,21 +165,33 @@ check(
 );
 
 // --- B: the four outcomes a tick can have -----------------------------------
-const classify = (accepted: string[]): AcceptedGap[] => {
+const classify = (accepted: string[], carried: string[] = WITH_WORKFLOWS): AcceptedGap[] => {
   if (!mod?.classifyAccepted) return [];
   try {
-    return mod.classifyAccepted(accepted);
+    return mod.classifyAccepted(accepted, carried);
   } catch {
     return [];
   }
 };
-const entryFor = (accepted: string[], gap: string): AcceptedGap | undefined => classify(accepted).find((e) => e.gap === gap);
-const stateOf = (accepted: string[], gap: string): string => entryFor(accepted, gap)?.state ?? '(nothing)';
+const entryFor = (accepted: string[], gap: string, carried?: string[]): AcceptedGap | undefined =>
+  classify(accepted, carried).find((e) => e.gap === gap);
+const stateOf = (accepted: string[], gap: string, carried?: string[]): string => entryFor(accepted, gap, carried)?.state ?? '(nothing)';
 
 check(
   'an exact tick whose remedy is a file is carried',
   stateOf([FILE_GAP, RECORDED_GAP], FILE_GAP) === 'carried',
   JSON.stringify(classify([FILE_GAP, RECORDED_GAP])),
+);
+check(
+  'the same tick over a diff that carries none of its files is not carried',
+  stateOf([FILE_GAP, RECORDED_GAP], FILE_GAP, WITHOUT_WORKFLOWS) === 'not-in-diff',
+  JSON.stringify(classify([FILE_GAP, RECORDED_GAP], WITHOUT_WORKFLOWS)),
+);
+check(
+  'and the state is read off the diff rather than off the kind of gap it is',
+  stateOf([FILE_GAP], FILE_GAP, ['.github/workflows/agentic-checks.yml']) === 'carried' &&
+    stateOf([FILE_GAP], FILE_GAP, []) === 'not-in-diff',
+  `${stateOf([FILE_GAP], FILE_GAP, ['.github/workflows/agentic-checks.yml'])} | ${stateOf([FILE_GAP], FILE_GAP, [])}`,
 );
 check(
   'an exact tick whose remedy is not a file is recorded, and names what performs it',
@@ -193,10 +227,10 @@ check(
 // test over wrapped text passes a sentence that is not there.
 const unwrap = (text: string): string => text.split('\n').join(' ').replace(/\s+/g, ' ');
 
-const comment = (record: DecisionRecord): string => {
+const comment = (record: DecisionRecord, carried: string[] = WITH_WORKFLOWS): string => {
   if (!mod?.renderDecisionComment) return '';
   try {
-    return mod.renderDecisionComment(record, DECIDED_LABEL, BRANCH);
+    return mod.renderDecisionComment(record, DECIDED_LABEL, BRANCH, carried);
   } catch {
     return '';
   }
@@ -225,6 +259,24 @@ check(
   `${lineFor(carriedAndRecorded, FILE_GAP)} | ${lineFor(carriedAndRecorded, RECORDED_GAP)}`,
 );
 
+const nothingCarried = comment({ accepted: [FILE_GAP, RECORDED_GAP], declined: [], decidedBy: DECIDED_BY }, WITHOUT_WORKFLOWS);
+check(
+  'the comment never calls a gap carried when the diff carries none of its files',
+  !lineFor(nothingCarried, FILE_GAP).includes('**carried**') && lineFor(nothingCarried, FILE_GAP).includes('not in this diff'),
+  lineFor(nothingCarried, FILE_GAP) || nothingCarried.slice(0, 400),
+);
+check(
+  'and it does not tell a reader that no file of the branch answers a gap its remedy is a file for',
+  lineFor(nothingCarried, FILE_GAP).includes('.github/workflows/'),
+  lineFor(nothingCarried, FILE_GAP),
+);
+check(
+  'the recorded bullet says no file of the diff closes the gap, and does not claim the remedy writes none',
+  !lineFor(carriedAndRecorded, RECORDED_GAP).includes('its remedy is not a file') &&
+    lineFor(carriedAndRecorded, RECORDED_GAP).includes('no file of this diff closes it'),
+  lineFor(carriedAndRecorded, RECORDED_GAP),
+);
+
 const typoAlone = comment({ accepted: [TYPO, RECORDED_GAP], declined: [FILE_GAP], decidedBy: DECIDED_BY });
 check(
   'the comment names an unrecognised tick as one, without the run having refused it',
@@ -247,6 +299,18 @@ check(
   'and nothing in that comment reports the real gap as declined',
   lineFor(typoAndReal, FILE_GAP).includes('carried') && !unwrap(typoAndReal).includes(`\`${FILE_GAP}\` — left out`),
   lineFor(typoAndReal, FILE_GAP) || unwrap(typoAndReal).slice(0, 700),
+);
+
+const twoTypos = comment({ accepted: [TYPO, TYPO2], declined: [FILE_GAP], decidedBy: DECIDED_BY });
+check(
+  'a declined gap that two ticks missed names both of them, not whichever came first',
+  unwrap(lineFor(twoTypos, FILE_GAP)).includes(TYPO) && unwrap(lineFor(twoTypos, FILE_GAP)).includes(TYPO2),
+  lineFor(twoTypos, FILE_GAP) || unwrap(twoTypos).slice(0, 600),
+);
+check(
+  'ticksShadowing answers every tick aimed at one gap, in the order they were ticked',
+  (mod?.ticksShadowing?.(FILE_GAP, [TYPO, TYPO2]) ?? []).join(',') === `${TYPO},${TYPO2}`,
+  JSON.stringify(mod?.ticksShadowing?.(FILE_GAP, [TYPO, TYPO2]) ?? null),
 );
 
 const nonsense = comment({ accepted: [NONSENSE, FILE_GAP], declined: [], decidedBy: DECIDED_BY });
@@ -436,6 +500,16 @@ check(
   unwrap(prDoc).split('```json')[1]?.slice(0, 300) ?? '(no JSON example)',
 );
 check(
+  'it says a gap is carried because this diff carries its files, and names the state for when it does not',
+  unwrap(prDoc).includes('"state": "carried"') && unwrap(prDoc).includes('not-in-diff'),
+  unwrap(prDoc).split('"ticks"')[1]?.slice(0, 400) ?? '(no ticks example)',
+);
+check(
+  'and it says what `paths` holds, since a prefix is not the glob the table shows',
+  /path prefix, not a glob/.test(unwrap(prDoc)),
+  '(paths prose)',
+);
+check(
   'it says what a second entry in GAP_PATHS would do to the same typo',
   unwrap(prDoc).includes('GAP_PATHS') && /a second entry/.test(unwrap(prDoc)),
   '(second entry prose)',
@@ -460,6 +534,13 @@ check(
   unwrap(item33.split('## Updates')[1] ?? '').includes('npm run check'),
   (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 400),
 );
+check(
+  'the update claims no more than is true: decision.mts already reaches inventory.mts through workflows.mts',
+  unwrap(item33.split('## Updates')[1] ?? '').includes('workflows.mts') &&
+    !/no runtime import/.test(item33) &&
+    !/no runtime dependency/.test(item33),
+  (item33.split('## Updates')[1] ?? '(no Updates section)').slice(0, 600),
+);
 
 // --- G2: the object the `--pr` JSON carries -------------------------------
 // `decisionReport` is what `scripts/lib/adopt/pr-run.mts` emits under
@@ -469,10 +550,10 @@ check(
 // reads. What is new is `ticks` — the classification, one entry per ticked box
 // — and `shadowed`, the declined gaps a near-miss was ticked against.
 type Reported = DecisionRecord & { ticks?: AcceptedGap[]; shadowed?: { gap: string; tick: string }[] };
-const report = (record: DecisionRecord): Reported => {
+const report = (record: DecisionRecord, carried: string[] = WITH_WORKFLOWS): Reported => {
   if (!mod?.decisionReport) return { accepted: ['(not exported)'], declined: [], decidedBy: null };
   try {
-    return mod.decisionReport(record);
+    return mod.decisionReport(record, carried);
   } catch {
     return { accepted: ['(threw)'], declined: [], decidedBy: null };
   }
@@ -513,6 +594,18 @@ check(
     (reported.shadowed ?? [])[0]?.gap === FILE_GAP &&
     (reported.shadowed ?? [])[0]?.tick === TYPO,
   JSON.stringify(reported.shadowed),
+);
+check(
+  'the JSON says not-in-diff for a gap whose files this branch does not write',
+  (report({ accepted: [FILE_GAP], declined: [], decidedBy: null }, WITHOUT_WORKFLOWS).ticks ?? [])[0]?.state === 'not-in-diff',
+  JSON.stringify(report({ accepted: [FILE_GAP], declined: [], decidedBy: null }, WITHOUT_WORKFLOWS).ticks),
+);
+check(
+  'and it names every tick aimed at a declined gap, not the first of them',
+  (report({ accepted: [TYPO, TYPO2], declined: [FILE_GAP], decidedBy: null }, WITHOUT_WORKFLOWS).shadowed ?? [])
+    .map((entry) => entry.tick)
+    .join(',') === `${TYPO},${TYPO2}`,
+  JSON.stringify(report({ accepted: [TYPO, TYPO2], declined: [FILE_GAP], decidedBy: null }, WITHOUT_WORKFLOWS).shadowed),
 );
 check(
   'a decision with nothing mistyped reports no shadowed gap at all',
@@ -598,6 +691,28 @@ check(
   'the body of an unchanged-workflow branch never claims a box was left empty',
   unchangedBody.length > 0 && !unchangedBody.includes(CLAIM),
   unchangedBody.slice(0, 400),
+);
+
+// The pin this file was missing. `unchanged` is a plan whose base already
+// carries every generated workflow, so its diff writes none of them while the
+// decision ticked that box. The body said "carried" over it, fourteen lines
+// below its own file list saying the branch carries nothing there.
+const unchangedAccepted = unwrap(bodyFor(unchanged));
+check(
+  'the body of an unchanged-workflow branch does not call the workflow gap carried',
+  unchangedAccepted.length > 0 && !new RegExp(`\`${FILE_GAP}\` — \\*\\*carried\\*\\*`).test(unchangedAccepted),
+  unchangedAccepted.split('## The decision this acts on')[1]?.slice(0, 400) ?? unchangedAccepted.slice(0, 400),
+);
+check(
+  'it says instead that no file of this diff writes that remedy',
+  unchangedAccepted.includes('not in this diff'),
+  unchangedAccepted.split('## The decision this acts on')[1]?.slice(0, 400) ?? '(no decision section)',
+);
+const freshAccepted = unwrap(bodyFor(fresh));
+check(
+  'while a branch that does write them still calls the same gap carried',
+  new RegExp(`\`${FILE_GAP}\` — \\*\\*carried\\*\\*`).test(freshAccepted),
+  freshAccepted.split('## The decision this acts on')[1]?.slice(0, 400) ?? '(no decision section)',
 );
 
 const declinedPlan = planWith(() => null, [FILE_GAP]);
