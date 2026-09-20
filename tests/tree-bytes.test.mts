@@ -104,41 +104,47 @@ const NUL_FREE_DIRS = ['tests', 'ci', 'scripts', 'hooks', '.agents', 'templates'
 const NUL_CHAR = String.fromCharCode(0);
 
 /**
- * One `path:offset (line N)` entry per tracked file under `dirs` that holds a
- * NUL byte, sorted, relative to `root`; empty when the tree is clean.
+ * What one scan answers.
+ *
+ * `offenders`: one `path:offset (line N)` entry for **every** NUL byte in
+ * every tracked file under `dirs`, sorted by path and then by offset,
+ * relative to `root`; empty when the tree is clean.
  *
  * The offset is the point. A check that reports only "a file has a NUL byte"
  * reproduces the silence it exists to break: the next author would have to run
- * the very sweep this defect makes unreliable in order to find the file.
- */
-function nulOffenders(root: string, dirs: string[]): string[] {
-  const listed = spawnSync('git', ['ls-files', '-z', '--'].concat(dirs), { cwd: root });
-  if (listed.status !== 0) throw new Error(`git ls-files: ${String(listed.stderr)}`);
-  const offenders: string[] = [];
-  for (const path of listed.stdout.toString('utf8').split(NUL_CHAR).filter(Boolean)) {
-    const content = readFileSync(join(root, path));
-    const at = content.indexOf(0);
-    if (at < 0) continue;
-    const line = content.subarray(0, at).toString('utf8').split('\n').length;
-    offenders.push(`${path}:${at} (line ${line})`);
-  }
-  return offenders.sort();
-}
-
-/**
- * What one scan answers: the offenders, and how many files each named
- * directory actually listed.
+ * the very sweep this defect makes unreliable in order to find the file. Every
+ * offset rather than the first is that argument one step further in — see the
+ * decision recorded at the two-byte control below.
  *
- * `counts` is not decoration. `git ls-files -z -- nosuchdir anotherone` exits
- * **0 with empty output** — pinned below — so renaming one of the scanned
- * directories empties its share of the scan silently and this pin goes green
+ * `counts`: how many files each named directory actually listed, which is not
+ * decoration. `git ls-files -z -- nosuchdir anotherone` exits **0 with empty
+ * output** — pinned as a case of its own below — so renaming a scanned
+ * directory empties its share of the scan silently and this pin would go green
  * for precisely the reason its own comment says it exists to prevent: a
- * detector that quietly finds nothing, passing for the wrong reason.
+ * detector that quietly finds nothing, passing for the wrong reason. One
+ * `git ls-files` per directory is what makes that visible.
  */
 type Scan = { offenders: string[]; counts: Record<string, number> };
 
 function scanTree(root: string, dirs: string[]): Scan {
-  return { offenders: nulOffenders(root, dirs), counts: {} };
+  const counts: Record<string, number> = {};
+  const found: Array<{ path: string; at: number; line: number }> = [];
+  for (const dir of dirs) {
+    const listed = spawnSync('git', ['ls-files', '-z', '--', dir], { cwd: root });
+    if (listed.status !== 0) throw new Error(`git ls-files ${dir}: ${String(listed.stderr)}`);
+    const paths = listed.stdout.toString('utf8').split(NUL_CHAR).filter(Boolean);
+    counts[dir] = paths.length;
+    for (const path of paths) {
+      const content = readFileSync(join(root, path));
+      for (let at = content.indexOf(0); at >= 0; at = content.indexOf(0, at + 1)) {
+        found.push({ path, at, line: content.subarray(0, at).toString('utf8').split('\n').length });
+      }
+    }
+  }
+  // Sorted by offset numerically, never as text: 23420 sorts before 9933 as a
+  // string, and those are the two offsets PR #416 actually had to report.
+  found.sort((a, b) => (a.path === b.path ? a.at - b.at : a.path < b.path ? -1 : 1));
+  return { offenders: found.map((o) => `${o.path}:${o.at} (line ${o.line})`), counts };
 }
 
 // --- the real tree ----------------------------------------------------------
@@ -210,7 +216,9 @@ check(
 // --- negative control: a clean tree, and a directory that is not there ------
 const cleanTree = tempRepo();
 commit(cleanTree, { 'tests/clean.test.mts': `${PLANTED_PREFIX}'x';\n` }, 'no NUL byte');
-const clean = scanTree(cleanTree, ['tests', 'ci']);
+// Scanned with the real list: five of its six directories are absent from this
+// throwaway repository, which is the shape the counts case below reads.
+const clean = scanTree(cleanTree, NUL_FREE_DIRS);
 check('a tracked tree without a NUL byte produces no offender', clean.offenders.length === 0, clean.offenders.join('\n'));
 check(
   'a directory with no tracked file is counted as zero, not skipped',
