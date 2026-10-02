@@ -253,6 +253,17 @@ that checked nothing.
   of `docs/dogfood/2026-09-17.md` both reported clean while rows disagreed. An
   `#N` that resolves to a pull request is not compared: a pull request has no
   `## Context`, and the README allows a merged one as an outcome.
+
+  **`## Context` and nowhere else, which is a failure mode worth knowing before
+  you see it.** The first row this pin reported was #379's, and the obvious
+  reading of the message — that the issue carried no `Origin:` line — was wrong:
+  it had one all along, and a `## Correction and widening` heading added above it
+  later had moved it into that section instead. Nothing about the line's own
+  appearance says which section it has fallen into, so **an edit that inserts a
+  heading above an `Origin:` line moves it out of scope silently**, and the
+  remedy is to move the existing line back rather than to write a second one. A
+  report of this pin is a question about where the line sits as much as about
+  whether it exists.
 - **proof → files.** For the same issues, a **test path** named in the issue's
   `## Proof` that lies outside that issue's own `## Files` globs **and does not
   exist in the tree** is a failure: the pull request has nowhere to produce it,
