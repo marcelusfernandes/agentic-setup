@@ -12,10 +12,11 @@
 //   node scripts/adopt.mts --pr
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
-// JSON on stdout and performs **no write of any kind**: no file is created
-// or touched, and the only `gh` calls are reads (`api repos/{owner}/{repo}`,
-// the default branch's effective rules, `label list`). It reads one more
-// thing from disk than the inventory does — the adoption record, below.
+// JSON on stdout and performs **no write of any kind** — without `--run-proof`
+// below, which hands the tree to the repository's own test command: no file is
+// created or touched, and the only `gh` calls are reads (`api
+// repos/{owner}/{repo}`, the default branch's effective rules, `label list`).
+// It reads one more thing from disk than the inventory does — the record.
 //
 // It answers two things the read-back was silent about (#459, absorbing #460):
 // `proof`, whether the command this repository would prove itself with *passes*

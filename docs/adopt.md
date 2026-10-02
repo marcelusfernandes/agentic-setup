@@ -46,9 +46,10 @@ not the default is in `scripts/doctor.mts`'s header, beside its crash policy.
 
 ## `--inventory` writes nothing
 
-`--inventory` prints one JSON object on stdout and **makes no write of any kind**: no
-file is created, moved or touched, and every `gh` and `git` call it makes is a read. Four
-reads, in this order:
+`--inventory` prints one JSON object on stdout and **makes no write of any kind** — without
+`--run-proof`, which hands the tree to the repository's own test command and is the one
+thing here that executes anything: no file is created, moved or touched, and every `gh` and
+`git` call it makes is a read. Four reads, in this order:
 
 | Read | What it answers |
 | --- | --- |
@@ -653,7 +654,7 @@ and exits 1 on `ok: false`; each `missing` entry is one field to fix.
 | `proof` | `proof:no-command`, other `proof:*` | name a `command` in `proof/<slug>.json` (`--slug` picks the branch), record `commands.test`, or set `AGENTIC_TEST_CMD` |
 | `proof` | `proof:not-run` | a command resolved and nobody ran it — the default. Run `node scripts/doctor.mts --run-proof`; `found` names the command it would run. This is why a default run cannot print `ok: true`: "a command exists and passes" and "a command exists and nobody looked" are the difference between an adoptable repository and an unadoptable one |
 | `proof` | `proof:red` | `--run-proof` ran it and it did not pass (`found` says whether it failed or could not be executed; `node scripts/proof.mts <slug>` prints the output). Fix the suite — see the precondition above |
-| the one that read | `read-failed:<what>` | that read could not answer (`repository`, `ruleset`, `labels`, `hooks`, `workflows`); authenticate `gh` here and run again |
+| the one that read | `read-failed:<what>` | that read could not answer (`repository`, `ruleset`, `labels`, `hooks`, `workflows`, or `proof` — the runner printed no outcome this report could read); authenticate `gh` here and run again |
 
 ## Crash policy: fail closed
 
