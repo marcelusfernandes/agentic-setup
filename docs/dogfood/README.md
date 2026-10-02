@@ -74,13 +74,16 @@ file in this directory and fails when:
   `scope` and `close-milestone.mts` count as a report, so a file this test
   accepts and that regex does not would silence the nudge or fail the close.
   **Both of that file's two readers are anchored** (#295), and the path one
-  matches the whole string and nothing else. Measured against the regex it
-  replaces: `docs/dogfood/2026-09-20.md.bak`, `docs/dogfood/2026-09-20.mdx` and
-  `templates/docs/dogfood/2026-09-20.md` all counted as reports, so any of the
-  three in a diff silenced the nudge for a pull request carrying no report.
-  `docs/dogfood/nested/2026-09-20.md` was never matched by either reader, because
-  the date has to follow the directory immediately, and the anchored one refuses
-  it too;
+  matches the whole string and nothing else. Three examples, measured against the
+  regex it replaces: `docs/dogfood/2026-09-20.md.bak`,
+  `docs/dogfood/2026-09-20.mdx` and `templates/docs/dogfood/2026-09-20.md` all
+  counted as reports, so any of them in a diff silenced the nudge for a pull
+  request carrying no report. They are examples and not the list — more shapes
+  flip, and `docs/decisions/0038-the-dogfood-report-reader-is-anchored.md` carries
+  the classes and the argument that the narrowing can only ever be in that
+  direction. `docs/dogfood/nested/2026-09-20.md` is **not** one of them: neither
+  reader ever matched it, because the date has to follow the directory
+  immediately;
 - a report does not parse against the format below, or its heading date does not
   match its filename;
 - a case row is missing one of its three numbers, carries a decision other than
@@ -217,19 +220,45 @@ only the third differing, because the set of transcripts summed was no longer th
 same set. A report states its comparison as a reproduction or does not make it.
 
 **Why the figure survives the report's own corrections, and the one way to lose
-that.** The window is bounded by two **named events** — a merge, a dispatch —
-never by "the last event so far". A bound that means *now* turns the cost into a
-measurement of the report's own production: every correction is another push,
-another turn and another cost, so the number is false again as soon as it is
-fixed. `docs/dogfood/2026-09-20.md` removed a whole class of claim for exactly
-that reason, and its own close bound had to be rewritten after two wrong forms
-before it named an event instead of a moment. Define the window against events
-first; the cost follows and then holds still.
+that.** Both bounds are **fixed instants, written into the report, each saying
+what makes it non-arbitrary** — and neither is a bound that *means* "the latest
+event". A bound meaning *now* turns the cost into a measurement of the report's
+own production: every correction is another push, another turn and another cost,
+so the number is false again as soon as it is fixed. That is the class of claim
+`docs/dogfood/2026-09-20.md` had to remove.
+
+The distinction is finer than "name an event" and that report is the worked
+example, so it is stated exactly rather than tidied. Its **open** is a named
+event: the merge of a pull request, `3ce7f475`, the previous phase's last
+landing. Its **close** is *not* an event — it is the measured instant every other
+number in that header was taken against, with the pass's last dispatch, 16.44
+seconds earlier, named beside it as what makes the instant non-arbitrary. The
+report says so in those words, after two earlier forms of the sentence claimed
+otherwise: one called it the dispatch, and one called it the last event the
+session had recorded, which stopped being true minutes later when the session ran
+on reviewing the report. So the rule is not "a bound must be an event". It is:
+**a bound is a fixed instant, and the report says what makes that instant the
+right one.** Fix the window that way first; the cost follows and then holds
+still.
 
 Finally, **a later reader cannot recompute the figure at all.** The transcripts
 are outside this repository and are not kept; the derivation, the per-model
 totals and the price table in the comment are the whole of what survives the
 pass. That is why the format asks for them rather than for the number alone.
+
+**A known limitation of this definition, and the one input a second reader cannot
+locate from the grammar.** Everything above is defined against *the window the
+header measures* — and **the format has no window bullet.** `Minutes` is a
+duration, not two instants, so the bounds live in an HTML comment and not in a
+field. The convention all four numeric reports follow is a line opening **"The
+window the numbers measure:"** in the comment above the bullets —
+`docs/dogfood/2026-09-17.md:14`, `…/2026-09-18.md:17`, `…/2026-09-19.md:18`,
+`…/2026-09-20.md:27` — which is greppable and is still a convention rather than a
+rule: nothing requires it and the pin does not ask for it. So a second reader
+locates the window by grepping that phrase and trusting the convention, which is
+weaker than every other input the definition names. The convention is named here rather than
+fixed here: adding a bullet changes the grammar and the pin, which is its own
+issue and not a correction.
 
 ### Two pins that ask GitHub, and the one question neither answers
 
@@ -260,7 +289,9 @@ that checked nothing.
   it had one all along, and a `## Correction and widening` heading added above it
   later had moved it into that section instead. Nothing about the line's own
   appearance says which section it has fallen into, so **an edit that inserts a
-  heading above an `Origin:` line moves it out of scope silently**, and the
+  heading at the same level above an `Origin:` line moves it out of scope
+  silently** — an H2 precisely, because `sectionLineRange` ends a section at
+  `/^##\s+\S/`, so an inserted `###` leaves the line inside `## Context`. The
   remedy is to move the existing line back rather than to write a second one. A
   report of this pin is a question about where the line sits as much as about
   whether it exists.
@@ -272,25 +303,56 @@ that checked nothing.
 Both pins **join a wrapped line before comparing**, and that is load-bearing
 rather than tidy. Prose here wraps at about seventy-two columns, so an `Origin:`
 line or a `## Proof` sentence longer than that lives on two lines, and a
-comparison that reads one line at a time reports a false clean — measured: over
-the 117 bare-`#N` rows in this directory the line-at-a-time comparison reports
-seven disagreements, six of which are the wrap and one of which is real, and #295
-records three hand sweeps in the run that filed it reporting zero disagreements
-for exactly that reason. A pin that inherits the blindness is worse than none,
-because it turns a false clean into an automated one.
+comparison that reads one line at a time reports a false clean.
 
-**What the proof pin deliberately does not read**, stated because the unqualified
-rule is false and was measured so. Over 153 issues of this repository: "every
-path named in `## Proof` sits inside `## Files`" reads 184 paths and reports
-**43** of the 153, and what it reports is a check's name written as a path
-(`ci/negative-control.mts`), a glob, and an illustrative placeholder. Narrowed to
-test paths it reads 79 and reports **six**, and all six are correct issues naming
-an **existing** pin as the instrument that will read their new file — a proof may
-rest on an instrument it does not change. With absence from the tree added it
-reports **none**, which is the shape that is shipped: it refuses only the case
-where the pull request has nowhere to produce the file it proves itself with. The
-judgement that is left — an issue meaning to add cases to a test it forgot to
-declare — is a reader's, below.
+**Measured at this head, over the 117 finding rows in this directory whose
+`outcome` is a bare `#N` and resolves to an issue: the line-at-a-time comparison
+reports six disagreements, all six of them the wrap, and the joined comparison
+reports none.** When this rule was first written it was seven and one of the seven
+was real — `docs/dogfood/2026-09-19.md`'s row resolving to #379, whose `Origin:`
+line had been moved out of `## Context`. That line was put back before this
+paragraph landed, so the real disagreement is gone and the number moved with it;
+the count is stated as the tree answers it rather than as the run that found the
+defect answered it. #295 records three hand sweeps in the run that filed it
+reporting zero disagreements for exactly the wrap's reason. A pin that inherits
+the blindness is worse than none, because it turns a false clean into an
+automated one.
+
+**What the proof pin reads, and the four ways it is narrower than "every file
+named in `## Proof`".** Each is a narrowing, each is deliberate, and the fourth
+was not written down until a confirm pass instrumented the shipped pin and found
+it:
+
+1. **Test paths only** — `tests/<name>.test.mts`. Not every path a proof names.
+2. **Backticked spans only** — a path written bare in a sentence is not read.
+3. **Outside the issue's globs *and* absent from the tree.** Outside the globs
+   alone is not enough.
+4. **Only the issues a dogfood finding `outcome` names**, not every issue of this
+   repository. The pin runs inside the dogfood pin and reuses its one batched
+   fetch, so its population is that fetch's.
+
+**Every count below is re-derived at this head and names the population it ran
+over**, because "over N issues" says nothing unless a reader knows which N. An
+earlier form of this paragraph gave counts over an unnamed slice of issue numbers
+and they do not reproduce over any population; these do.
+
+- **What the shipped pin actually reads:** 97 issues — those a finding `outcome`
+  names that resolve to an issue — **63** proof test paths, **0** flagged.
+- **The ladder, over every issue of this repository (281):** "every path shape
+  inside `## Files`" reads 327 paths and reports **96** issues; test paths only
+  reads 142 and reports **7**; test paths absent from the tree reports **0**.
+- **The same ladder over the 97 the pin reads:** 131 paths and **20** issues,
+  then 63 paths and **0**, then **0**.
+
+What the wide rule reports is a check's name written as a path
+(`ci/negative-control.mts`), a glob, and an illustrative placeholder — none of
+them a file an issue was ever going to produce. What the test-path rule reports
+over the full 281 are correct issues naming an **existing** pin as the instrument
+that will read their new file: a proof may rest on an instrument it does not
+change. That is why absence from the tree is part of the rule, and it is the shape
+that ships: it refuses only the case where the pull request has nowhere to produce
+the file it proves itself with. The judgement that is left — an issue meaning to
+add cases to a test it forgot to declare — is a reader's, below.
 
 **Neither pin answers coverage, and coverage may not be mechanically answerable
 at all.** A matching `Origin:` line proves **provenance** — this row and that

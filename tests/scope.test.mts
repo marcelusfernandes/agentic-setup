@@ -610,13 +610,22 @@ const nested = 'docs/dogfood/nested/2026-09-20.md';
 const suffixed = 'docs/dogfood/2026-09-20.md.bak';
 const prefixed = 'templates/docs/dogfood/2026-09-20.md';
 const otherExt = 'docs/dogfood/2026-09-20.mdx';
-for (const [label, path] of [['a nested path', nested], ['a trailing suffix', suffixed], ['a directory prefix', prefixed], ['another extension', otherExt]] as Array<[string, string]>) {
+const noSeparator = 'xdocs/dogfood/2026-09-20.md';
+const blobUrl = 'https://github.com/o/r/blob/main/docs/dogfood/2026-09-20.md';
+const notReports = [nested, suffixed, prefixed, otherExt, noSeparator, blobUrl];
+for (const [label, path] of [['a nested path', nested], ['a trailing suffix', suffixed], ['a directory prefix', prefixed], ['another extension', otherExt], ['a prefix with no separator', noSeparator], ['a blob URL handed as a path', blobUrl]] as Array<[string, string]>) {
   check(`${label} does not silence the dogfood nudge`, dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', path], '').length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', path], '')) : 'not exported');
 }
-check('a nested path or a trailing suffix in the pull-request body silences nothing', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], `see ${nested} and ${suffixed}`).length === 1);
-check('a report cited by URL in the body still silences the nudge', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], 'see https://github.com/o/r/blob/main/docs/dogfood/2026-09-20.md').length === 0);
+// The prose reader over the same shapes, in one body: the `.mdx` case is the one
+// that would regress if the lookahead were loosened, and `xdocs/` is the one the
+// lookbehind owns. Both are here because item 0038 says they are.
+check('none of the four non-report shapes named in a pull-request body silences the nudge', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], `see ${nested}, ${suffixed}, ${otherExt} and ${noSeparator}`).length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts'], `see ${nested}, ${suffixed}, ${otherExt} and ${noSeparator}`)) : 'not exported');
+check('a report cited by URL in the body still silences the nudge', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], `see ${blobUrl}`).length === 0);
 const pathRe = scopeLib.DOGFOOD_REPORT_PATH_RE as RegExp | undefined;
-check('ci/lib/scope.mts exports DOGFOOD_REPORT_PATH_RE, anchored', pathRe instanceof RegExp && pathRe.test('docs/dogfood/2026-09-20.md') && ![nested, suffixed, prefixed, otherExt].some((p) => pathRe.test(p)), String(pathRe));
+check('ci/lib/scope.mts exports DOGFOOD_REPORT_PATH_RE, anchored', pathRe instanceof RegExp && pathRe.test('docs/dogfood/2026-09-20.md') && !notReports.some((p) => pathRe.test(p)), String(pathRe));
+// A shape rule and not a calendar one, in both readers: `2026-13-45` has the shape
+// and no such day exists. Pinned so the next reader does not assume otherwise.
+check('both readers accept a date-shaped name that is not a date', pathRe instanceof RegExp && pathRe.test('docs/dogfood/2026-13-45.md') && scopeLib.DOGFOOD_REPORT_RE.test('see `docs/dogfood/2026-13-45.md`'));
 
 // #295: the two issue-body readers the dogfood pin compares with. Both join a
 // wrapped line first, which is the whole difference between a pin and an

@@ -67,15 +67,30 @@ for even one string, it is a rule change and needs a numbered item.* So the old 
 unanchored regex and the two new readers were run over the corpus each reader is actually
 handed, and over inputs chosen to break them.
 
-**Over the real corpus, nothing changes.** 213 tracked paths (`git ls-files`), 45
+**Over the real corpus, nothing changes.** 214 tracked paths at this item's head, 213 at
+the merge base (`git ls-files`, re-derived; an earlier draft of this item carried 213 for
+the head, which was the merge base's count), 45
 `## Dogfood` bullets across every `docs/closeout/M<n>.md` — joined with their continuation
 lines, the way `close-milestone.mts` reads them — and 185 merged pull-request bodies.
 **Zero verdicts change.** Every report this repository actually cites is cited in a form
 both readers agree on, in backticks or in a Markdown link.
 
-**Over adversarial inputs, seven change, and every one of them is `true` → `false`.** The
-narrowing is deliberate and **one-directional**: nothing that was not a report becomes
-one.
+**One-directional, and provable rather than sampled.** `DOGFOOD_REPORT_PATH_RE.source` is
+character-for-character `^` + the old pattern + `$`, and `DOGFOOD_REPORT_RE.source` is the
+old pattern wrapped in two negative lookarounds. Anchors and negative lookarounds can only
+reject: nothing was added to the alternation and nothing was relaxed in it. So **the
+language of each new reader is a strict subset of the old one**, and a `false` → `true` flip
+is *impossible* rather than merely unobserved. That argument is what carries the
+one-directionality; the table is illustration.
+
+**The table is one example per class, not an enumeration.** The classes are open, and more
+were found after this item's first draft claimed seven: handed as a path, `./` and `/`
+prefixes, a `~` or `.orig` suffix, a `?plain=1` or `#L4` fragment, and surrounding
+whitespace all flip as well; and `xdocs/dogfood/<date>.md` flips **in prose** too, which
+makes an eighth pair by the table's own "handed as" convention. The first draft's "seven
+change" read as exhaustive and was not, which is why the subset argument above is stated
+first: an enumeration of a language's complement cannot be finished, and this one does not
+need to be.
 
 | input | handed as | old | new |
 |---|---|---|---|
@@ -162,9 +177,25 @@ change is the cheaper half of stating what did.
   45 bullets and 185 bodies agree either side of it. That is evidence about what has been
   written, not about the readers, and item 0036 already paid for learning the difference
   the hard way: *"a corpus can only falsify, and a parser change needs a case built from
-  the rule it changed, not only a replay of what has already been written."* The seven
-  adversarial inputs are that case, and they live in `tests/scope.test.mts` and
-  `tests/dogfood-report.test.mts` rather than only in this item.
+  the rule it changed, not only a replay of what has already been written."* The case
+  built from the rule is the subset argument above, and the table's rows are pinned as
+  follows — stated row by row because an earlier draft of this bullet claimed all seven
+  were pinned and three were not, which is the same defect in the same sentence it
+  warns about. In `tests/scope.test.mts`: all six path rows, through `dogfoodTrigger` and
+  through `DOGFOOD_REPORT_PATH_RE` directly, and all four non-report shapes named in a
+  pull-request body in one case, which is what pins the prose `.mdx` row — the row that
+  would regress if the lookahead were loosened. In `tests/dogfood-report.test.mts`: the
+  nested and suffixed shapes as paths and in prose. What is **not** pinned anywhere is the
+  open tail of the classes named above — the fragments, the suffixes, the whitespace — and
+  it is not pinned on purpose: the subset argument covers them all and a case per class
+  would be a list that can never be finished.
+- **The rule is a *shape* rule and not a calendar one, in both readers.**
+  `docs/dogfood/2026-13-45.md` is accepted by the old pattern and by both new ones: there
+  is no thirteenth month and no forty-fifth day, and nothing here checks. A reader will
+  assume otherwise, so it is written down and pinned in `tests/scope.test.mts`. The
+  calendar is checked where it matters instead — `tests/dogfood-report.test.mts` holds a
+  report's heading date equal to its filename, and a filename that is not a date would
+  have no heading to match.
 - **`.mdx` is refused by shape and not by intent.** Nothing in this repository writes
   `.mdx`, and the extension is excluded because the path reader ends at `.md` and the
   prose reader's lookahead excludes a following word character. If a report format ever
