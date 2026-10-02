@@ -6,7 +6,7 @@ adoption owes an existing project is a description of what is already there.
 `scripts/adopt.mts` is that step.
 
 ```bash
-node scripts/adopt.mts --inventory       # describes the repository, writes nothing
+node scripts/adopt.mts --inventory [--run-proof]  # describes the repository; --run-proof also runs its test command
 node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
 node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
 node scripts/adopt.mts --workflows       # generates the workflows, and the checks they produce
@@ -19,13 +19,31 @@ Run it from inside the repository being adopted (it resolves the root with
 `git rev-parse --show-toplevel`). Exactly one of the `adopt` flags is required; anything
 else prints `{ "error": "usage: …" }` and exits 1 before a single call is made. `--force`
 is a modifier of `--record` and never a mode of its own — on its own it is a usage error,
-not a silent write.
+not a silent write. `--run-proof` is a modifier of `--inventory` in exactly the same sense.
 
-## `--inventory` writes nothing
+## The precondition: the base has to pass its own tests
 
-`--inventory` prints one JSON object on stdout and **makes no write of any kind**: no
-file is created, moved or touched, and every `gh` and `git` call it makes is a read. Four
-reads, in this order:
+**A repository whose test suite does not pass on its default branch cannot satisfy the
+checks this loop requires.** `ci/negative-control.mts` runs that suite twice — once on the
+pull request's base, then with the head's test files overlaid — and the first run has to
+pass for the second to mean anything. On a base that is already red it returns
+`inconclusive` and exits 1, and `negative-control` is one of the three required checks, so
+**every pull request there is blocked until the suite is green**, and the block is not a
+defect in any one pull request. Measured in September 2026 on a real third-party repository:
+219 tests, 203 passing, 16 failing, every pull request refused. So it is a precondition of
+adoption, not a discovery afterwards, and both read-backs answer it under one flag:
+`adopt --inventory --run-proof` names `proof:red` in `gaps`, `doctor --run-proof` reports it
+as `missing: ["proof:red"]`, and without that flag neither runs the suite and
+neither calls a command nobody ran passing (`doctor` is `ok: false` with `proof:not-run`,
+`--inventory` is `proof: { "run": false, "outcome": "unrun" }`, and no gap either way). Why
+it is a flag rather than the default is in `scripts/doctor.mts`'s header.
+
+## `--inventory` writes nothing — except under `--run-proof`
+
+`--inventory` prints one JSON object on stdout and **makes no write of any kind** — without
+`--run-proof`, which hands the tree to the repository's own test command, the one thing here
+that executes anything: no file is created, moved or touched, and every `gh` and `git` call
+it makes is a read. Four reads, in this order:
 
 | Read | What it answers |
 | --- | --- |
@@ -62,7 +80,9 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   "autoMerge": true,
   "deleteBranchOnMerge": false,
   "gaps": [],
-  "record": null
+  "record": null,
+  "labelNeighbours": [{ "wanted": "human:pending", "present": "human", "rule": "namespace" }],
+  "proof": { "run": false, "outcome": "unrun" }
 }
 ```
 
@@ -96,6 +116,20 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   deliberately not echoed here — the fields above are detection's answer, and detection is
   what the loop follows. A record that exists and is not the shape stops the run
   (`record:…` below); it is never read as "no record".
+- `labelNeighbours` — one entry per label the dictionary wants that is **absent while a
+  near neighbour is already here**, with the `rule` that matched: `case` (the same name in
+  another case), `namespace` (a label that *is* the wanted name's namespace — a bare `human`
+  where it wants `human:pending`) or `tail` (one that is its last segment — a bare `bug`
+  where it wants `type:bug`). Empty when none has one, and nothing here resolves a
+  collision: that is the adopter's decision, and the table below says what reads each label
+  so it can be made.
+- `labelNeighbourRule` — what those three rules compare, printed whether they matched or
+  not, because they are the whole rule. What they leave out is a *different word* for the
+  same thing — `type:fix` where the dictionary wants `type:bug`, `documentation` where it
+  wants `type:docs` — which needs a thesaurus rather than a rule; a detector implying a
+  completeness it has not got is worse than a narrow one that states its bound.
+- `proof` — `scripts/proof.mts`'s own report (`slug`, `source`, `command`, `outcome`, and
+  `reason` when there is one) plus `run`; `{ "run": false, "outcome": "unrun" }` without the flag.
 - `gaps` — the named list below.
 
 ### The gap names
@@ -111,6 +145,23 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 | `workflows:missing` | at least one of `agentic-checks.yml`, `guard-main.yml`, `issue-lint.yml` is absent |
 | `test-command:none` | no test command was detected and none was overridden — `negative-control` cannot prove anything without one |
 | `record:stale` | an adoption record exists and detection no longer agrees with it on at least one field; `record.stale` names them |
+| `proof:red` | `--run-proof` ran the resolved test command and it did not pass, so `negative-control` can discriminate nothing here (see the precondition above). Named **only** when a run happened: a gap is a fact about the repository, and "nobody looked" is a fact about the run, which is why the unrun case is `proof.run: false` and no gap. A repository with no command at all is `test-command:none` and is not named twice |
+
+## Which labels the scripts actually read
+
+The dictionary `scripts/init.mts` seeds is fifteen labels; this is what reads them, so an
+adopter with a vocabulary of their own can decide which collisions matter. Read from
+`scripts/`, `ci/` and `.agents/` at the commit that added the table.
+
+| Reader | Which labels, and for what |
+| --- | --- |
+| `scripts/claim.mts` | refuses an issue without `state:ready` and removes it at claim, writes `state:in-progress` and the `type:` label, and refuses while `human:pending` — **or a bare `human`**, which is why that one is reported as a near neighbour rather than as nothing |
+| `scripts/reconcile.mts` | `state:ready` (the dispatchable queue), `state:in-progress`, `state:in-review`, `review:approved`, `human:pending` (the bare `human` too) and `human:decided` |
+| `scripts/land.mts` | `review:approved` — no merge is queued without it outside docs mode — and `type:docs`, whose review exemption the changed paths grant, not the label alone |
+| `ci/issue-lint.mts` | `state:ready`, `state:in-progress`, `state:in-review` as the relevant states |
+| `ci/negative-control.mts` | `type:docs`, `type:deps`, `type:infra`, `type:refactor`, `type:spec`, as legacy skip labels kept for one release |
+| `scripts/create-subissue.mts`, `scripts/adopt.mts --pr` | the first applies `state:ready` only once `ci/issue-lint.mts` reports `ok: true`; the second refuses unless the plan issue carries `human:decided` |
+| nothing mechanical | `type:feature` and `type:bug`, which `scripts/claim.mts` *writes* from the branch type (`feat` → `feature`, `fix` → `bug`, through `scripts/lib/issues.mts`) and nothing reads — so a repository already carrying `type:fix` ends up with two labels meaning "defect" and no script that cares; and `state:qa-failed` and `state:blocked`, written by the Codex route's `github.mts` and read nowhere under `scripts/` or `ci/` |
 
 ## `--plan-issue` asks
 
@@ -580,8 +631,10 @@ The `pr:*` refusal names are in the crash-policy table below, with the rest.
 
 ## `node scripts/doctor.mts` reads back what the loop requires
 
-Read-only — three `gh` reads, no write. Prints `{ ok, mode, checks: [{ name, ok, found,
-expected }], missing }` and exits 1 on `ok: false`; each `missing` entry is one field to fix.
+Read-only — three `gh` reads, no write — **except under `--run-proof`**, which runs the
+resolved test command (by spawning `scripts/proof.mts`) and is the one thing here that
+executes anything. Prints `{ ok, mode, checks: [{ name, ok, found, expected }], missing }`
+and exits 1 on `ok: false`; each `missing` entry is one field to fix.
 
 | check | `missing` | what fixes it |
 | --- | --- | --- |
@@ -589,11 +642,13 @@ expected }], missing }` and exits 1 on `ok: false`; each `missing` entry is one 
 | `record` | `record:absent`, `record:stale`, `record:unknown-key`, … | `node scripts/adopt.mts --record` (`--force` when only `generatedBy` is wrong); one field, however many checks it broke |
 | `ruleset` | `ruleset:absent` | `node scripts/init.mts --rules` on the default branch |
 | `required-checks` | `ruleset:required_status_checks` | require every check name `--workflows` reports; `--rules` writes them |
-| `labels` | `labels:missing` | `node scripts/init.mts`, which seeds the dictionary |
+| `labels` | `labels:missing` | `node scripts/init.mts`, which seeds the dictionary. `found` tells "absent" apart from "absent, but you already have X" by the three rules above, and states what they compare on every absence — with a neighbour or without one, so that "none was found" is never read as "none was looked for" |
 | `hooks` | `hooks:not-recorded`, `:not-installed`, `:not-ours`, `:drifted` | `node scripts/adopt.mts --hooks`; a `pre-push` someone else wrote is never overwritten |
 | `auto-merge` | `repository:allow_auto_merge` | `node scripts/init.mts`, which turns it on |
 | `proof` | `proof:no-command`, other `proof:*` | name a `command` in `proof/<slug>.json` (`--slug` picks the branch), record `commands.test`, or set `AGENTIC_TEST_CMD` |
-| the one that read | `read-failed:<what>` | that read could not answer (`repository`, `ruleset`, `labels`, `hooks`, `workflows`); authenticate `gh` here and run again |
+| `proof` | `proof:not-run` | a command resolved and nobody ran it — the default. Run `node scripts/doctor.mts --run-proof`; `found` names the command it would run. This is why a default run cannot print `ok: true`: "a command exists and passes" and "a command exists and nobody looked" are the difference between an adoptable repository and an unadoptable one |
+| `proof` | `proof:red` | `--run-proof` ran it and it did not pass (`found` says whether it failed or could not be executed; `node scripts/proof.mts <slug>` prints the output). Fix the suite — see the precondition above |
+| the one that read | `read-failed:<what>` | that read could not answer. For `repository`, `ruleset`, `labels`, `hooks` and `workflows`: authenticate `gh` here and run again. For `proof`, nothing authenticated failed — `scripts/proof.mts` printed no outcome this report could read, so run `node scripts/proof.mts <slug>` directly and read what it says |
 
 ## Crash policy: fail closed
 
@@ -612,11 +667,17 @@ the cause.
 
 ### What "nothing written" does and does not cover
 
-"Nothing written" above is exact for the filesystem: no run of this script — failing or
-succeeding, on any flag — creates, moves or touches a file other than the ones its mode
-names: `agentic.config.json` for `--record`, the files under `.github/workflows/` for
-`--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
-`--inventory`, `--plan-issue` and `--pr` write no file at all. It is **not** a claim that
+"Nothing written" above is exact for the filesystem **with one flag excepted**: no run of
+this script — failing or succeeding — creates, moves or touches a file other than the ones
+its mode names: `agentic.config.json` for `--record`, the files under `.github/workflows/`
+for `--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
+`--plan-issue` and `--pr` write no file at all, and nor does `--inventory` — **except under
+`--run-proof`. That flag hands the tree to the repository's own test command, which may
+write, move or remove any file or directory it likes, tracked ones included**: a case in
+`tests/doctor.test.mts` whose command deletes a tracked file and makes a directory leaves
+`git status` reporting both. The runner's own report is collected in a temporary directory
+of the calling process, never in the repository, and removed on every path out. It is
+**not** a claim that
 the run had no effect on GitHub — `--pr` is the clearest case: it creates commits in the
 object database, pushes a branch and opens a pull request, and every one of those is the
 point of the flag. Three branches of `--plan-issue` show the same thing:
@@ -682,6 +743,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
 | `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object, or its `permissions.deny` is not a list of strings; the deny list is never merged into a file this tool could not understand, and a rule it cannot read is not a rule it may drop |
 | `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
+| `read-failed:proof` | `--run-proof` spawned `scripts/proof.mts` and it printed no outcome this script could read. Never the gap `proof:red`, which says the repository's suite is red: a runner that crashed is no fact about the repository, and `scripts/doctor.mts` names the same case the same way |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:timeline-unreadable` | the plan issue's timeline read failed or was not JSON, so who applied `human:decided` is unknown; the read happens before anything is built, so nothing was pushed and no comment was left |
 | `pr:decision-not-recorded` | `gh issue comment` failed, so the decision could not be recorded on the plan issue; the branch is pushed by then and stays pushed, and no pull request was opened — running `--pr` again answers `{ held }` on the branch rather than duplicating anything, so the remedy is to comment by hand or delete the branch and run again |
