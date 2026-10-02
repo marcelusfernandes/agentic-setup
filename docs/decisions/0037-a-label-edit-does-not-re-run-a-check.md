@@ -21,25 +21,29 @@ This item lands `proposed`, like every dated item since 0021. [`README.md`](READ
 running the loop, and no such OK exists for this item.
 
 Symbols and event names rather than `file:line` citations, for the reason item 0029 gives,
-and the reason is measured here rather than asserted. The issue carried eleven `file:line`
-citations, each measured when it was drafted. Re-measured at `d698b56`, **six had drifted
-and five had held**:
+and the reason is measured here rather than asserted. The issue carried **fifteen**
+`file:line` citations, each measured when it was drafted. Re-measured at `d698b56`, **seven
+had drifted and eight had held**, counted as one per cited line or range:
 
-| citation | at implementation |
-|---|---|
-| `ci/negative-control.mts:205` — `LEGACY_SKIP_LABELS` | `:290` |
-| `ci/negative-control.mts:471` — its one read of a label | `:416` |
-| `ci/negative-control.mts:203-204` — the comment above the constant | `:287-289` |
-| `skills/orchestrate/SKILL.md:373-386` | `:380-394` |
-| `docs/orchestration.md:470-471` | `:506-507` |
-| `tests/doctrine.test.mts:363` | `:369` |
-| `.github/workflows/agentic-checks.yml:9-10`, `:31`, `:33-35`, `:55`, `:78` | held |
-| `tests/guard-main.test.mts:35-36`, `:42`, `:52` | held |
+| citation | count | at implementation |
+|---|---|---|
+| `ci/negative-control.mts:205` — `LEGACY_SKIP_LABELS` | 1 | drifted to `:290` |
+| `ci/negative-control.mts:471` — its one read of a label | 1 | drifted to `:416` |
+| `ci/negative-control.mts:203-204` — the comment above the constant | 1 | drifted to `:287-289` |
+| `ci/issue-lint.mts:376-383` — "reads only open issues into the graph" | 1 | drifted; `:376-383` holds `fixedDirPrefix`, and the read is at `:269` with its comment at `:41` |
+| `skills/orchestrate/SKILL.md:373-386` | 1 | drifted to `:380-394` |
+| `docs/orchestration.md:470-471` | 1 | drifted to `:506-507` |
+| `tests/doctrine.test.mts:363` | 1 | drifted to `:369` |
+| `.github/workflows/agentic-checks.yml:9-10`, `:31`, `:33-35`, `:55`, `:78` | 5 | all held |
+| `tests/guard-main.test.mts:35-36`, `:42`, `:52` | 3 | all held |
 
-So the claim worth making is narrower than "every citation drifts": the citations into a
-file the loop actively edits drifted, and the citations into the two files this issue is
-about, plus the test it points at as a model, did not. Three of the four file *lengths* the
-issue recorded had also moved — `skills/orchestrate/SKILL.md` 670 → 684,
+Seven drifted rows of one, and two rows holding five and three: 7 + 8 = 15.
+
+So the claim worth making is narrower than "every citation drifts": the citations into the
+`ci/` scripts and the two cards — files the loop actively edits — drifted, and the eight
+into `agentic-checks.yml` itself and into `tests/guard-main.test.mts`, the test this pin was
+written from, did not. Three of the four file *lengths* the issue recorded had also
+moved — `skills/orchestrate/SKILL.md` 670 → 684,
 `docs/orchestration.md` 552 → 588, `docs/decisions/README.md` 186 → 212, while
 `tests/guard-main.test.mts` held at 241.
 

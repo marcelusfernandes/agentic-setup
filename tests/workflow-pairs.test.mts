@@ -24,14 +24,20 @@
 // `unlabeled` are not in `types:`, and the header states what each check
 // reads separately instead of claiming both read the same two things.
 //
-// Negative control, measured on `d698b56` by restoring both copies to their
-// base contents and running this file: 21 passed, 10 failed. The ten are the
-// six header cases and the four trigger cases — the base's header says "Both
+// It also pins the other seven pairs `scripts/init.mts` ships — four held by
+// nothing until now, two held elsewhere, one deliberately left to the
+// `issue-lint` sweep — and holds that list closed, so a pair nobody thought
+// about cannot arrive unpinned.
+//
+// Negative control, measured on `d698b56` by restoring both copies of
+// `agentic-checks.yml` to their base contents and running this file: 36 passed,
+// 10 failed. The ten are the six header cases and the four trigger cases — the base's header says "Both
 // read the PR body and labels, so they re-run when the PR is edited or
 // relabelled", and `types:` carries `labeled, unlabeled` in each copy. The
 // equality cases pass on the base on purpose: the copies agree there today,
 // as they do for `guard-main.yml`, and the case is here to keep them
-// agreeing.
+// agreeing. So do the other-pairs cases, for the same reason — those four
+// pairs are identical on the base and the point is to keep them that way.
 //
 // The eight cases at the foot, over five synthetic scenarios, pass on the
 // base too, and are meant to. They are regression guards on the comparison
@@ -40,8 +46,8 @@
 // which is what a pattern-based pin would have swallowed; and a copy shorter
 // than the other is reported rather than read past the end. They assert
 // nothing about the two real files, so nothing about them is red anywhere.
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';
 
 const OWN_PATH = join('.github', 'workflows', 'agentic-checks.yml');
@@ -188,6 +194,92 @@ for (const [path, text] of [[OWN_PATH, own], [SHIPPED_PATH, shipped]] as const) 
   check(`${path} still runs on \`synchronize\``, types.includes('synchronize'), types.join(', '));
   check(`${path} still runs on \`edited\``, types.includes('edited'), types.join(', '));
   check(`${path} still runs on \`opened\` and \`reopened\``, types.includes('opened') && types.includes('reopened'), types.join(', '));
+}
+
+// --- every other pair `init` ships, and the list is held closed --------------
+// Four pairs are byte-identical today and were held by nothing, which is half a
+// rule: a pin over one pair while its neighbours have none. They are pinned
+// here, in the bare byte-equality shape `tests/doctrine.test.mts` already uses
+// for `.github/ISSUE_TEMPLATE/task.md` — no header clause, because none of these
+// four has a comment syntax to carry one.
+//
+// `.github/workflows/issue-lint.yml` is deliberately absent. It differs by
+// design on one `run:` line, so it needs the enumerate-and-compare shape above
+// *and* a header naming its pin, and its header is in a file this pull request
+// does not declare. It is named in UNPINNED_HERE below so the omission is a
+// written fact rather than a gap.
+
+/** The pairs `scripts/init.mts` ships that are byte-identical, pinned here. */
+const IDENTICAL_PAIRS: readonly string[] = [
+  join('.github', 'ISSUE_TEMPLATE', 'config.yml'),
+  join('.github', 'MILESTONE_TEMPLATE.md'),
+  join('.github', 'pull_request_template.md'),
+  '.worktreeinclude',
+];
+
+/** The pairs pinned elsewhere, by the file that pins them. */
+const PINNED_ELSEWHERE: Readonly<Record<string, string>> = {
+  [join('.github', 'ISSUE_TEMPLATE', 'task.md')]: 'tests/doctrine.test.mts',
+  [join('.github', 'workflows', 'guard-main.yml')]: 'tests/guard-main.test.mts',
+};
+
+/** The pairs this file deliberately leaves unpinned, with the reason. */
+const UNPINNED_HERE: Readonly<Record<string, string>> = {
+  [join('.github', 'workflows', 'issue-lint.yml')]:
+    'differs by design on one `run:` line; its header is not in this pull request\'s ## Files',
+};
+
+for (const rel of IDENTICAL_PAIRS) {
+  const here = readFileSync(join(ROOT, rel), 'utf8');
+  const ships = readFileSync(join(ROOT, 'templates', rel), 'utf8');
+  const first = differences(here, ships)[0];
+  check(
+    `${rel} and templates/${rel} are byte-identical`,
+    here === ships,
+    first === undefined ? '' : describe(first),
+  );
+}
+
+// The lists above are closed, so a ninth pair cannot arrive unpinned and
+// unnoticed. The case below enumerates `templates/` from disk and requires
+// **every** file it ships — not only the ones that have a counterpart today —
+// to appear in one of the five sets written out here. It is deliberately the
+// broader rule: a file shipped without a counterpart is one `init` change away
+// from having one, and the cheap version of this case would not notice. The
+// cost is that adding any file under `templates/` reds here until it is
+// classified, which is one line and is what the failure message asks for.
+
+/** Every path under `templates/`, relative to it, files only. */
+function shippedPaths(): string[] {
+  return readdirSync(join(ROOT, 'templates'), { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => relative(join(ROOT, 'templates'), join(e.parentPath, e.name)))
+    .sort();
+}
+
+/** The two this repository ships with no same-named counterpart outside `templates/`. */
+const NO_COUNTERPART: readonly string[] = ['claude-settings.json', join('codex', 'AGENTS.md')];
+
+const accounted = new Set<string>([
+  OWN_PATH, // the pair this file's first section pins
+  ...IDENTICAL_PAIRS,
+  ...Object.keys(PINNED_ELSEWHERE),
+  ...Object.keys(UNPINNED_HERE),
+  ...NO_COUNTERPART,
+]);
+
+const unaccounted = shippedPaths().filter((rel) => !accounted.has(rel));
+check(
+  'every file templates/ ships is classified: pinned here, pinned elsewhere, declared unpinned, or declared to have no counterpart',
+  unaccounted.length === 0,
+  `unclassified: ${unaccounted.join(', ')} — add it to IDENTICAL_PAIRS, PINNED_ELSEWHERE, UNPINNED_HERE or NO_COUNTERPART`,
+);
+
+// And the other way round: a name written above that templates/ no longer ships
+// is a stale entry, which would make the case above pass over a real gap.
+const shippedSet = new Set(shippedPaths());
+for (const rel of [OWN_PATH, ...IDENTICAL_PAIRS, ...Object.keys(PINNED_ELSEWHERE), ...Object.keys(UNPINNED_HERE), ...NO_COUNTERPART]) {
+  check(`templates/${rel} is still shipped, so its entry above is not stale`, shippedSet.has(rel), [...shippedSet].join(', '));
 }
 
 // --- broken both ways, on texts written here --------------------------------
