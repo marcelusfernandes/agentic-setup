@@ -626,12 +626,13 @@ const ah = adopt(['--inventory'], greenAdopt, THREE);
 check('AC3 adopt --inventory prints a report', ah.out !== null && ah.status === 0, `${ah.stdout}\n${ah.stderr}`);
 check('AC3 adopt --inventory without the flag ran nothing', !existsSync(join(greenAdopt, RAN_MARKER)), git(['status', '--porcelain', '--untracked-files=all'], greenAdopt));
 check('AC3 adopt --inventory without the flag reports the proof as unrun', ah.out?.proof?.run === false && ah.out?.proof?.outcome === 'unrun', ah.stdout);
-check('AC3 adopt --inventory without the flag names the command it resolved', ah.out?.proof?.command === 'make test', ah.stdout);
+check('AC3 adopt --inventory without the flag claims no command as proved, and the report still says which one it is', ah.out?.proof?.command === undefined && ah.out?.test === 'make test', ah.stdout);
 check('AC3 adopt --inventory without the flag names no proof gap', !(ah.out?.gaps ?? []).includes(RED), ah.stdout);
 
 const ai = adopt(['--inventory', '--run-proof'], redAdopt, THREE);
 check('AC3 a red base is a gap of adopt --inventory --run-proof', (ai.out?.gaps ?? []).includes(RED), ai.stdout);
 check('AC3 adopt reports the outcome of the run it made', ai.out?.proof?.run === true && ai.out?.proof?.outcome === 'fail', ai.stdout);
+check('AC3 adopt reports the command the run used and where it came from', ai.out?.proof?.command === 'make test' && ai.out?.proof?.source === 'record', ai.stdout);
 check('AC3 adopt --inventory --run-proof still exits 0: a report is not a refusal', ai.status === 0, `${ai.stdout}\n${ai.stderr}`);
 check('AC3 the proof gap sits beside the gaps the inventory already found', Array.isArray(ai.out?.gaps) && ai.out.gaps.length > 1, JSON.stringify(ai.out?.gaps));
 

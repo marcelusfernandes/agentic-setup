@@ -7,7 +7,7 @@
 // and only for what that one call reads. This file asks the same questions
 // before there is a pull request to refuse.
 //
-//   node scripts/doctor.mts [--slug <slug>]
+//   node scripts/doctor.mts [--slug <slug>] [--run-proof]
 //
 // It prints one JSON object on stdout and writes nothing:
 //
@@ -24,12 +24,15 @@
 //
 // **It adds no gate.** It reports what is already required: the effective
 // rules on the default branch, the label dictionary, the hooks, the adoption
-// record, `allow_auto_merge`, and whether a proof can resolve a command.
+// record, `allow_auto_merge`, whether a proof can resolve a command and —
+// under `--run-proof` — whether that command passes.
 // `skills/orchestrate/SKILL.md` step 0 runs it once per pass and continues on
 // `ok: false` — a fourth reason to stop the loop is not this file's to invent.
 //
-// **It is read-only, and that is checked rather than claimed.** It makes
-// exactly three `gh` reads, all of them through
+// **It is read-only, and that is checked rather than claimed.** Read-only
+// means without `--run-proof`, which is the one flag here that executes
+// anything and executes only the command the repository itself declares; every
+// other run makes exactly three `gh` reads, all of them through
 // `scripts/lib/adopt/inventory.mts`:
 //
 //   gh api repos/{owner}/{repo}
@@ -69,6 +72,49 @@
 // hooks check's `found` and gates nothing: it is a local permission file, not
 // a condition of any merge.
 //
+// **Whether it runs the proof: only under `--run-proof`, never by default.**
+// Resolving a command and running it are two claims, and until #459 this file
+// made the first and printed it as the second — `proof ok: true` meant *a
+// command was found*, so a repository whose suite is genuinely red read as
+// adoptable, which is the one fact that refuses every pull request there
+// (`ci/negative-control.mts` needs the base to pass its own tests, and
+// `negative-control` is a required check). There are now two outcomes instead
+// of one. Without the flag the proof check is `ok: false` with the field
+// `proof:not-run` and a `found` that says the command resolved and nobody ran
+// it; with the flag the command is run by spawning `scripts/proof.mts`, so the
+// verdict printed here is literally the verdict `node scripts/proof.mts
+// <slug>` prints, and the check is `ok` only when it passed.
+//
+// Three reasons the default does not run it. (1) The read-only property above
+// is asserted mechanically rather than claimed, and an unknown repository's
+// test command may write anything anywhere: a tool that executes by default
+// cannot keep that property for anybody. (2) `skills/orchestrate/SKILL.md`
+// step 0 runs this file once per pass, and a third-party suite per pass is a
+// cost nobody asked for. (3) Executing a string out of somebody else's
+// repository is a change of contract, and a change of contract belongs in
+// something an operator types. The price is that a default run can no longer
+// print `ok: true`, and that price is the point: `missing: ['proof:not-run']`
+// is a to-do with a one-line fix exactly as `ruleset:absent` is, while an
+// unqualified `ok: true` over a command nobody ran is the defect itself.
+// `scripts/adopt.mts --inventory` takes the same flag and answers the same
+// way; the two differ only in where the unrun case lands, because a gap there
+// is a fact about the repository and "nobody looked" is a fact about the run.
+//
+// **The labels check reports a near neighbour, narrowly** (#460, absorbed into
+// #459). A label the dictionary wants that is absent while something close to
+// it is present is a different fact from one that is simply absent: seeding
+// `human:pending` into a repository that already uses `human` leaves two
+// vocabularies for "a person must look", and nothing reported it, because from
+// the dictionary's side nothing collided. Two rules, both mechanical — a
+// present label differing from the wanted one only in case, and a present
+// label that is exactly the wanted one's namespace, the text before its first
+// `:`. Nothing else, and the bound is printed beside the finding rather than
+// left for a reader to assume: a synonym inside the same namespace (`type:fix`
+// where the dictionary wants `type:bug`) is **not** reported, because telling
+// a synonym from an unrelated sibling needs a thesaurus and not a rule. The
+// bare `human` is not a hypothetical neighbour: `scripts/claim.mts` and
+// `scripts/reconcile.mts` already read it as a pending-human gate.
+//
 // **Crash policy: fail closed.** Exit 0 only on `ok: true`; `ok: false` and
 // every usage problem exit 1. Nothing is ever reported as passing because a
 // read failed: a `gh` or `git` read that cannot answer becomes that check's
@@ -85,7 +131,8 @@
 // Node built-ins only (invariant 1); every read of a repository or of this
 // plugin's own files goes through the modules #163-#167 left for it.
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   isFailure,
   takeInventory,
@@ -100,7 +147,25 @@ import { readTemplates, renderWorkflows } from './lib/adopt/workflows.mts';
 import { GIT_HOOK, HookError, planHooks, readShipped, DENY_ENTRY } from './lib/adopt/hooks.mts';
 import { ProofError, resolveProof, SLUG_PATTERN } from './lib/proof.mts';
 
-const USAGE = 'usage: node scripts/doctor.mts [--slug <slug>]';
+const USAGE = 'usage: node scripts/doctor.mts [--slug <slug>] [--run-proof]';
+
+/**
+ * The runner `--run-proof` spawns: `scripts/proof.mts`, beside this file in
+ * this plugin's own checkout. Spawned rather than reimplemented, so the bounds
+ * on the run — the 30-minute timeout, the 64 MiB output buffer, `CI=1` — and
+ * the closed set of outcomes stay defined in the one file that owns them, and
+ * so the verdict this report prints is the verdict an adopter gets by hand.
+ */
+const PROOF_RUNNER = resolve(dirname(fileURLToPath(import.meta.url)), 'proof.mts');
+
+/**
+ * What the two neighbour rules do not catch, printed beside what they do.
+ * A detector that implies a completeness it does not have is worse here than a
+ * narrow one that states its bound: an adopter reading "nothing collides" has
+ * to know that only a case variant and a namespace were ever compared.
+ */
+const NEIGHBOUR_BOUND =
+  'the rule compares a case variant and a namespace (`human` for `human:pending`) and nothing else — a synonym inside the same namespace, `type:fix` where the dictionary wants `type:bug`, is not reported, because telling a synonym from an unrelated sibling needs a thesaurus rather than a rule';
 
 /** The env var a second identity lives in, as `agents/reviewer.md` casts its review with. */
 const REVIEWER_TOKEN = 'AGENTIC_REVIEWER_TOKEN';
@@ -130,6 +195,29 @@ type Check = {
 
 /** The review binding a repository runs, as `scripts/land.mts` names them. */
 type Mode = 'agent' | 'approved';
+
+/** A label the dictionary wants, beside one this repository already carries. */
+type Neighbour = { wanted: string; present: string; rule: 'case' | 'namespace' };
+
+/**
+ * The near neighbours of the labels that are absent: for each one, every label
+ * the repository has that the two rules match. `scripts/adopt.mts` carries the
+ * same pair of rules for its own report — the two scripts are the two readers
+ * of one dictionary, and neither may import the other.
+ */
+function neighboursOf(wanted: readonly string[], present: readonly string[]): Neighbour[] {
+  const pairs: Neighbour[] = [];
+  for (const name of wanted) {
+    const colon = name.indexOf(':');
+    const namespace = colon > 0 ? name.slice(0, colon).toLowerCase() : null;
+    for (const have of present) {
+      const lower = have.toLowerCase();
+      if (lower === name.toLowerCase() && have !== name) pairs.push({ wanted: name, present: have, rule: 'case' });
+      else if (namespace !== null && lower === namespace) pairs.push({ wanted: name, present: have, rule: 'namespace' });
+    }
+  }
+  return pairs;
+}
 
 // --- 0. this plugin's own files, before anything else ------------------------
 // A broken installation of agentic-setup is not a fact about the repository
@@ -178,8 +266,13 @@ const broken = (name: string, field: string, found: string, expected: string): C
 // --- 1. the arguments, before anything is read -------------------------------
 const argv = process.argv.slice(2);
 let slugArg: string | null = null;
+let runProof = false;
 for (let i = 0; i < argv.length; i += 1) {
   const arg = argv[i] as string;
+  if (arg === '--run-proof') {
+    runProof = true;
+    continue;
+  }
   if (arg !== '--slug') fail(USAGE);
   const value = argv[i + 1];
   if (value === undefined || !SLUG_PATTERN.test(value)) fail(`${USAGE} — \`--slug\` takes a branch slug (${String(SLUG_PATTERN)})`);
@@ -328,7 +421,16 @@ function labelCheck(): Check {
   // the reader infer it.
   const page = facts.labelsTruncated ? ' (the label read filled its page, so it may not have seen them all)' : '';
   if (absent.length === 0) return held('labels', `all ${SEEDED_LABELS.length} seeded labels are there${page}`, expected);
-  return broken('labels', 'labels:missing', `${absent.join(', ')} ${absent.length === 1 ? 'is' : 'are'} not in this repository${page}`, expected);
+  // "absent" and "absent, but you already have something next to it" are two
+  // repositories with two different decisions to make, and the second one is
+  // not the installer's to make (#460): report it, name the rule that found
+  // it, and name what the rule does not reach.
+  const near = neighboursOf(absent, facts.labels);
+  const already = near
+    .map((pair) => `\`${pair.present}\` where the dictionary wants \`${pair.wanted}\` (${pair.rule})`)
+    .join(', ');
+  const note = near.length === 0 ? '' : `; this repository already has ${already} — ${NEIGHBOUR_BOUND}`;
+  return broken('labels', 'labels:missing', `${absent.join(', ')} ${absent.length === 1 ? 'is' : 'are'} not in this repository${page}${note}`, expected);
 }
 
 // --- 9. the hooks the record names ----------------------------------------------
@@ -381,12 +483,33 @@ const autoMergeCheck: Check = facts.autoMerge
     );
 
 // --- 11. the proof ----------------------------------------------------------------
+/** What `scripts/proof.mts` printed, read as loosely as a foreign report must be. */
+type ProofReport = { outcome?: unknown; reason?: unknown };
+
+/** The outcome of one run, or `null` when the runner reported nothing readable. */
+function runProofFor(slug: string): { outcome: string; reason: string | null; ms: number } | null {
+  const started = Date.now();
+  const r = spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const ms = Date.now() - started;
+  const line = (r.stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+  let parsed: ProofReport;
+  try {
+    parsed = JSON.parse(line) as ProofReport;
+  } catch {
+    return null;
+  }
+  if (typeof parsed.outcome !== 'string') return null;
+  return { outcome: parsed.outcome, reason: typeof parsed.reason === 'string' ? parsed.reason : null, ms };
+}
+
 function proofCheck(): Check {
   const slug = slugOf();
-  const expected = `a command for \`${slug}\`, from its declaration, the record's \`commands.test\`, or detection`;
+  const expected = runProof
+    ? `a command for \`${slug}\` — from its declaration, the record's \`commands.test\`, or detection — that passes when it is run`
+    : `a command for \`${slug}\`, from its declaration, the record's \`commands.test\`, or detection, and \`--run-proof\` to say whether it passes`;
+  let resolved;
   try {
-    const resolved = resolveProof(root, slug);
-    return held('proof', `slug=${slug} source=${resolved.source} command=${resolved.command}`, expected);
+    resolved = resolveProof(root, slug);
   } catch (err) {
     // A record the resolver rejected is the record's own failure, named once:
     // it is read there too, and one file has one fix.
@@ -394,6 +517,24 @@ function proofCheck(): Check {
     if (err instanceof ProofError) return broken('proof', err.reason, `slug=${slug}: ${err.message}`, expected);
     throw err;
   }
+  const where = `slug=${slug} source=${resolved.source} command=${resolved.command}`;
+  // Resolved and unrun is its own answer and never `ok`: "a command exists and
+  // passes" and "a command exists and nobody looked" are the difference between
+  // an adoptable repository and an unadoptable one (#459).
+  if (!runProof) {
+    return broken('proof', 'proof:not-run', `${where} — resolved, and NOT RUN: nothing here looked at whether it passes; \`--run-proof\` runs it`, expected);
+  }
+  const run = runProofFor(slug);
+  if (run === null) {
+    return broken('proof', 'read-failed:proof', `${where} — \`scripts/proof.mts\` reported no outcome this file could read`, expected);
+  }
+  if (run.outcome === 'pass') return held('proof', `${where} — ran and passed in ${run.ms} ms`, expected);
+  // One field for both, because both are the same fact about adoption — the
+  // command this repository would prove itself with does not pass here, so
+  // `negative-control` can discriminate nothing and no pull request can merge
+  // — and the two are told apart in `found`, where the fix is read.
+  const why = run.outcome === 'fail' ? 'ran and FAILED' : `could not be run (${run.reason ?? 'no reason reported'})`;
+  return broken('proof', 'proof:red', `${where} — ${why} in ${run.ms} ms; \`node scripts/proof.mts ${slug}\` prints the output`, expected);
 }
 
 report(mode, [modeCheck, recordCheck, rulesetCheck, requiredChecks(), labelCheck(), hookCheck(), autoMergeCheck, proofCheck()]);
