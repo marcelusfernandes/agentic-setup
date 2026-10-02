@@ -24,14 +24,22 @@
 // `unlabeled` are not in `types:`, and the header states what each check
 // reads separately instead of claiming both read the same two things.
 //
-// Negative control: on the base the equality case passes (the copies agree
-// there today, as they do for `guard-main.yml`, and that case is here to
-// keep them agreeing); the header cases and the trigger cases fail, because
-// the base's header says "Both read the PR body and labels, so they re-run
-// when the PR is edited or relabelled" and its `types:` list carries
-// `labeled, unlabeled`. The three synthetic cases at the foot fail on the
-// base for the plainest reason there is: the functions they call do not
-// exist there.
+// Negative control, measured on `d698b56` by restoring both copies to their
+// base contents and running this file: 21 passed, 10 failed. The ten are the
+// six header cases and the four trigger cases — the base's header says "Both
+// read the PR body and labels, so they re-run when the PR is edited or
+// relabelled", and `types:` carries `labeled, unlabeled` in each copy. The
+// equality cases pass on the base on purpose: the copies agree there today,
+// as they do for `guard-main.yml`, and the case is here to keep them
+// agreeing.
+//
+// The eight cases at the foot, over five synthetic scenarios, pass on the
+// base too, and are meant to. They are regression guards on the comparison
+// itself — an allowed difference is not a stray; a header edit and a job-body
+// edit each are one; a third `run:` line naming a script path is one as well,
+// which is what a pattern-based pin would have swallowed; and a copy shorter
+// than the other is reported rather than read past the end. They assert
+// nothing about the two real files, so nothing about them is red anywhere.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';
