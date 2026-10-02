@@ -6,9 +6,29 @@
 #                     them is reported as `unattributed`, not as a pass, because
 #                     something else was already broken (#354)
 #
-# Both read the PR body and labels, so they re-run when the PR is edited or
-# relabelled. Your own test workflow stays as it is; make it, and these two,
-# required checks on main.
+# What each one reads, because they differ. `scope` reads the PR body: its
+# `Closes #N` links decide whose `## Files` globs are audited, so a body edit
+# can change its verdict and `edited` is in the trigger list for it.
+# `negative-control` reads the diff's path classes to decide whether a control
+# is owed at all; it reads the PR's labels only to annotate — naming a legacy
+# `type:` label in a skip the path class had already decided, and printing a
+# `note:` that says the label no longer skips on its own (LEGACY_SKIP_LABELS
+# in the script). `scope` reads no label at all.
+#
+# So neither verdict can depend on a label, and neither job runs on `labeled`
+# or `unlabeled`. Applying `review:approved` — the label `scripts/land.mts`
+# reads before it merges — no longer cancels an in-flight run or starts a
+# fresh one on a commit whose content has not changed. What is lost: the
+# `note:` naming a legacy label is computed from the labels present at the
+# last `opened`/`synchronize`/`reopened`/`edited` event, so a label applied
+# after that event is not named in it. Your own test workflow stays as it is;
+# make it, and these two, required checks on main.
+#
+# The two copies of this file — this repository's own and the one
+# `scripts/init.mts` ships, templates/.github/workflows/agentic-checks.yml —
+# are pinned identical by tests/workflow-pairs.test.mts, except for the two
+# `run:` lines naming the script paths, which that test enumerates line for
+# line rather than matching by shape.
 #
 # negative-control runs the project's test command on a base checkout. Add
 # the same toolchain setup your test workflow uses where marked, and set
@@ -28,7 +48,7 @@ name: agentic-checks
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: agentic-checks-${{ github.ref }}

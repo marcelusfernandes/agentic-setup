@@ -377,20 +377,30 @@ per pass.
 On every verdict the reviewer returns, first comment its JSON on the PR yourself, then
 apply the labels — `land.mts` and `reconcile.mts` read them regardless of what follows.
 
-**Label before the push that starts the round, not after it.** `agentic-checks` runs on
-`labeled` and `unlabeled` as well as on `synchronize`, under `concurrency` with
-`cancel-in-progress: true` (`.github/workflows/agentic-checks.yml`), so every `gh pr edit
---add-label` cancels the run in flight and re-triggers a fresh one. That is the design,
-not a bug: apply this step's verdict labels *before* you relaunch the implementer, and the
-one run its round-2 push starts covers both; apply them after that push and they cancel
-the very run you are waiting on, which is a pass full of `cancelled` runs and minutes
-spent twice (measured: `docs/dogfood/2026-09-10.md`, L5). Step 4's `type:`/`scope:` copy
-is the one edit that cannot come before a push — the PR does not exist until the
-implementer has pushed — so it costs at least one re-trigger by design (GitHub fires one
-`labeled` event per label, so two labels in one `gh pr edit` still start two runs, and the
-concurrency group leaves one standing): make it a single `gh pr edit` carrying both labels,
-before you read `$OID` and launch the reviewer, so the run left standing is the one the
-verdict waits on. The labels:
+**Withdrawn by decision 0037: "label before the push that starts the round, not after
+it."** Until that item this step told you to apply the verdict labels *before the push*
+that starts round 2 and *not after it*, because `agentic-checks` ran on `labeled` and
+`unlabeled` and every `gh pr edit --add-label` cancelled the run in flight and started a
+fresh one. It runs on neither now, so there is no cancellation left to sequence around and
+**that rule orders nothing any more**: apply this step's verdict labels whenever the
+verdict is ready.
+
+What still re-triggers `agentic-checks`, under `concurrency` with `cancel-in-progress:
+true` (`.github/workflows/agentic-checks.yml`): a push, and an edit to the PR *body* —
+`scope` reads the body for the `Closes #N` links that decide which globs it audits. What
+does not: a label edit, because neither check's verdict can depend on a label. `scope`
+reads no label at all, and `negative-control` reads one only to print a `note:` beside a
+verdict the diff's path classes had already decided. The cost the withdrawn rule was
+measured from (`docs/dogfood/2026-09-10.md`, L5) was real and was being spent on nothing:
+measured on PR #449, applying `review:approved` re-ran `negative-control` for 5m15s on a
+commit whose content had not changed by a byte, while `test` — which never carried
+`labeled` in its trigger list — did not re-run at all.
+
+Step 4's single `gh pr edit` carrying both `type:` and `scope:` stays, for a smaller reason
+than the one it had: one call instead of two is one `gh` round trip and one timeline entry,
+not a run saved. Read `$OID` after it either way — the oid has to name the commit the
+reviewer actually read, which is step 4's own reason and never depended on the trigger
+list. The labels:
 
 - `approved` → `gh pr edit <pr> --add-label review:approved --add-label state:in-review
   --remove-label state:qa-failed` (the remove is harmless when the label was never there —
