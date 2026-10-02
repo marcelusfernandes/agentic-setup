@@ -594,7 +594,95 @@ export const DOGFOOD_GLOBS = ['hooks/**', 'ci/**', 'scripts/**', 'skills/**/SKIL
 // shape rather than by the `docs/dogfood/**` glob on purpose: the README and
 // the template that will live beside the reports are not reports, and must
 // not silence the nudge.
-export const DOGFOOD_REPORT_RE = /docs\/dogfood\/\d{4}-\d{2}-\d{2}\.md/;
+//
+// Written once as source, with two anchored readers derived from it (#295),
+// because the shape has two kinds of reader and one regex cannot serve both
+// anchored: `dogfoodTrigger` and `tests/dogfood-report.test.mts` hand it a
+// **path**, while `scripts/close-milestone.mts` and the same trigger's body
+// branch hand it **prose** — a `## Dogfood` bullet, a pull-request body. Two
+// hand-spelled patterns that must agree is the hazard #231 named for
+// `authorised:` lines, so the alternation is spelled once.
+//
+// Measured against the single unanchored regex these replace:
+// `docs/dogfood/2026-09-20.md.bak`, `docs/dogfood/2026-09-20.mdx` and
+// `templates/docs/dogfood/2026-09-20.md` all counted as reports, so any of the
+// three in a diff silenced the nudge for a pull request carrying no report.
+// `docs/dogfood/nested/2026-09-20.md` never matched it — the date has to follow
+// the directory immediately — and is refused by the anchored reader as well.
+const DOGFOOD_REPORT_SOURCE = 'docs\\/dogfood\\/\\d{4}-\\d{2}-\\d{2}\\.md';
+
+/**
+ * A report named **inside prose**: anchored at both ends by a boundary rather
+ * than by `^`/`$`, so a path in backticks, in a Markdown link or in a URL still
+ * counts while the nested and suffixed shapes do not. The lookbehind excludes
+ * word characters, `.` and `-` and deliberately **not** `/`, because a closeout
+ * bullet may cite a report by URL. The one shape it therefore still accepts is
+ * a path with a directory prefix — `templates/docs/dogfood/<date>.md` — which
+ * is why a reader holding a path uses the anchored one below instead; no caller
+ * produces such a path, since `git diff --name-only` is repository-relative.
+ */
+export const DOGFOOD_REPORT_RE = new RegExp(`(?<![\\w.-])${DOGFOOD_REPORT_SOURCE}(?![\\w.-])`);
+
+/** A path that **is** a report: the whole string and nothing else. */
+export const DOGFOOD_REPORT_PATH_RE = new RegExp(`^${DOGFOOD_REPORT_SOURCE}$`);
+
+/**
+ * The `Origin:` lines of an issue's `## Context`, each one joined with the
+ * lines that continue it and whitespace-squashed. `docs/workflow.md`,
+ * "Findings become issues": the line is copied verbatim from a dogfood
+ * finding's `origin` cell, and `tests/dogfood-report.test.mts` compares the two
+ * (#295).
+ *
+ * **The join is the point.** Prose in this repository wraps at about seventy-two
+ * columns, so an origin longer than that lives on two lines in the issue, and a
+ * comparison reading one line at a time reports a false clean or a false
+ * disagreement on every one of them — measured, six of seven. A continuation
+ * ends at a blank line, at the next `Origin:`, at a bullet, or at the next
+ * `## `.
+ */
+export function parseOriginLines(issueBody: string): string[] {
+  const lines = (extractSection(issueBody, 'Context') ?? '').split(/\r?\n/);
+  const found: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const opened = lines[i].trim().match(/^Origin:\s*(.*)$/i);
+    if (opened === null) continue;
+    const parts = [opened[1]];
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j].trim();
+      if (next === '' || next.startsWith('##') || next.startsWith('- ') || /^Origin:/i.test(next)) break;
+      parts.push(next);
+    }
+    found.push(parts.join(' ').replace(/\s+/g, ' ').trim());
+  }
+  return found;
+}
+
+/** A test file of this repository: the one path shape a `## Proof` is read for. */
+const PROOF_TEST_PATH_RE = /^tests\/[A-Za-z0-9_.-]+\.test\.mts$/;
+
+/**
+ * The **test paths** an issue's `## Proof` names, read from the section joined
+ * into one line first, so a backticked path broken by a wrap is still one span.
+ * `## Validation`, the Codex route's name for the section, is read instead when
+ * `## Proof` is absent.
+ *
+ * Test paths only, and the narrowing is measured rather than tasteful: over 153
+ * issues of this repository, reading every path shape reports 43 of them, and
+ * what it reports is a check's name written as a path, a glob, and an
+ * illustrative placeholder. `docs/dogfood/README.md` carries the numbers and
+ * the three classes.
+ */
+export function parseProofTestPaths(issueBody: string): string[] {
+  const section = extractSection(issueBody, 'Proof') ?? extractSection(issueBody, 'Validation') ?? '';
+  const found = new Set<string>();
+  for (const span of section.replace(/\s+/g, ' ').matchAll(/`([^`]+)`/g)) {
+    for (const token of span[1].split(/[\s,;()]+/)) {
+      const path = token.replace(/[.,;:]+$/, '');
+      if (PROOF_TEST_PATH_RE.test(path)) found.add(path);
+    }
+  }
+  return [...found];
+}
 
 /**
  * The mechanism files a diff changes while pointing at no dogfood report —
@@ -613,7 +701,7 @@ export const DOGFOOD_REPORT_RE = /docs\/dogfood\/\d{4}-\d{2}-\d{2}\.md/;
  */
 export function dogfoodTrigger(files: string[], prBody?: string | null): string[] {
   if (DOGFOOD_REPORT_RE.test(String(prBody ?? ''))) return [];
-  if (files.some((f) => DOGFOOD_REPORT_RE.test(f))) return [];
+  if (files.some((f) => DOGFOOD_REPORT_PATH_RE.test(f))) return [];
   return files.filter((f) => matchesAny(f, DOGFOOD_GLOBS));
 }
 
