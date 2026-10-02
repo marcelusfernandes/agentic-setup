@@ -31,8 +31,10 @@
 //
 // **It is read-only, and that is checked rather than claimed.** Read-only
 // means without `--run-proof`, which is the one flag here that executes
-// anything and executes only the command the repository itself declares; every
-// other run makes exactly three `gh` reads, all of them through
+// anything: it executes only the command the repository itself declares, and
+// that command may write, move or remove anything in the tree — it is the
+// repository's command, not this file's. Every other run makes exactly three
+// `gh` reads, all of them through
 // `scripts/lib/adopt/inventory.mts`:
 //
 //   gh api repos/{owner}/{repo}
@@ -134,7 +136,9 @@
 // Node built-ins only (invariant 1); every read of a repository or of this
 // plugin's own files goes through the modules #163-#167 left for it.
 import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   isFailure,
@@ -509,12 +513,40 @@ const autoMergeCheck: Check = facts.autoMerge
 /** What `scripts/proof.mts` printed, read as loosely as a foreign report must be. */
 type ProofReport = { outcome?: unknown; reason?: unknown };
 
-/** The outcome of one run, or `null` when the runner reported nothing readable. */
+/**
+ * The outcome of one run, or `null` when the runner reported nothing readable.
+ *
+ * The report is collected through a **file** and not a pipe, and that is not a
+ * style choice. `scripts/proof.mts` prints its report and exits in the same
+ * breath, and a write to a pipe is asynchronous: measured here, every report
+ * larger than the 65,536-byte pipe buffer arrived truncated **whatever buffer
+ * this caller offered**, `Infinity` included. A suite whose last forty lines
+ * are large therefore read as `read-failed:proof`, and so did the one report
+ * that carries `proof:output-too-large` — the reason whose whole purpose is to
+ * tell an operator to raise `AGENTIC_RUN_MAX_BUFFER`, unreachable through
+ * either caller. Writes to a file descriptor are synchronous, so the whole
+ * report arrives: 67,174,555 bytes of it in the case that found this. The file
+ * is this process's own temporary directory, never the repository being
+ * reported on, and it is removed on every path out (`tests/doctor.test.mts`
+ * asserts the tree is unchanged across a `--run-proof` run).
+ */
 function runProofFor(slug: string): { outcome: string; reason: string | null; ms: number } | null {
+  const dir = mkdtempSync(join(tmpdir(), 'agentic-doctor-proof-'));
+  const report = join(dir, 'report.json');
+  const fd = openSync(report, 'w');
   const started = Date.now();
-  const r = spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  let text = '';
+  try {
+    spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, stdio: ['ignore', fd, 'ignore'] });
+    text = readFileSync(report, 'utf8');
+  } catch {
+    text = '';
+  } finally {
+    closeSync(fd);
+    rmSync(dir, { recursive: true, force: true });
+  }
   const ms = Date.now() - started;
-  const line = (r.stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+  const line = text.trim().split('\n').filter(Boolean).pop() ?? '';
   let parsed: ProofReport;
   try {
     parsed = JSON.parse(line) as ProofReport;

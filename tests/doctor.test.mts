@@ -35,7 +35,7 @@
 // the tree, not off the report that would claim it. Whether a label the
 // dictionary wants is absent *beside a near neighbour the repository already
 // carries* is the other, measured against a fixture seeded with a scheme of
-// its own (`type:fix`, `human`).
+// its own (`type:fix`, `bug`, `human`).
 //
 // The last section spawns `scripts/adopt.mts --inventory` rather than `doctor`.
 // It lives here because #459's `## Files` names this file and not
@@ -679,6 +679,51 @@ check('a --slug whose value is a flag exits 1 and reads nothing', an.status === 
 const al = adopt(['--record', '--run-proof'], complete());
 check('AC3 --run-proof on another flag is a usage error', typeof al.out?.error === 'string' && al.out.error.includes('usage'), al.stdout);
 check('AC3 --run-proof on another flag writes nothing and exits 1', al.status === 1, `${al.stdout}\n${al.stderr}`);
+
+
+// --- the runner itself failing: a read that failed, never a red suite -------
+// Reachable from a fixture, and through no injection point: `scripts/proof.mts`
+// runs the repository's own command with `shell: true`, so that command's shell
+// has the runner as its parent and can signal it. One line of a record's
+// `commands.test` is the whole mechanism, and it is the same mechanism the
+// green and red fixtures above already use to run a real command.
+//
+// `AGENTIC_TEST_CMD` is set to the same string so that detection agrees with
+// the record and the run is judged on the proof alone.
+
+const DEATH = 'kill -9 $PPID';
+const UNKNOWN_CHECKS = ['scope', 'negative-control', 'test'];
+const dying = fixture({ 'agentic.config.json': record({ stack: 'unknown', test: DEATH, checkCmd: null, checks: UNKNOWN_CHECKS }) });
+
+const ao = doctor(['--run-proof'], dying, { ...THREE, AGENTIC_TEST_CMD: DEATH });
+checkShape('a runner the repository killed', ao);
+check('a runner that printed no outcome is a read that failed, named as one', missingOf(ao) === exactly('read-failed:proof'), ao.stdout);
+check('a runner that failed is never reported as a red suite', !(ao.out?.missing ?? []).includes(RED), ao.stdout);
+check('a runner that failed leaves the report not ok, exit 1', ao.out?.ok === false && ao.status === 1, `${ao.status} ${ao.stdout}`);
+// The report is collected through a file, and that file is this process's own
+// temporary directory: `--run-proof` writes nothing into the repository beyond
+// whatever the repository's own command writes, and this command writes nothing.
+check('--run-proof collects the report outside the repository, which is left byte-identical', git(['status', '--porcelain', '--untracked-files=all'], dying) === '', git(['status', '--porcelain', '--untracked-files=all'], dying));
+
+const ap = adopt(['--inventory', '--run-proof'], dying, { ...THREE, AGENTIC_TEST_CMD: DEATH });
+check('adopt fails closed on the same case, under the same name', ap.out?.error === 'read-failed:proof' && ap.status === 1, ap.stdout);
+check('adopt names no gap for a runner that failed: a crashed runner is no fact about the repository', ap.out?.gaps === undefined, ap.stdout);
+
+// A report larger than a pipe can carry. The runner prints and exits in one
+// breath, so a pipe loses everything past its 65,536-byte buffer whatever
+// buffer a caller offers — which made `proof:output-too-large` unreachable
+// through both callers, the one reason whose purpose is to tell an operator to
+// raise `AGENTIC_RUN_MAX_BUFFER`. Collected through a file, it arrives.
+const BIG = 'head -c 68000000 /dev/zero | tr "\\0" x';
+const noisy = fixture({ 'agentic.config.json': record({ stack: 'unknown', test: BIG, checkCmd: null, checks: UNKNOWN_CHECKS }) });
+
+const aq = doctor(['--run-proof'], noisy, { ...THREE, AGENTIC_TEST_CMD: BIG });
+check('a runner report too large for a pipe still reaches the reader, carrying the runner own reason', foundOf(aq, 'proof').includes('proof:output-too-large'), foundOf(aq, 'proof'));
+check('that case is a proof the loop cannot run, not a read that failed', missingOf(aq) === exactly(RED), aq.stdout);
+
+const ar = adopt(['--inventory', '--run-proof'], noisy, { ...THREE, AGENTIC_TEST_CMD: BIG });
+check('adopt reads the same oversized report and names the same reason', ar.out?.proof?.reason === 'proof:output-too-large', ar.stdout);
+check('adopt names the gap for it: the command cannot pass here as it stands', (ar.out?.gaps ?? []).includes(RED), ar.stdout);
 
 
 finish();

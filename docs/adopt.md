@@ -6,8 +6,7 @@ adoption owes an existing project is a description of what is already there.
 `scripts/adopt.mts` is that step.
 
 ```bash
-node scripts/adopt.mts --inventory       # describes the repository, writes nothing
-node scripts/adopt.mts --inventory --run-proof   # and runs its test command, to say whether it passes
+node scripts/adopt.mts --inventory [--run-proof]  # describes the repository; --run-proof also runs its test command
 node scripts/adopt.mts --plan-issue      # turns that description into one plan issue
 node scripts/adopt.mts --record [--force] # writes the adoption record, and nothing else
 node scripts/adopt.mts --workflows       # generates the workflows, and the checks they produce
@@ -33,19 +32,18 @@ pass for the second to mean anything. On a base that is already red it returns
 defect in any one pull request. Measured in September 2026 on a real third-party repository:
 219 tests, 203 passing, 16 failing, every pull request refused. So it is a precondition of
 adoption, not a discovery afterwards, and both read-backs answer it under one flag:
-`adopt --inventory --run-proof` names `proof:red` in `gaps`, and `doctor --run-proof` reports
-`ok: false` with `missing: ["proof:red"]`. Neither runs the suite without that flag, and
-neither calls a command nobody ran passing: `doctor` without it is `ok: false` with
-`proof:not-run`, `--inventory` without it is `proof: { "run": false, "outcome": "unrun" }`
-and no gap either way. Why it is a flag rather than the default is in
-`scripts/doctor.mts`'s header, beside its crash policy.
+`adopt --inventory --run-proof` names `proof:red` in `gaps`, `doctor --run-proof` reports
+`ok: false` with `missing: ["proof:red"]`, and without that flag neither runs the suite and
+neither calls a command nobody ran passing (`doctor` is `ok: false` with `proof:not-run`,
+`--inventory` is `proof: { "run": false, "outcome": "unrun" }`, and no gap either way). Why
+it is a flag rather than the default is in `scripts/doctor.mts`'s header.
 
-## `--inventory` writes nothing
+## `--inventory` writes nothing — except under `--run-proof`
 
 `--inventory` prints one JSON object on stdout and **makes no write of any kind** — without
-`--run-proof`, which hands the tree to the repository's own test command and is the one
-thing here that executes anything: no file is created, moved or touched, and every `gh` and
-`git` call it makes is a read. Four reads, in this order:
+`--run-proof`, which hands the tree to the repository's own test command, the one thing here
+that executes anything: no file is created, moved or touched, and every `gh` and `git` call
+it makes is a read. Four reads, in this order:
 
 | Read | What it answers |
 | --- | --- |
@@ -121,18 +119,17 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
 - `labelNeighbours` — one entry per label the dictionary wants that is **absent while a
   near neighbour is already here**, with the `rule` that matched: `case` (the same name in
   another case), `namespace` (a label that *is* the wanted name's namespace — a bare `human`
-  where the dictionary wants `human:pending`) or `tail` (a label that is its last segment —
-  a bare `bug` where it wants `type:bug`). Empty when none has one, and nothing here
-  resolves a collision: which vocabulary a repository keeps is the adopter's decision, and
-  the table below says what reads each label so that it can be made.
+  where it wants `human:pending`) or `tail` (one that is its last segment — a bare `bug`
+  where it wants `type:bug`). Empty when none has one, and nothing here resolves a
+  collision: that is the adopter's decision, and the table below says what reads each label
+  so it can be made.
 - `labelNeighbourRule` — what those three rules compare, printed whether they matched or
   not, because they are the whole rule. What they leave out is a *different word* for the
   same thing — `type:fix` where the dictionary wants `type:bug`, `documentation` where it
-  wants `type:docs` — which needs a thesaurus rather than a rule. A detector implying a
+  wants `type:docs` — which needs a thesaurus rather than a rule; a detector implying a
   completeness it has not got is worse than a narrow one that states its bound.
-- `proof` — `scripts/proof.mts`'s own report of the resolved test command (`slug`, `source`,
-  `command`, `outcome`, `reason` when there is one) plus `run`; without `--run-proof`,
-  `{ "run": false, "outcome": "unrun" }`, and nothing was executed.
+- `proof` — `scripts/proof.mts`'s own report (`slug`, `source`, `command`, `outcome`, and
+  `reason` when there is one) plus `run`; `{ "run": false, "outcome": "unrun" }` without the flag.
 - `gaps` — the named list below.
 
 ### The gap names
@@ -152,8 +149,8 @@ A gap is a fact, not a judgement: `--inventory` names it and stops there.
 
 ## Which labels the scripts actually read
 
-The dictionary `scripts/init.mts` seeds is fifteen labels. This is what reads them, so an
-adopter holding a vocabulary of their own can decide which collisions matter; read from
+The dictionary `scripts/init.mts` seeds is fifteen labels; this is what reads them, so an
+adopter with a vocabulary of their own can decide which collisions matter. Read from
 `scripts/`, `ci/` and `.agents/` at the commit that added the table.
 
 | Reader | Which labels, and for what |
@@ -675,8 +672,11 @@ this script — failing or succeeding — creates, moves or touches a file other
 its mode names: `agentic.config.json` for `--record`, the files under `.github/workflows/`
 for `--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
 `--plan-issue` and `--pr` write no file at all, and nor does `--inventory` — **except under
-`--run-proof`, which hands the tree to the repository's own test command and so leaves
-behind whatever that command writes**. It is **not** a claim that
+`--run-proof`. That flag hands the tree to the repository's own test command, which may
+write, move or remove any file or directory it likes, tracked ones included** — a fixture
+whose command deleted a tracked file left `git status` reporting it. The runner's report is
+collected in a temporary directory of the calling process, never in the repository, and
+removed on every path out. It is **not** a claim that
 the run had no effect on GitHub — `--pr` is the clearest case: it creates commits in the
 object database, pushes a branch and opens a pull request, and every one of those is the
 point of the flag. Three branches of `--plan-issue` show the same thing:

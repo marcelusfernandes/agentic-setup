@@ -13,7 +13,8 @@
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
 // JSON on stdout and performs **no write of any kind** — without `--run-proof`
-// below, which hands the tree to the repository's own test command: no file is
+// below, which hands the tree to the repository's own test command, and that
+// command may write, move or remove any file or directory it likes: no file is
 // created or touched, and the only `gh` calls are reads (`api
 // repos/{owner}/{repo}`, the default branch's effective rules, `label list`).
 // It reads one more thing from disk than the inventory does — the record.
@@ -27,42 +28,30 @@
 // and `labelNeighbours`, each label the dictionary wants that is absent while a
 // near neighbour is already there (a bare `human` where it wants
 // `human:pending`), with `labelNeighbourRule` stating what the three rules do
-// not reach. Reporting is the whole of the second: that choice is the adopter's.
-// `scripts/doctor.mts` asks both under the same flag and answers the same way,
-// and its header carries the reasoning; `docs/adopt.md` has the rest.
+// not reach — reporting being the whole of it, since that choice is the
+// adopter's. `scripts/doctor.mts` asks both under the same flag and answers the
+// same way, and its header has the reasoning; `docs/adopt.md` the rest.
 //
 // `--plan-issue` is the first mutation, and it is a question rather than a
 // change: it opens a single `human:pending` issue whose body renders the
-// inventory and lists, as checkboxes, exactly the gaps found and what
-// adoption would do about each. It creates **both** labels of that question
-// first — `human:pending`, which the issue carries, and `human:decided`,
-// which the plan's own last line asks the reader to move it to and which
-// `--pr` refuses without (#366). Creating only the first left the label that
-// records the decision behind the decision: on a repository nobody prepared,
-// which is the only kind this script exists for, answering the plan meant
-// creating a label by hand before it could be answered. So a run writes at
-// most two labels besides the issue, and exactly the ones the inventory read
-// did not see. The pattern is this repository's own —
-// `.github/workflows/guard-main.yml` opens exactly such an issue,
-// deduplicated by title — and the three readers that honour the label
-// (`scripts/reconcile.mts`, `scripts/claim.mts` and the Codex route's
-// `github.mts`) are already in place. A second run never opens a second
-// issue: it refuses with `{ refused, reason: 'plan-issue:already-open' }`, or
-// with `plan-issue:already-decided` when the open one already carries the
-// decision — that question has been answered, and the next step is `--pr`.
-// A repository whose report names no gap gets no issue either: there is no
-// question to ask, and it refuses with
-// `{ refused, reason: 'plan-issue:nothing-to-plan', gaps: [] }` before it
-// searches for an open one, so that run makes no `gh` call beyond the
-// inventory's own reads.
+// inventory and lists, as checkboxes, exactly the gaps found and what adoption
+// would do about each. It creates **both** labels of that question first — the
+// one the issue carries, and the `human:decided` its own last line asks the
+// reader for, which `--pr` refuses without (#366): on a repository nobody
+// prepared, which is the only kind this script exists for, answering the plan
+// used to mean creating a label by hand first. So a run writes at most two
+// labels besides the issue, and exactly the ones the inventory read did not
+// see. A second run opens no second issue, and a repository whose report names
+// no gap gets none at all — before any `gh` call beyond the inventory's reads.
+// Each refusal is named, with the three readers that honour the label, in the
+// `--plan-issue` section of `docs/adopt.md`.
 //
 // `--record` is the second mutation, and it writes exactly one file:
 // `agentic.config.json` at the repository root, the adoption record of
 // `docs/decisions.md` item 15, built from the inventory by
 // `scripts/lib/adopt/record.mts` — the one writer. It refuses to overwrite a
-// record whose `generatedBy` is not this tool (`record:not-ours`); `--force`
-// is the way past that refusal. Either way a rewrite reports every field
-// that changed.
+// record whose `generatedBy` is not this tool (`record:not-ours`), `--force` is
+// the way past that, and either way a rewrite reports every field that changed.
 //
 // **Detection stays the default.** The record is compared with what
 // `ci/lib/detect.mts` says on *every* run, not only when it is written, and
@@ -78,25 +67,22 @@
 // `scripts/lib/adopt/workflows.mts` renders from the record (#165), which also
 // returns the list of check names those files produce — one list for the
 // workflow and for the ruleset, so the two cannot name different checks. The
-// record is the input and is required: without one it refuses with
-// `{ refused, reason: 'workflows:no-record' }` rather than detecting a second
-// time. A file that does not carry the `generated by agentic-setup adopt`
-// marker on its first lines was written by a person and is reported as
-// `skipped` — there is no `--force` past that, because the remedy is to read
-// the file, not to lose it. A file that is already what would be written is
-// `skipped` too, and nothing is rewritten.
+// record is the input and is required (`workflows:no-record`). A file that does
+// not carry the `generated by agentic-setup adopt` marker was written by a
+// person and is `skipped` with no `--force` past it; one that is already what
+// would be written is `skipped` too. The `--workflows` section of
+// `docs/adopt.md` names every outcome and every refusal.
 //
 // `--hooks` is the fourth mutation, and it writes exactly two things: the
 // `pre-push` hook into the directory git says it runs hooks from, and the deny
 // list into `.claude/settings.json`. What it installs is what the record's
 // `hooks[]` names (#166), resolved by `scripts/lib/adopt/hooks.mts`, which
-// plans without writing; a record is required, and without one it refuses with
-// `{ refused, reason: 'hooks:no-record' }`. A hook a person wrote is never
-// replaced, a name this setup does not ship installs nothing at all, the deny
-// merge keeps every rule it did not seed, and a write that fails partway puts
-// back everything this run had already written — the install is whole or it is
-// nothing. Running it twice is a no-op. Every outcome, every reason and every
-// named error of the flag is the `--hooks` section of `docs/adopt.md`.
+// plans without writing; a record is required (`hooks:no-record`). A hook a
+// person wrote is never replaced, a name this setup does not ship installs
+// nothing at all, the deny merge keeps every rule it did not seed, and a write
+// that fails partway puts back everything already written — the install is
+// whole or it is nothing. Running it twice is a no-op. Every outcome, reason
+// and named error of the flag is the `--hooks` section of `docs/adopt.md`.
 //
 // `--pr` is the last step and the only one that touches the remote: it
 // assembles the branch `chore/adopt-agentic-setup` out of the record, the
@@ -147,7 +133,8 @@ import {
   writeRecord,
   type AdoptionRecord,
 } from './lib/adopt/record.mts';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   WORKFLOW_DIR,
@@ -299,15 +286,14 @@ const report: Report = {
   gaps: stale.length > 0 ? [...inventory.gaps, 'record:stale'] : inventory.gaps,
   record,
   // `NEIGHBOUR_RULE`'s three rules over the labels the dictionary wanted and did
-  // not find, in that precedence: the whole name, its namespace, its last segment.
+  // not find: the whole name, its namespace, its last segment, in that order.
   labelNeighbours: SEEDED_LABELS.filter((name) => !inventory.labels.includes(name)).flatMap((wanted) => {
     const lower = wanted.toLowerCase();
     const forms = [lower, lower.split(':')[0] ?? lower, lower.slice(lower.lastIndexOf(':') + 1)];
-    const rules = ['case', 'namespace', 'tail'] as const;
     return inventory.labels.flatMap((present): Neighbour[] => {
       const at = forms.indexOf(present.toLowerCase());
-      const rule = at < 0 || (at === 0 && present === wanted) ? null : (rules[at] ?? null);
-      return rule === null ? [] : [{ wanted, present, rule }];
+      const rule = at < 0 || (at === 0 && present === wanted) ? undefined : (['case', 'namespace', 'tail'] as const)[at];
+      return rule === undefined ? [] : [{ wanted, present, rule }];
     });
   }),
   labelNeighbourRule: NEIGHBOUR_RULE,
@@ -316,18 +302,33 @@ const report: Report = {
 /**
  * Whether the command this repository would prove itself with passes here:
  * `scripts/proof.mts`'s own report, spawned rather than reimplemented, so the
- * verdict is the one an adopter gets by hand and the bounds on the run stay in
- * the file that owns them. The slug comes off HEAD as `scripts/doctor.mts`
- * derives it, so the two resolve one command; `tail` is dropped, being that
- * runner's report and not this one's.
+ * verdict is the one an adopter gets by hand and the run's bounds stay in the
+ * file that owns them. The slug comes off HEAD as `scripts/doctor.mts` derives
+ * it, so the two resolve one command; `tail` is dropped, and the report is
+ * collected through a temporary file of this process rather than a pipe, which
+ * a runner that prints and exits in one breath truncates — the same helper in
+ * `scripts/doctor.mts` carries that measurement, and the directory is removed
+ * on every path out of this one.
  */
 function runTheProof(): Record<string, unknown> {
   const head = gitIn(root)(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
   const slug = BRANCH_SHAPE.exec(head)?.[1] ?? (SLUG_PATTERN.test(head) ? head : 'no-branch');
-  const r = spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const dir = mkdtempSync(join(tmpdir(), 'agentic-adopt-proof-'));
+  const report = join(dir, 'report.json');
+  const fd = openSync(report, 'w');
+  let text = '';
+  try {
+    spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, stdio: ['ignore', fd, 'ignore'] });
+    text = readFileSync(report, 'utf8');
+  } catch {
+    text = '';
+  } finally {
+    closeSync(fd);
+    rmSync(dir, { recursive: true, force: true });
+  }
   let printed: Record<string, unknown>;
   try {
-    printed = JSON.parse((r.stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? '') as Record<string, unknown>;
+    printed = JSON.parse(text.trim().split('\n').filter(Boolean).pop() ?? '') as Record<string, unknown>;
   } catch {
     printed = {};
   }
@@ -336,7 +337,7 @@ function runTheProof(): Record<string, unknown> {
   // `proof:red`, which says this repository's suite is red — a crashed runner is
   // no fact about the repository — and `scripts/doctor.mts` reports the same case
   // as `read-failed:proof`, so the two cannot disagree about it.
-  if (typeof printed.outcome !== 'string') fail('read-failed:proof', (r.stderr ?? '').trim().split('\n')[0] || undefined);
+  if (typeof printed.outcome !== 'string') fail('read-failed:proof');
   const { tail: _tail, ...rest } = printed;
   return { ...rest, run: true };
 }
