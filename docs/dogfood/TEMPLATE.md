@@ -5,6 +5,12 @@
 - Turns: <turns the pass took, whole number>
 - Minutes: <wall-clock minutes, whole number>
 - Cost (USD): <what the pass cost, e.g. 12.40>
+<!-- Replace this comment with the one the number owes, and keep it at this
+     bullet: it says whether the figure is `billed` or a `reconstruction`, and
+     carries the derivation, the per-model token totals and the price table.
+     `README.md`, "What `Cost (USD)` means", states what each word covers, what
+     the number excludes and how far it reproduces; the rule is stated there
+     rather than restated here, so the two cannot disagree. -->
 - Transcripts: <where they are kept, outside this repository>
 
 ## Scoreboard

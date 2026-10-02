@@ -70,9 +70,20 @@ inside the already-required `test` check, not a new check name. It reads every
 file in this directory and fails when:
 
 - the directory holds anything but `README.md`, `TEMPLATE.md` and files whose
-  path matches `DOGFOOD_REPORT_RE` (`ci/lib/scope.mts`) — the same shape `scope`
-  and `close-milestone.mts` count as a report, so a file this test accepts and
-  that regex does not would silence the nudge or fail the close;
+  path matches `DOGFOOD_REPORT_PATH_RE` (`ci/lib/scope.mts`) — the same shape
+  `scope` and `close-milestone.mts` count as a report, so a file this test
+  accepts and that regex does not would silence the nudge or fail the close.
+  **Both of that file's two readers are anchored** (#295), and the path one
+  matches the whole string and nothing else. Three examples, measured against the
+  regex it replaces: `docs/dogfood/2026-09-20.md.bak`,
+  `docs/dogfood/2026-09-20.mdx` and `templates/docs/dogfood/2026-09-20.md` all
+  counted as reports, so any of them in a diff silenced the nudge for a pull
+  request carrying no report. They are examples and not the list — more shapes
+  flip, and `docs/decisions/0038-the-dogfood-report-reader-is-anchored.md` carries
+  the classes and the argument that the narrowing can only ever be in that
+  direction. `docs/dogfood/nested/2026-09-20.md` is **not** one of them: neither
+  reader ever matched it, because the date has to follow the directory
+  immediately;
 - a report does not parse against the format below, or its heading date does not
   match its filename;
 - a case row is missing one of its three numbers, carries a decision other than
@@ -81,7 +92,16 @@ file in this directory and fails when:
   `candidate`, `todo`, `tbd`, `open`, `later`, `unresolved`, `maybe`, `none`,
   `n/a` on its own;
 - a report is half-filled: rows in a document that still carries a `<...>`
-  placeholder, or a dated report left as the empty template.
+  placeholder, or a dated report left as the empty template;
+- a report whose `Retroactive:` bullet names an issue while its own heading date
+  is on or after **2026-09-17**, the day this format landed. The escape exists
+  for a pass that ran before the format did and for nothing else, so a live pass
+  cannot opt into writing `not recorded` in five cells by adding a bullet;
+- a case row whose `error class` is the literal `not recorded`, in any report,
+  retroactive or not: the escape covers `Commit` and the five numeric cells, and
+  that column is not one of them;
+- a `Cost (USD)` that is a number and whose HTML comment says neither
+  `reconstruction` nor `billed` — see "What `Cost (USD)` means" below.
 
 What it does **not** check is the `finding` column's prose. The pin holds a
 finding row to its shape — that it has a description at all, an `origin` and an
@@ -113,6 +133,269 @@ The test states the grammar itself rather than importing a parser, the way
 does: a pin that reuses the parser it pins cannot catch that parser drifting.
 This file and that test are meant to be read against each other when either
 changes.
+
+### A finding is a symptom until it is reproduced
+
+A finding written from **one failing command states a symptom.** It becomes a
+**mechanism** only once the diagnosis has been reproduced — the named cause made
+to produce the same failure a second time, or the cause removed and the failure
+gone with it. Write which of the two the row is, in the row. The format asks a
+finding for an origin and an outcome and has never asked whether the diagnosis
+was tested, which is how finding L22 of `docs/dogfood/2026-09-10.md` landed
+stating a symptom as a mechanism, and only a reproduction caught it two reports
+later — finding D24 of `docs/dogfood/2026-09-17.md:239`.
+
+Correcting a description has two cases and they have different remedies:
+
+- **Inside the pass, before the report lands** — correct the row itself, never an
+  appended note, as the sweep above already says.
+- **A later report correcting an earlier, landed report** — say so **in the
+  corrected row of the later report's own table**, naming the report and the
+  finding it corrects, and **do not rewrite the landed file.** A landed report is
+  the record of what one pass found and believed; editing it leaves no trace that
+  the belief was ever held, and every reader who cited it is reading a file that
+  no longer says what they cited. The correction is itself a finding and belongs
+  where findings go. That D24 row is the worked example: its `outcome` cell says
+  that `docs/dogfood/2026-09-10.md` finding L22 "is left as it landed with this
+  row as its correction", which is the shape this rule now states.
+
+### A finding row may cite evidence from after the window
+
+**Yes, it may, and it says so in its `outcome` cell.** The six header bullets and
+a case row's three numbers measure one window and the report states which. The
+findings table has no window in its grammar at all, and that is not an omission:
+its contract is follow-through rather than measurement, and a row's outcome is
+the issue the finding became, which is filed after the pass found it. A row that
+could cite nothing past the close could not carry an outcome.
+
+So a row may rest on evidence the window does not contain, and the marker is
+words in the `outcome` cell saying when — "done during the run, after the day
+this report counts", "already covered during the pass". The `origin` cell is the
+other half and is not relaxed: it names where **inside** the window the finding
+came from. A reader can then tell a row measured inside the window from one
+resolved after it, which is the thing that was undecidable before.
+
+### What `Cost (USD)` means
+
+Two different measurements could sit in that cell, so **the report says which one
+it is.** A **billed** figure is one a runtime or an account statement stated. A
+**reconstruction** is one the writer computed from token counts at published list
+prices. Every pass written up here is the second, because a Claude Code agent has
+no cost accounting exposed to it at all: it can read the token counts in its own
+transcripts and nothing else. The derivation and the per-model totals go in an
+HTML comment at the bullet — the only place this format has for them — and the
+pin fails a numeric `Cost (USD)` whose comment claims neither word.
+
+A reconstruction is derived from these inputs and from nothing else:
+
+- the transcripts the `Transcripts` bullet names — the orchestrating session's
+  own, and every subagent transcript beside it;
+- each assistant response's token usage in them, **deduplicated by response id**,
+  because one response is written to more than one file;
+- **restricted to the window the header measures**, by each response's own
+  timestamp;
+- summed per model over five token classes — input, 5-minute cache write, 1-hour
+  cache write, cache read, output — and priced at the list price per million
+  tokens published for that model, **with the price table written out in the
+  comment.**
+
+Responses the sum cannot price — no usage block, or a model id with no published
+price — are excluded and **counted** in the comment, never dropped quietly.
+
+**What the number excludes**, and no reader may take it as covering: what a
+subscription account is actually billed, which list price is not; and what the
+operator's own interactive turns cost outside the sessions the window reads.
+
+**How far it reproduces, which is the only warrant it has.** Given the same
+transcripts, the same two window bounds and the same price table, two readers get
+the same figure to the cent: `docs/dogfood/2026-09-20.md`'s 555.83 was recomputed
+from the same corpus by a second, independently written script during the work on
+#295, to the cent and to the token on all five classes of both models it prices.
+That is why a report may compare its cost to the previous pass's at all — **the
+warrant is the reproduction, never the number.** Across a corpus **re-collected
+later** it drifts, and the size of the drift is on record: run against the
+2026-09-17 window the later script answers 743.16 where that report states
+742.59, +0.08% — two of that pass's three models reproducing to the token and
+only the third differing, because the set of transcripts summed was no longer the
+same set. A report states its comparison as a reproduction or does not make it.
+
+**Why the figure survives the report's own corrections, and the one way to lose
+that.** Both bounds are **fixed instants, written into the report, each saying
+what makes it non-arbitrary** — and neither is a bound that *means* "the latest
+event". A bound meaning *now* turns the cost into a measurement of the report's
+own production: every correction is another push, another turn and another cost,
+so the number is false again as soon as it is fixed. That is the class of claim
+`docs/dogfood/2026-09-20.md` had to remove.
+
+The distinction is finer than "name an event" and that report is the worked
+example, so it is stated exactly rather than tidied. Its **open** is a named
+event: the merge of a pull request, `3ce7f475`, the previous phase's last
+landing. Its **close** is *not* an event — it is the measured instant every other
+number in that header was taken against, with the pass's last dispatch, 16.44
+seconds earlier, named beside it as what makes the instant non-arbitrary. The
+report says so in those words, after **one** earlier form of the sentence that was
+wrong twice over: it called the bound the dispatch, and it called it the last event
+the session had recorded, which stopped being true minutes later when the session
+ran on reviewing the report. (That report's own "two earlier forms", at
+`docs/dogfood/2026-09-20.md:49`, is about a citation elsewhere in the same comment
+and not about this bound; its sentence about the bound is at line 34.) So the rule is not "a bound must be an event". It is:
+**a bound is a fixed instant, and the report says what makes that instant the
+right one.** Fix the window that way first; the cost follows and then holds
+still.
+
+Finally, **a later reader cannot recompute the figure at all.** The transcripts
+are outside this repository and are not kept; the derivation, the per-model
+totals and the price table in the comment are the whole of what survives the
+pass. That is why the format asks for them rather than for the number alone.
+
+**A known limitation of this definition, and the one input a second reader cannot
+locate from the grammar.** Everything above is defined against *the window the
+header measures* — and **the format has no window bullet.** `Minutes` is a
+duration, not two instants, so the bounds live in an HTML comment and not in a
+field. The convention all four numeric reports follow is a line opening **"The
+window the numbers measure:"** in the comment above the bullets —
+`docs/dogfood/2026-09-17.md:14`, `…/2026-09-18.md:17`, `…/2026-09-19.md:18`,
+`…/2026-09-20.md:27` — which is greppable and is still a convention rather than a
+rule: nothing requires it and the pin does not ask for it. So a second reader
+locates the window by grepping that phrase and trusting the convention, which is
+weaker than every other input the definition names. The convention is named here rather than
+fixed here: adding a bullet changes the grammar and the pin, which is its own
+issue and not a correction.
+
+### Two pins that ask GitHub, and the one question neither answers
+
+Two checks in the same file read GitHub rather than the checkout, because the
+rules they hold are about issues. Both are **opt-in**: unset,
+`AGENTIC_DOGFOOD_LIVE_GH` leaves one note on stderr naming itself and neither
+runs, so the required `test` job — which carries no token and could not
+authenticate anyway — asks nothing. Run them with
+`AGENTIC_DOGFOOD_LIVE_GH=1 node tests/dogfood-report.test.mts` and put the output
+in the pull request that carries a report. A `gh` that cannot answer, or a number
+that cannot be read, is a **note and not a failure**, so neither pin needs the
+network to pass; a token refused the scope the query needs **is** a failure,
+because that one never fixes itself and its whole symptom would be a green run
+that checked nothing.
+
+- **origin → issue.** Every finding row whose `outcome` is a bare `#N` naming an
+  issue: that issue's `## Context` must carry an `Origin:` line equal to the
+  row's `origin` cell. This is the rule
+  [`docs/workflow.md`](../workflow.md) states — the `Origin:` line is copied
+  verbatim from the cell — and nothing checked it, which is why two hand sweeps
+  of `docs/dogfood/2026-09-17.md` both reported clean while rows disagreed. An
+  `#N` that resolves to a pull request is not compared: a pull request has no
+  `## Context`, and the README allows a merged one as an outcome.
+
+  **`## Context` and nowhere else, which is a failure mode worth knowing before
+  you see it.** The first row this pin reported was #379's, and the obvious
+  reading of the message — that the issue carried no `Origin:` line — was wrong:
+  it had one all along, and a `## Correction and widening` heading added above it
+  later had moved it into that section instead. Nothing about the line's own
+  appearance says which section it has fallen into, so **an edit that inserts a
+  heading at the same level above an `Origin:` line moves it out of scope
+  silently** — an H2 precisely, because `sectionLineRange` ends a section at
+  `/^##\s+\S/`, so an inserted `###` leaves the line inside `## Context`. The
+  remedy is to move the existing line back rather than to write a second one. A
+  report of this pin is a question about where the line sits as much as about
+  whether it exists.
+- **proof → files.** For the same issues, a **test path** named in the issue's
+  `## Proof` that lies outside that issue's own `## Files` globs **and does not
+  exist in the tree** is a failure: the pull request has nowhere to produce it,
+  so the issue has either the wrong scope or the wrong proof.
+
+Both pins **join a wrapped line before comparing**, and that is load-bearing
+rather than tidy. Prose here wraps at about seventy-two columns, so an `Origin:`
+line or a `## Proof` sentence longer than that lives on two lines, and a
+comparison that reads one line at a time reports a false clean.
+
+**Measured at this head, over the 117 finding rows in this directory whose
+`outcome` is a bare `#N` and resolves to an issue: the line-at-a-time comparison
+reports six disagreements, all six of them the wrap, and the joined comparison
+reports none.** When this rule was first written it was seven and one of the seven
+was real — `docs/dogfood/2026-09-19.md`'s row resolving to #379, whose `Origin:`
+line had been moved out of `## Context`. That line was put back before this
+paragraph landed, so the real disagreement is gone and the number moved with it;
+the count is stated as the tree answers it rather than as the run that found the
+defect answered it. #295 records three hand sweeps in the run that filed it
+reporting zero disagreements for exactly the wrap's reason. A pin that inherits
+the blindness is worse than none, because it turns a false clean into an
+automated one.
+
+**What the proof pin reads, and the four ways it is narrower than "every file
+named in `## Proof`".** Each is a narrowing, each is deliberate, and the fourth
+was not written down until a confirm pass instrumented the shipped pin and found
+it:
+
+1. **Test paths only** — `tests/<name>.test.mts`. Not every path a proof names.
+2. **Backticked spans only** — a path written bare in a sentence is not read.
+3. **Outside the issue's globs *and* absent from the tree.** Outside the globs
+   alone is not enough.
+4. **Only the issues a dogfood finding `outcome` names**, not every issue of this
+   repository. The pin runs inside the dogfood pin and reuses its one batched
+   fetch, so its population is that fetch's.
+
+**Every count below names its population *and its unit*.** Both halves are owed:
+this ladder has now been stated wrongly three times — first over an unnamed slice
+of issue numbers, then without the fourth narrowing above, then with its flagged
+counts labelled "issues" when they were counts of **paths**. The shape has held
+every time; what kept moving was what the numbers were numbers *of*. So each rung
+below reads **paths read → paths flagged → distinct issues those flagged paths
+sit in**.
+
+- **What the shipped pin reads**, over the 97 issues a finding `outcome` names and
+  that resolve to an issue — a population fixed by the reports in this directory,
+  so it is reproducible at a commit: **63 proof test paths read, 0 flagged.**
+- **The same population, widened:** "every path shape inside `## Files`" reads 131
+  paths and flags **20 across 17 issues**; `parseProofTestPaths` alone reads 63 and
+  flags **0**; absence from the tree leaves **0**.
+- **Over every issue of this repository:** `parseProofTestPaths` reads **143**
+  paths and flags **7 across 6 issues** — #278, #294, #315, #353, #398 and #453,
+  which carries two of the seven; absence from the tree leaves **0**.
+
+Two bounds on those last numbers, both of which cost a round to learn.
+
+**The whole-repository population is live and it grows.** It was 281 issues when
+this paragraph was first measured and 284 a few hours later, with the path counts
+moving 327 → 329 and 142 → 143 with it. Only the pin's own 97 is reproducible at a
+commit, because it is derived from the reports in this directory. A count over
+"every issue" is a measurement with a timestamp, not a property of the tree.
+
+**The widest rung is instrument-dependent and no such reader ships.** "Every path
+named in `## Proof`" needs a definition of what counts as a path in prose, and the
+answer moves with it: a confirm pass swept 288 such definitions and found that
+instruments reading the same number of paths report flagged counts from 97 to 110
+across 62 to 71 issues. The extractor used for that rung here — backticked spans,
+split on whitespace and punctuation, anything holding a `/` — is one of those and
+is not in the tree. Read its magnitude and not its digits: a wide rule flags a
+large fraction of what it reads, across most of the issues it reads. The two
+narrow rungs use the **shipped** `parseProofTestPaths` and are reproducible to the
+path.
+
+What the wide rule flags is a check's name written as a path
+(`ci/negative-control.mts`), a glob, and an illustrative placeholder — none of
+them a file an issue was ever going to produce. What the test-path rule flags
+across the whole repository are correct issues naming an **existing** pin as the
+instrument that will read their new file: a proof may rest on an instrument it
+does not change. That is why absence from the tree is part of the rule, and it is the shape
+that ships: it refuses only the case where the pull request has nowhere to produce
+the file it proves itself with. The judgement that is left — an issue meaning to
+add cases to a test it forgot to declare — is a reader's, below.
+
+**Neither pin answers coverage, and coverage may not be mechanically answerable
+at all.** A matching `Origin:` line proves **provenance** — this row and that
+issue describe the same finding's source — and says nothing about whether the
+issue would actually resolve the finding. #295 records two rows of
+`docs/dogfood/2026-09-17.md` that passed the same comparison while resolving to
+issues covering neither, and the reviewer of PR #307 saying the coverage question
+may not be mechanically checkable at all. Nothing in an issue body states the
+finding's own condition, so there is nothing to compare a goal against, and
+nothing since has shown otherwise.
+**So coverage is assigned, not checked:** the writer owes it in the
+sweep above, row by row, and the isolated reviewer of the pull request carrying
+the report owes it a second time, reading each `outcome` against the finding
+beside it. The same two readers own a written reason — "already covered by
+PR #905", "accepted: …" — of which the pins check only what is mechanical: every
+`#N` such a reason names must resolve, and a pull request it names as the cover
+must be merged.
 
 ## Format
 
@@ -153,19 +436,29 @@ The rules the parser applies, in order:
   repository was at when the pass ran, so a later reader can check out exactly
   what was exercised. `Turns` and `Minutes` are whole numbers and `Cost (USD)` a
   number; a pass whose runtime reports none of them is not comparable to the next
-  one, which is the only reason the report exists.
+  one, which is the only reason the report exists. A numeric `Cost (USD)` carries
+  an HTML comment at its bullet saying whether the number is `billed` or a
+  `reconstruction`, with the derivation and the per-model totals — see
+  "What `Cost (USD)` means" above, which is where that word's meaning is stated.
 - `Retroactive: #N` is the one exception, and it exists for a single case: a pass
   that ran before this format did, whose record is a prose issue that never
-  carried the numbers. A report carrying it names the issue it reproduces and may
-  write the literal `not recorded` in `Commit`, `Turns`, `Minutes`, `Cost (USD)`
-  and a case row's `exit` and `tool calls` — the alternative being a
-  reconstructed number, which is worse than an absent one in a file whose whole
-  purpose is putting two passes side by side. A report without the bullet may
-  write it nowhere, so a pass run from now on is still held to its numbers.
-  Nothing else is relaxed: an `error class`, a `keep`-or-`fix` `decision` and a
-  `reason` are owed either way, and so is a resolved `outcome` on every finding.
-  `docs/dogfood/2026-09-06.md` and `docs/dogfood/2026-09-10.md` are the two
-  reports it was written for — #96 and #129, reproduced by #184.
+  carried the numbers. **Only a report whose own heading date is before
+  2026-09-17, the day this format landed, may carry it**, so a live pass cannot
+  opt into the escape by adding a bullet. A report carrying it names the issue it
+  reproduces and may write the literal `not recorded` in `Commit`, `Turns`,
+  `Minutes`, `Cost (USD)` and a case row's `exit` and `tool calls` — the
+  alternative being a reconstructed number, which is worse than an absent one in a
+  file whose whole purpose is putting two passes side by side. A report without the
+  bullet may write it nowhere, so a pass run from now on is still held to its
+  numbers. Those six cells are the whole of the escape and `error class` is not one
+  of them: `not recorded` there is refused in **every** report, retroactive or not,
+  because a pass that ran at all produced an outcome per case and a class is a name
+  for it, not a measurement its runtime had to report. Nothing else is relaxed
+  either: a `keep`-or-`fix` `decision` and a `reason` are owed both ways, and so is
+  a resolved `outcome` on every finding. `docs/dogfood/2026-09-06.md` and
+  `docs/dogfood/2026-09-10.md` are the two reports it was written for — #96 and
+  #129, reproduced by #184 — and neither writes `not recorded` in an `error class`
+  cell.
 - `## Scoreboard` and `## Findings` each appear exactly once, in that order.
 - The `## Scoreboard` header is `| case | exit | error class | tool calls |
   decision | reason |`, followed by a delimiter row, then one row per case. `exit`

@@ -599,6 +599,49 @@ check('dogfoodTrigger returns every sensitive path, in diff order', dogfoodTrigg
 check('dogfoodTrigger returns nothing when the PR body names a docs/dogfood/<date>.md report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], 'see `docs/dogfood/2026-09-17.md`').length === 0);
 check('dogfoodTrigger returns nothing when the diff carries a docs/dogfood/<date>.md report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/2026-09-17.md'], '').length === 0);
 check('dogfoodTrigger ignores a docs/dogfood/ path that is not a dated report', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '').length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', 'docs/dogfood/README.md'], '')) : 'not exported');
+// #295: both readers of the report shape are anchored. Measured against the one
+// unanchored regex they replace, three shapes counted as reports and silenced
+// the nudge — a trailing suffix, another extension, and a directory prefix. A
+// nested path *under* `docs/dogfood/` never matched it, because the date has to
+// follow the directory immediately, and is refused here too. The prose reader is
+// bounded at both ends but allows `/` before the path, because a closeout bullet
+// may cite a report by URL — which is why a reader holding a path uses the other.
+const nested = 'docs/dogfood/nested/2026-09-20.md';
+const suffixed = 'docs/dogfood/2026-09-20.md.bak';
+const prefixed = 'templates/docs/dogfood/2026-09-20.md';
+const otherExt = 'docs/dogfood/2026-09-20.mdx';
+const noSeparator = 'xdocs/dogfood/2026-09-20.md';
+const blobUrl = 'https://github.com/o/r/blob/main/docs/dogfood/2026-09-20.md';
+const notReports = [nested, suffixed, prefixed, otherExt, noSeparator, blobUrl];
+for (const [label, path] of [['a nested path', nested], ['a trailing suffix', suffixed], ['a directory prefix', prefixed], ['another extension', otherExt], ['a prefix with no separator', noSeparator], ['a blob URL handed as a path', blobUrl]] as Array<[string, string]>) {
+  check(`${label} does not silence the dogfood nudge`, dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts', path], '').length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts', path], '')) : 'not exported');
+}
+// The prose reader over the same shapes, in one body: the `.mdx` case is the one
+// that would regress if the lookahead were loosened, and `xdocs/` is the one the
+// lookbehind owns. Both are here because item 0038 says they are.
+check('none of the four non-report shapes named in a pull-request body silences the nudge', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], `see ${nested}, ${suffixed}, ${otherExt} and ${noSeparator}`).length === 1, dogfoodTrigger ? JSON.stringify(dogfoodTrigger(['ci/scope-check.mts'], `see ${nested}, ${suffixed}, ${otherExt} and ${noSeparator}`)) : 'not exported');
+check('a report cited by URL in the body still silences the nudge', dogfoodTrigger !== undefined && dogfoodTrigger(['ci/scope-check.mts'], `see ${blobUrl}`).length === 0);
+const pathRe = scopeLib.DOGFOOD_REPORT_PATH_RE as RegExp | undefined;
+check('ci/lib/scope.mts exports DOGFOOD_REPORT_PATH_RE, anchored', pathRe instanceof RegExp && pathRe.test('docs/dogfood/2026-09-20.md') && !notReports.some((p) => pathRe.test(p)), String(pathRe));
+// A shape rule and not a calendar one, in both readers: `2026-13-45` has the shape
+// and no such day exists. Pinned so the next reader does not assume otherwise.
+check('both readers accept a date-shaped name that is not a date', pathRe instanceof RegExp && pathRe.test('docs/dogfood/2026-13-45.md') && scopeLib.DOGFOOD_REPORT_RE.test('see `docs/dogfood/2026-13-45.md`'));
+
+// #295: the two issue-body readers the dogfood pin compares with. Both join a
+// wrapped line first, which is the whole difference between a pin and an
+// automated false clean — prose here wraps at about seventy-two columns.
+const parseOriginLines = scopeLib.parseOriginLines as ((body: string) => string[]) | undefined;
+const parseProofTestPaths = scopeLib.parseProofTestPaths as ((body: string) => string[]) | undefined;
+const wrappedContext = '## Context\nOrigin: review of PR #190 (2026-09-17), non-blocking finding (two rounds; the\nmilestone-lookup gap was reported in both)\n\nProse that is not part of the origin.\n\n## Goal\nOrigin: not under Context at all.\n';
+const joined = 'review of PR #190 (2026-09-17), non-blocking finding (two rounds; the milestone-lookup gap was reported in both)';
+check('parseOriginLines reads a wrapped Origin: line as one line', parseOriginLines !== undefined && JSON.stringify(parseOriginLines(wrappedContext)) === JSON.stringify([joined]), parseOriginLines ? JSON.stringify(parseOriginLines(wrappedContext)) : 'not exported');
+check('parseOriginLines reads two Origin: lines without either swallowing the other', parseOriginLines !== undefined && JSON.stringify(parseOriginLines('## Context\nOrigin: first\nOrigin: second\n')) === JSON.stringify(['first', 'second']));
+check('parseOriginLines answers nothing for a context with no Origin: line', parseOriginLines !== undefined && parseOriginLines('## Context\nJust prose.\n').length === 0);
+const wrappedProof = '## Proof\n`npm test` with the new cases in `tests/dogfood-report.test.mts` and\n`tests/scope.test.mts`.\nNegative control: red on the base, where `ci/negative-control.mts` reports\n`vacuous`; see `skills/x/SKILL.md` and `.github/scripts/agentic/**`.\n';
+check('parseProofTestPaths finds both test paths, the wrapped one included', parseProofTestPaths !== undefined && JSON.stringify(parseProofTestPaths(wrappedProof).sort()) === JSON.stringify(['tests/dogfood-report.test.mts', 'tests/scope.test.mts']), parseProofTestPaths ? JSON.stringify(parseProofTestPaths(wrappedProof)) : 'not exported');
+check('parseProofTestPaths reads no check name, glob or placeholder as a test path', parseProofTestPaths !== undefined && !parseProofTestPaths(wrappedProof).some((p) => /negative-control|SKILL|agentic/.test(p)));
+check('parseProofTestPaths reads ## Validation when ## Proof is absent', parseProofTestPaths !== undefined && JSON.stringify(parseProofTestPaths('## Validation\n`tests/a.test.mts`\n')) === JSON.stringify(['tests/a.test.mts']));
+check('parseProofTestPaths answers nothing for a proof naming no test path', parseProofTestPaths !== undefined && parseProofTestPaths('## Proof\n`npm test`; `npm run check`.\n').length === 0);
 // Deliberately narrower than MECHANISM_GLOBS: a workflow file is a decision,
 // not a dogfood trigger (#182's and #181's acceptance criteria both list
 // `hooks/`, `ci/`, `scripts/` and `skills/**/SKILL.md` only).
