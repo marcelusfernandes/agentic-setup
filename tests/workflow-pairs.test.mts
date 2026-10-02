@@ -215,11 +215,14 @@ for (const [path, text] of [[OWN_PATH, own], [SHIPPED_PATH, shipped]] as const) 
 //      every one of them. That is a measurable cost paid on every PR to buy a
 //      sentence a reader of the test already has.
 //   2. No criterion asks for one. The clause on `agentic-checks.yml` is asked
-//      for by this issue, and the clause on `guard-main.yml` by its own
-//      (`tests/guard-main.test.mts`, AC4) — in both cases because the header
-//      *already made a false claim* about what held the copies together and had
-//      to stop. None of these four claims anything about its twin, so there is
-//      nothing to correct.
+//      for by this issue, and the clause on `guard-main.yml` by #223 — and
+//      `guard-main.yml` is the honest comparison rather than a contrast: `5c5ec67`
+//      added its clause *from silence*, to a header that said nothing about its
+//      twin (`git show 5c5ec67^:.github/workflows/guard-main.yml`), which is
+//      exactly where these four stand. So the precedent does not say these four
+//      need no clause; it says a clause is what you add when a criterion asks.
+//      None does here, and reasons 1 and 3 are why it is not worth adding
+//      unasked.
 //   3. `tests/doctrine.test.mts` is the repository's own precedent: it pins
 //      `.github/ISSUE_TEMPLATE/task.md` byte-equal with no clause in the file.
 //      Four new pins in a fifth shape would be the novelty.

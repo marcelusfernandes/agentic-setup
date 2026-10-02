@@ -47,27 +47,10 @@ drifted:** three into `ci/negative-control.mts`, one into `ci/issue-lint.mts`, o
 `.github/workflows/agentic-checks.yml` — the pair this issue is about — and three into
 `tests/guard-main.test.mts`, the test this issue's pin was written from.
 
-That shape is deliberate, and it is this item's own lesson rather than a style preference.
-This paragraph has been written four times, and the history is worth the four lines because
-it is the subject of the item.
-
-- The first version claimed **every** citation had drifted. False, and it printed no table
-  against which anyone could see that.
-- The second added the table and described the held side correctly — *the citations into the
-  two files this issue is about, plus the test it points at as a model* — which is this
-  pair's five and `tests/guard-main.test.mts`'s three. It was rewritten anyway, on a
-  misreading of "the two files this issue is about" as the two cards rather than the two
-  copies of the workflow. **A correct sentence was replaced because nobody checked it**,
-  which is the same failure as a citation nobody re-measured, one level up.
-- The third partitioned the drifted side as "the `ci/` scripts and the two cards". That is
-  3 + 1 + 1 + 1 = **six**, against a table of fifteen with eight held: it lost
-  `tests/doctrine.test.mts`, which is neither a `ci/` script nor a card, from a sentence
-  standing directly beneath the line that counts it.
-
-A category claim over a table can shed a row in silence, because nothing in the sentence has
-to add up. An enumeration whose counts sum cannot. That is the same reason the table above
-carries a `count` column, applied one paragraph further down — and the reason the counts are
-spelled out again in words here rather than left to the reader.
+The shape is deliberate. This summary was rewritten repeatedly, each time by describing the
+table instead of enumerating it, which is why it now enumerates and why the table carries a
+`count` column. A category claim over a table can shed a row in silence, because nothing in
+the sentence has to add up; an enumeration whose counts sum cannot.
 
 Three of the four file *lengths* the issue recorded had also moved —
 `skills/orchestrate/SKILL.md` 670 → 684, `docs/orchestration.md` 552 → 588,
