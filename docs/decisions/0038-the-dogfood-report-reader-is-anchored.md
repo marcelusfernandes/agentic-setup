@@ -181,8 +181,9 @@ change is the cheaper half of stating what did.
   built from the rule is the subset argument above, and the table's rows are pinned as
   follows — stated row by row because an earlier draft of this bullet claimed all seven
   were pinned and three were not, which is the same defect in the same sentence it
-  warns about. In `tests/scope.test.mts`: all six path rows, through `dogfoodTrigger` and
-  through `DOGFOOD_REPORT_PATH_RE` directly, and all four non-report shapes named in a
+  warns about. In `tests/scope.test.mts`: all **five** path rows, through `dogfoodTrigger`
+  and through `DOGFOOD_REPORT_PATH_RE` directly — six path *cases* there, because `nested`
+  is pinned beside them and is not a row of this table — and all four non-report shapes named in a
   pull-request body in one case, which is what pins the prose `.mdx` row — the row that
   would regress if the lookahead were loosened. In `tests/dogfood-report.test.mts`: the
   nested and suffixed shapes as paths and in prose. What is **not** pinned anywhere is the
@@ -191,11 +192,15 @@ change is the cheaper half of stating what did.
   would be a list that can never be finished.
 - **The rule is a *shape* rule and not a calendar one, in both readers.**
   `docs/dogfood/2026-13-45.md` is accepted by the old pattern and by both new ones: there
-  is no thirteenth month and no forty-fifth day, and nothing here checks. A reader will
-  assume otherwise, so it is written down and pinned in `tests/scope.test.mts`. The
-  calendar is checked where it matters instead — `tests/dogfood-report.test.mts` holds a
-  report's heading date equal to its filename, and a filename that is not a date would
-  have no heading to match.
+  is no thirteenth month and no forty-fifth day, and **nothing anywhere in this tree
+  checks.** A reader will assume otherwise, so the absence is written down and pinned in
+  `tests/scope.test.mts`. An earlier form of this bullet went on to claim the calendar was
+  checked elsewhere, by the pin that holds a report's heading date equal to its filename;
+  that was disproved by running it — `docs/dogfood/2026-09-20.md` copied to
+  `docs/dogfood/2026-13-45.md` with its heading matched takes
+  `node tests/dogfood-report.test.mts` from 73 passed to 76 passed, 0 failed, every new
+  check green — and it contradicted this bullet's own previous sentence. The absence is
+  the observation; there is no instrument to name.
 - **`.mdx` is refused by shape and not by intent.** Nothing in this repository writes
   `.mdx`, and the extension is excluded because the path reader ends at `.md` and the
   prose reader's lookahead excludes a following word character. If a report format ever

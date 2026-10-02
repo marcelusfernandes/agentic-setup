@@ -233,10 +233,12 @@ event: the merge of a pull request, `3ce7f475`, the previous phase's last
 landing. Its **close** is *not* an event — it is the measured instant every other
 number in that header was taken against, with the pass's last dispatch, 16.44
 seconds earlier, named beside it as what makes the instant non-arbitrary. The
-report says so in those words, after two earlier forms of the sentence claimed
-otherwise: one called it the dispatch, and one called it the last event the
-session had recorded, which stopped being true minutes later when the session ran
-on reviewing the report. So the rule is not "a bound must be an event". It is:
+report says so in those words, after **one** earlier form of the sentence that was
+wrong twice over: it called the bound the dispatch, and it called it the last event
+the session had recorded, which stopped being true minutes later when the session
+ran on reviewing the report. (That report's own "two earlier forms", at
+`docs/dogfood/2026-09-20.md:49`, is about a citation elsewhere in the same comment
+and not about this bound; its sentence about the bound is at line 34.) So the rule is not "a bound must be an event". It is:
 **a bound is a fixed instant, and the report says what makes that instant the
 right one.** Fix the window that way first; the cost follows and then holds
 still.
@@ -331,25 +333,49 @@ it:
    repository. The pin runs inside the dogfood pin and reuses its one batched
    fetch, so its population is that fetch's.
 
-**Every count below is re-derived at this head and names the population it ran
-over**, because "over N issues" says nothing unless a reader knows which N. An
-earlier form of this paragraph gave counts over an unnamed slice of issue numbers
-and they do not reproduce over any population; these do.
+**Every count below names its population *and its unit*.** Both halves are owed:
+this ladder has now been stated wrongly three times — first over an unnamed slice
+of issue numbers, then without the fourth narrowing above, then with its flagged
+counts labelled "issues" when they were counts of **paths**. The shape has held
+every time; what kept moving was what the numbers were numbers *of*. So each rung
+below reads **paths read → paths flagged → distinct issues those flagged paths
+sit in**.
 
-- **What the shipped pin actually reads:** 97 issues — those a finding `outcome`
-  names that resolve to an issue — **63** proof test paths, **0** flagged.
-- **The ladder, over every issue of this repository (281):** "every path shape
-  inside `## Files`" reads 327 paths and reports **96** issues; test paths only
-  reads 142 and reports **7**; test paths absent from the tree reports **0**.
-- **The same ladder over the 97 the pin reads:** 131 paths and **20** issues,
-  then 63 paths and **0**, then **0**.
+- **What the shipped pin reads**, over the 97 issues a finding `outcome` names and
+  that resolve to an issue — a population fixed by the reports in this directory,
+  so it is reproducible at a commit: **63 proof test paths read, 0 flagged.**
+- **The same population, widened:** "every path shape inside `## Files`" reads 131
+  paths and flags **20 across 17 issues**; `parseProofTestPaths` alone reads 63 and
+  flags **0**; absence from the tree leaves **0**.
+- **Over every issue of this repository:** `parseProofTestPaths` reads **143**
+  paths and flags **7 across 6 issues** — #278, #294, #315, #353, #398 and #453,
+  which carries two of the seven; absence from the tree leaves **0**.
 
-What the wide rule reports is a check's name written as a path
+Two bounds on those last numbers, both of which cost a round to learn.
+
+**The whole-repository population is live and it grows.** It was 281 issues when
+this paragraph was first measured and 284 a few hours later, with the path counts
+moving 327 → 329 and 142 → 143 with it. Only the pin's own 97 is reproducible at a
+commit, because it is derived from the reports in this directory. A count over
+"every issue" is a measurement with a timestamp, not a property of the tree.
+
+**The widest rung is instrument-dependent and no such reader ships.** "Every path
+named in `## Proof`" needs a definition of what counts as a path in prose, and the
+answer moves with it: a confirm pass swept 288 such definitions and found that
+instruments reading the same number of paths report flagged counts from 97 to 110
+across 62 to 71 issues. The extractor used for that rung here — backticked spans,
+split on whitespace and punctuation, anything holding a `/` — is one of those and
+is not in the tree. Read its magnitude and not its digits: a wide rule flags a
+large fraction of what it reads, across most of the issues it reads. The two
+narrow rungs use the **shipped** `parseProofTestPaths` and are reproducible to the
+path.
+
+What the wide rule flags is a check's name written as a path
 (`ci/negative-control.mts`), a glob, and an illustrative placeholder — none of
-them a file an issue was ever going to produce. What the test-path rule reports
-over the full 281 are correct issues naming an **existing** pin as the instrument
-that will read their new file: a proof may rest on an instrument it does not
-change. That is why absence from the tree is part of the rule, and it is the shape
+them a file an issue was ever going to produce. What the test-path rule flags
+across the whole repository are correct issues naming an **existing** pin as the
+instrument that will read their new file: a proof may rest on an instrument it
+does not change. That is why absence from the tree is part of the rule, and it is the shape
 that ships: it refuses only the case where the pull request has nowhere to produce
 the file it proves itself with. The judgement that is left — an issue meaning to
 add cases to a test it forgot to declare — is a reader's, below.
