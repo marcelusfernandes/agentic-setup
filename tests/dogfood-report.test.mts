@@ -33,16 +33,15 @@
 // issue proves itself with a test file it neither owns nor has. Provenance, not
 // coverage: the README names the readers who own that.
 //
-// Crash policy: opt-in, and fail open on what passes by itself. Unset,
-// `LIVE_GH_ENV` leaves one note naming itself and neither question is asked, so
-// the required `test` job spends nothing of a shared quota (the false red #356
-// removed) and needs no token it does not have. A `gh` that is absent,
-// unauthenticated or unable to answer is a note. A token refused the scope the
-// query needs is a **failure**: it never fixes itself and its whole symptom
-// would be a green run that checked nothing — `tests/provenance-issues.test.mts`
-// settled that shape. Wiring this to a scheduled workflow the way
-// `provenance-live.yml` wires that file needs `.github/workflows/**`, which #295
-// does not declare, so it is not done here.
+// Crash policy, the shape `tests/provenance-issues.test.mts` settled: opt-in, and
+// fail open on what passes by itself. Unset, `LIVE_GH_ENV` leaves one note naming
+// itself and neither question is asked, so the required `test` job spends nothing
+// of a shared quota (the false red #356 removed) and needs no token it does not
+// have. A `gh` that is absent, unauthenticated or unable to answer is a note; a
+// token refused the scope the query needs is a **failure**, because that one never
+// fixes itself and its whole symptom would be a green run that checked nothing.
+// Wiring this to a schedule as `provenance-live.yml` does needs
+// `.github/workflows/**`, which #295 does not declare, so it is not done here.
 //
 // `parseOriginLines`, `parseProofTestPaths`, `parseIssueGlobs` and `matchesAny`
 // are imported rather than restated, and invariant 10 is not weakened by it:
@@ -691,10 +690,9 @@ const gh = (args: string[]) => {
 };
 
 /**
- * Every number resolved in `ceil(n / GRAPHQL_BATCH)` calls. The exit status is
- * not read: a number resolving to nothing makes `gh` exit 1 while still printing
- * every other alias's answer, so the body is what is read, and a number absent
- * from the answers is reported by its caller.
+ * Every number resolved in `ceil(n / GRAPHQL_BATCH)` calls. The exit status is not
+ * read: a number resolving to nothing makes `gh` exit 1 while still printing every
+ * other alias's answer, so the body is read and an absent number is the caller's.
  */
 function lookup(numbers: number[]): Lookup {
   const answers = new Map<number, Node>();
