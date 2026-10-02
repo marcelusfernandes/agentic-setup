@@ -26,11 +26,10 @@
 // being a fact about the repository where "nobody looked" is one about the run;
 // and `labelNeighbours`, each label the dictionary wants that is absent while a
 // near neighbour is already there (a bare `human` where it wants
-// `human:pending`), with `labelNeighbourRule` stating what the rule does not
-// reach. Reporting is the whole of the second: choosing between an adopter's
-// vocabulary and the loop's is the adopter's decision. `scripts/doctor.mts`
-// asks both under the same flag and answers the same way, and its header
-// carries the reasoning for the flag; `docs/adopt.md` has the rest.
+// `human:pending`), with `labelNeighbourRule` stating what the three rules do
+// not reach. Reporting is the whole of the second: that choice is the adopter's.
+// `scripts/doctor.mts` asks both under the same flag and answers the same way,
+// and its header carries the reasoning; `docs/adopt.md` has the rest.
 //
 // `--plan-issue` is the first mutation, and it is a question rather than a
 // change: it opens a single `human:pending` issue whose body renders the
@@ -175,15 +174,15 @@ const PROOF_RUNNER = resolve(dirname(fileURLToPath(import.meta.url)), 'proof.mts
 const BRANCH_SHAPE = /^[a-z]+\/\d+-([a-z0-9-]+)$/;
 
 /** A label the dictionary wants, beside one this repository already carries. */
-type Neighbour = { wanted: string; present: string; rule: 'case' | 'namespace' };
+type Neighbour = { wanted: string; present: string; rule: 'case' | 'namespace' | 'tail' };
 
 /**
- * What the two neighbour rules compare, printed whether they matched or not: a
+ * What the three neighbour rules compare, printed whether they matched or not: a
  * detector implying a completeness it has not got is worse than a narrow one
- * that states its bound. `scripts/doctor.mts` applies the same two.
+ * that states its bound. `scripts/doctor.mts` applies the same three.
  */
 const NEIGHBOUR_RULE =
-  'a present label that differs from the wanted one only in case, or that is exactly its namespace (`human` for `human:pending`); nothing else — a synonym inside one namespace, `type:fix` where the dictionary wants `type:bug`, is not reported, because telling a synonym from an unrelated sibling needs a thesaurus rather than a rule';
+  'a present label that differs from the wanted one only in case, or that is exactly its namespace (`human` for `human:pending`), or that is exactly its last segment (`bug` for `type:bug`); nothing else — what is left out is a different word for the same thing, `type:fix` where the dictionary wants `type:bug` or `documentation` where it wants `type:docs`, which needs a thesaurus rather than a rule';
 
 /** The title the plan issue is deduplicated by; one per repository. */
 const PLAN_ISSUE_TITLE = 'Adoption plan: what this repository is missing';
@@ -299,26 +298,28 @@ const report: Report = {
   ...inventory,
   gaps: stale.length > 0 ? [...inventory.gaps, 'record:stale'] : inventory.gaps,
   record,
-  // `NEIGHBOUR_RULE`'s two rules over the labels the dictionary wanted and did
-  // not find: a case variant, or a namespace one of them already occupies.
-  labelNeighbours: SEEDED_LABELS.filter((name) => !inventory.labels.includes(name)).flatMap((wanted) =>
-    inventory.labels.flatMap((present): Neighbour[] => {
-      const same = present.toLowerCase() === wanted.toLowerCase();
-      const space = present.toLowerCase() === (wanted.split(':')[0] ?? '').toLowerCase();
-      const rule = same && present !== wanted ? 'case' : space && !same ? 'namespace' : null;
+  // `NEIGHBOUR_RULE`'s three rules over the labels the dictionary wanted and did
+  // not find, in that precedence: the whole name, its namespace, its last segment.
+  labelNeighbours: SEEDED_LABELS.filter((name) => !inventory.labels.includes(name)).flatMap((wanted) => {
+    const lower = wanted.toLowerCase();
+    const forms = [lower, lower.split(':')[0] ?? lower, lower.slice(lower.lastIndexOf(':') + 1)];
+    const rules = ['case', 'namespace', 'tail'] as const;
+    return inventory.labels.flatMap((present): Neighbour[] => {
+      const at = forms.indexOf(present.toLowerCase());
+      const rule = at < 0 || (at === 0 && present === wanted) ? null : (rules[at] ?? null);
       return rule === null ? [] : [{ wanted, present, rule }];
-    }),
-  ),
+    });
+  }),
   labelNeighbourRule: NEIGHBOUR_RULE,
 };
 
 /**
  * Whether the command this repository would prove itself with passes here:
  * `scripts/proof.mts`'s own report, spawned rather than reimplemented, so the
- * verdict is the one an adopter gets by hand and the bounds on the run (the
- * timeout, the output buffer, `CI=1`) stay in the one file that owns them. The
- * slug comes off HEAD as `scripts/doctor.mts` derives it, so the two resolve
- * the same command; `tail` is dropped, being that runner's report, not this one's.
+ * verdict is the one an adopter gets by hand and the bounds on the run stay in
+ * the file that owns them. The slug comes off HEAD as `scripts/doctor.mts`
+ * derives it, so the two resolve one command; `tail` is dropped, being that
+ * runner's report and not this one's.
  */
 function runTheProof(): Record<string, unknown> {
   const head = gitIn(root)(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
@@ -328,10 +329,16 @@ function runTheProof(): Record<string, unknown> {
   try {
     printed = JSON.parse((r.stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? '') as Record<string, unknown>;
   } catch {
-    return { slug, run: true, outcome: 'unreadable' };
+    printed = {};
   }
+  // A runner that printed no outcome is a read that failed, and this file's
+  // crash policy answers it: `{ error }`, exit 1. It is never the gap
+  // `proof:red`, which says this repository's suite is red — a crashed runner is
+  // no fact about the repository — and `scripts/doctor.mts` reports the same case
+  // as `read-failed:proof`, so the two cannot disagree about it.
+  if (typeof printed.outcome !== 'string') fail('read-failed:proof', (r.stderr ?? '').trim().split('\n')[0] || undefined);
   const { tail: _tail, ...rest } = printed;
-  return { ...rest, run: true, outcome: typeof rest.outcome === 'string' ? rest.outcome : 'unreadable' };
+  return { ...rest, run: true };
 }
 
 if (wantInventory) {

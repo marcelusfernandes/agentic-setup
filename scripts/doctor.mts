@@ -105,15 +105,18 @@
 // it is present is a different fact from one that is simply absent: seeding
 // `human:pending` into a repository that already uses `human` leaves two
 // vocabularies for "a person must look", and nothing reported it, because from
-// the dictionary's side nothing collided. Two rules, both mechanical — a
-// present label differing from the wanted one only in case, and a present
-// label that is exactly the wanted one's namespace, the text before its first
-// `:`. Nothing else, and the bound is printed beside the finding rather than
-// left for a reader to assume: a synonym inside the same namespace (`type:fix`
-// where the dictionary wants `type:bug`) is **not** reported, because telling
-// a synonym from an unrelated sibling needs a thesaurus and not a rule. The
-// bare `human` is not a hypothetical neighbour: `scripts/claim.mts` and
-// `scripts/reconcile.mts` already read it as a pending-human gate.
+// the dictionary's side nothing collided. Three rules, all mechanical — a
+// present label differing from the wanted one only in case, one that is
+// exactly the wanted name's namespace (the text before its first `:`), and one
+// that is exactly its last segment (the text after its last `:`, which is how
+// a bare `bug` is found beside `type:bug`). Nothing else, and `NEIGHBOUR_BOUND`
+// is printed on every absence — with a neighbour or without one — because a
+// reader told nothing cannot tell "the rules found none" from "no rule looked".
+// What the rules do not reach is a different word for the same thing
+// (`type:fix` for `type:bug`, `documentation` for `type:docs`), which needs a
+// thesaurus rather than a rule. The bare `human` is not a hypothetical
+// neighbour: `scripts/claim.mts` and `scripts/reconcile.mts` already read it as
+// a pending-human gate.
 //
 // **Crash policy: fail closed.** Exit 0 only on `ok: true`; `ok: false` and
 // every usage problem exit 1. Nothing is ever reported as passing because a
@@ -159,13 +162,19 @@ const USAGE = 'usage: node scripts/doctor.mts [--slug <slug>] [--run-proof]';
 const PROOF_RUNNER = resolve(dirname(fileURLToPath(import.meta.url)), 'proof.mts');
 
 /**
- * What the two neighbour rules do not catch, printed beside what they do.
- * A detector that implies a completeness it does not have is worse here than a
- * narrow one that states its bound: an adopter reading "nothing collides" has
- * to know that only a case variant and a namespace were ever compared.
+ * What the three neighbour rules compare, printed beside every finding — with a
+ * neighbour or without one. A detector that implies a completeness it does not
+ * have is worse here than a narrow one that states its bound, and an adopter
+ * reading "nothing collides" has to know what was compared to say so.
+ *
+ * The third rule is the mirror of the second and was added after a real
+ * repository was read in full: it carried a bare `bug` beside the wanted
+ * `type:bug`, which the namespace rule cannot reach and a suffix match reaches
+ * for the same cost. What is left over is a *different word* for the same
+ * thing, which no rule over spelling can reach at all.
  */
 const NEIGHBOUR_BOUND =
-  'the rule compares a case variant and a namespace (`human` for `human:pending`) and nothing else — a synonym inside the same namespace, `type:fix` where the dictionary wants `type:bug`, is not reported, because telling a synonym from an unrelated sibling needs a thesaurus rather than a rule';
+  'three rules and no more — a case variant, the wanted name\'s namespace (`human` for `human:pending`), and its last segment (`bug` for `type:bug`). What they do not reach is a different word for the same thing: `type:fix` where the dictionary wants `type:bug`, or `documentation` where it wants `type:docs`, which needs a thesaurus rather than a rule';
 
 /** The env var a second identity lives in, as `agents/reviewer.md` casts its review with. */
 const REVIEWER_TOKEN = 'AGENTIC_REVIEWER_TOKEN';
@@ -197,26 +206,28 @@ type Check = {
 type Mode = 'agent' | 'approved';
 
 /** A label the dictionary wants, beside one this repository already carries. */
-type Neighbour = { wanted: string; present: string; rule: 'case' | 'namespace' };
+type Neighbour = { wanted: string; present: string; rule: 'case' | 'namespace' | 'tail' };
 
 /**
  * The near neighbours of the labels that are absent: for each one, every label
- * the repository has that the two rules match. `scripts/adopt.mts` carries the
- * same pair of rules for its own report — the two scripts are the two readers
- * of one dictionary, and neither may import the other.
+ * the repository has that one of the three rules of `NEIGHBOUR_BOUND` matches —
+ * the same name in another case, the namespace before its first `:`, or the
+ * segment after its last one. `scripts/adopt.mts` carries the same three rules
+ * for its own report: the two scripts are the two readers of one dictionary,
+ * and neither may import the other.
  */
 function neighboursOf(wanted: readonly string[], present: readonly string[]): Neighbour[] {
-  const pairs: Neighbour[] = [];
-  for (const name of wanted) {
-    const colon = name.indexOf(':');
-    const namespace = colon > 0 ? name.slice(0, colon).toLowerCase() : null;
-    for (const have of present) {
-      const lower = have.toLowerCase();
-      if (lower === name.toLowerCase() && have !== name) pairs.push({ wanted: name, present: have, rule: 'case' });
-      else if (namespace !== null && lower === namespace) pairs.push({ wanted: name, present: have, rule: 'namespace' });
-    }
-  }
-  return pairs;
+  return wanted.flatMap((name) => {
+    const lower = name.toLowerCase();
+    const namespace = lower.split(':')[0] ?? lower;
+    const tail = lower.slice(lower.lastIndexOf(':') + 1);
+    return present.flatMap((have): Neighbour[] => {
+      const seen = have.toLowerCase();
+      if (seen === lower) return have === name ? [] : [{ wanted: name, present: have, rule: 'case' }];
+      if (seen === namespace) return [{ wanted: name, present: have, rule: 'namespace' }];
+      return seen === tail ? [{ wanted: name, present: have, rule: 'tail' }] : [];
+    });
+  });
 }
 
 // --- 0. this plugin's own files, before anything else ------------------------
@@ -275,7 +286,13 @@ for (let i = 0; i < argv.length; i += 1) {
   }
   if (arg !== '--slug') fail(USAGE);
   const value = argv[i + 1];
-  if (value === undefined || !SLUG_PATTERN.test(value)) fail(`${USAGE} — \`--slug\` takes a branch slug (${String(SLUG_PATTERN)})`);
+  // A value beginning with `-` is a forgotten slug and never a slug:
+  // `SLUG_PATTERN` accepts `--run-proof`, so `--slug --run-proof` would read the
+  // flag as the slug, print `slug=--run-proof` as though it were a branch's, and
+  // leave the run off — silently defeating the flag this file exists to add.
+  if (value === undefined || value.startsWith('-') || !SLUG_PATTERN.test(value)) {
+    fail(`${USAGE} — \`--slug\` takes a branch slug (${String(SLUG_PATTERN)}) and never a flag`);
+  }
   slugArg = value;
   i += 1;
 }
@@ -425,11 +442,17 @@ function labelCheck(): Check {
   // repositories with two different decisions to make, and the second one is
   // not the installer's to make (#460): report it, name the rule that found
   // it, and name what the rule does not reach.
+  // The bound is printed on every absence, with a neighbour or without one: a
+  // reader told nothing cannot tell "the rules found no neighbour" from "no
+  // rule looked", which is the completeness this check must not imply.
   const near = neighboursOf(absent, facts.labels);
   const already = near
     .map((pair) => `\`${pair.present}\` where the dictionary wants \`${pair.wanted}\` (${pair.rule})`)
     .join(', ');
-  const note = near.length === 0 ? '' : `; this repository already has ${already} — ${NEIGHBOUR_BOUND}`;
+  const note =
+    near.length === 0
+      ? `; no near neighbour of any of them is here, by ${NEIGHBOUR_BOUND}`
+      : `; this repository already has ${already} — by ${NEIGHBOUR_BOUND}`;
   return broken('labels', 'labels:missing', `${absent.join(', ')} ${absent.length === 1 ? 'is' : 'are'} not in this repository${page}${note}`, expected);
 }
 

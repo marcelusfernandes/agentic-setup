@@ -94,12 +94,13 @@ const ALL_LABELS_JSON = JSON.stringify(SEEDED_LABELS.map((name) => ({ name })));
 /**
  * A repository carrying a vocabulary of its own, as measured on a real
  * third-party repository: a bare `human` where the dictionary wants
- * `human:pending` and `human:decided`, and a `type:fix` where it wants
- * `type:bug`. The first pair is a near neighbour by the rule below; the second
- * is a synonym no rule catches, and the report has to say so rather than imply
- * it looked.
+ * `human:pending` and `human:decided`, a bare `bug` where it wants `type:bug`,
+ * and a `type:fix` where it wants `type:bug` as well. The first is a neighbour
+ * by the namespace rule and the second by the last-segment rule; `type:fix` is
+ * a different word for the same thing, which no rule over spelling reaches, and
+ * the report has to say so rather than imply it looked.
  */
-const COLLIDING_LABELS_JSON = JSON.stringify([{ name: 'type:fix' }, { name: 'human' }]);
+const COLLIDING_LABELS_JSON = JSON.stringify([{ name: 'type:fix' }, { name: 'bug' }, { name: 'human' }]);
 
 /** The field a default run names: a command was resolved and nobody ran it. */
 const NOT_RUN = 'proof:not-run';
@@ -610,7 +611,17 @@ checkShape('a repository carrying a vocabulary of its own', ag);
 check('AC6 a repository with its own scheme still names labels:missing', (ag.out?.missing ?? []).includes('labels:missing'), ag.stdout);
 check('AC6 the labels check names the absent label and the neighbour the repository already carries', foundOf(ag, 'labels').includes('human:pending') && /\bhuman\b/.test(foundOf(ag, 'labels')), foundOf(ag, 'labels'));
 check('AC6 the neighbour is reported as something this repository already has', /already/i.test(foundOf(ag, 'labels')), foundOf(ag, 'labels'));
-check('AC6 the labels check states the bound: a same-namespace synonym is not caught', foundOf(ag, 'labels').includes('type:fix') && foundOf(ag, 'labels').includes('type:bug'), foundOf(ag, 'labels'));
+check('AC6 the labels check states the bound: a different word for the same thing is not caught', foundOf(ag, 'labels').includes('type:fix') && foundOf(ag, 'labels').includes('type:bug'), foundOf(ag, 'labels'));
+// The rule that was missing until the whole label set of that repository was
+// read rather than the part the first report printed: a bare `bug` is the last
+// segment of `type:bug`, which the namespace rule cannot reach and a
+// last-segment match reaches for the same cost. Without it an adopted
+// repository would end with three labels meaning "defect" and a read-back
+// naming none of them.
+check('AC6 a bare `bug` beside the wanted `type:bug` is reported, by the last-segment rule', foundOf(ag, 'labels').includes('`bug` where the dictionary wants `type:bug` (tail)'), foundOf(ag, 'labels'));
+// The bound is a property of the check and not of the finding: a reader told
+// nothing cannot tell "the rules found no neighbour" from "no rule looked".
+check('AC6 the bound is stated on an absence with no neighbour at all', /three rules and no more/.test(foundOf(k, 'labels')) && /no near neighbour/.test(foundOf(k, 'labels')), foundOf(k, 'labels'));
 check('AC6 a repository holding the whole dictionary reports no neighbour at all', !/already/i.test(foundOf(a, 'labels')), foundOf(a, 'labels'));
 check('AC6 a repository with no labels at all reports no neighbour either', !/already/i.test(foundOf(k, 'labels')), foundOf(k, 'labels'));
 
@@ -650,12 +661,21 @@ check('AC3 doctor and adopt give the same answer about a green base', ae.out?.ok
 const ak = adopt(['--inventory'], complete(), { FAKE_GH_LABELS: 'colliding' });
 check('AC6 adopt --inventory carries the near neighbours as data', Array.isArray(ak.out?.labelNeighbours) && ak.out.labelNeighbours.some((n: any) => n?.wanted === 'human:pending' && n?.present === 'human'), ak.stdout);
 check('AC6 each near neighbour names the rule that matched it', (ak.out?.labelNeighbours ?? []).every((n: any) => typeof n?.rule === 'string' && n.rule.length > 0), JSON.stringify(ak.out?.labelNeighbours));
+check('AC6 adopt carries the last-segment rule too, under the same name', (ak.out?.labelNeighbours ?? []).some((n: any) => n?.wanted === 'type:bug' && n?.present === 'bug' && n?.rule === 'tail'), JSON.stringify(ak.out?.labelNeighbours));
 check('AC6 the synonym the rule does not reach is not reported as a neighbour', !(ak.out?.labelNeighbours ?? []).some((n: any) => n?.present === 'type:fix'), JSON.stringify(ak.out?.labelNeighbours));
+check('AC6 adopt states the bound in the report whether anything matched or not', typeof ak.out?.labelNeighbourRule === 'string' && ak.out.labelNeighbourRule.includes('type:fix') && (adopt(['--inventory'], complete()).out?.labelNeighbourRule ?? '').includes('type:fix'), String(ak.out?.labelNeighbourRule));
 check('AC6 a repository holding the whole dictionary reports no neighbour in the JSON either', (adopt(['--inventory'], complete()).out?.labelNeighbours ?? []).length === 0, 'labelNeighbours');
 
 // `--run-proof` is a modifier of `--inventory`, as `--force` is of `--record`:
 // on any other flag it is a usage error, so no other path of `adopt` can start
 // running an unknown repository's test command.
+// `SLUG_PATTERN` accepts `--run-proof`, so a forgotten slug value used to be
+// read as the slug: the report printed `slug=--run-proof` as though it were a
+// branch's and left the run off, which defeats the flag silently.
+const an = doctor(['--slug', '--run-proof'], complete());
+check('a --slug whose value is a flag is a usage error rather than a slug', typeof an.out?.error === 'string' && an.out.error.includes('usage'), an.stdout);
+check('a --slug whose value is a flag exits 1 and reads nothing', an.status === 1 && invocations(an.log).length === 0, `${an.status} ${an.log}`);
+
 const al = adopt(['--record', '--run-proof'], complete());
 check('AC3 --run-proof on another flag is a usage error', typeof al.out?.error === 'string' && al.out.error.includes('usage'), al.stdout);
 check('AC3 --run-proof on another flag writes nothing and exits 1', al.status === 1, `${al.stdout}\n${al.stderr}`);

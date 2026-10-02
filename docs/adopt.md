@@ -29,20 +29,16 @@ checks this loop requires.** `ci/negative-control.mts` runs that suite twice —
 pull request's base, then with the head's test files overlaid — and the first run has to
 pass for the second to mean anything. On a base that is already red it returns
 `inconclusive` and exits 1, and `negative-control` is one of the three required checks, so
-**every pull request in that repository is blocked until the suite is green**, and the
-block is not a defect in any one pull request. Measured in September 2026 on a real
-third-party repository: 219 tests, 203 passing, 16 failing, every pull request refused. So
-it is a precondition of adoption, not a discovery afterwards, and both read-backs answer it:
-
-```bash
-node scripts/adopt.mts --inventory --run-proof   # `gaps` names proof:red when it does not pass
-node scripts/doctor.mts --run-proof              # `ok: false`, `missing: ["proof:red"]`
-```
-
-Neither runs the suite without that flag, and neither calls a command nobody ran passing:
-`doctor` without it is `ok: false` with `proof:not-run`, `--inventory` without it is
-`proof: { "run": false, "outcome": "unrun" }` and no gap either way. Why it is a flag and
-not the default is in `scripts/doctor.mts`'s header, beside its crash policy.
+**every pull request there is blocked until the suite is green**, and the block is not a
+defect in any one pull request. Measured in September 2026 on a real third-party repository:
+219 tests, 203 passing, 16 failing, every pull request refused. So it is a precondition of
+adoption, not a discovery afterwards, and both read-backs answer it under one flag:
+`adopt --inventory --run-proof` names `proof:red` in `gaps`, and `doctor --run-proof` reports
+`ok: false` with `missing: ["proof:red"]`. Neither runs the suite without that flag, and
+neither calls a command nobody ran passing: `doctor` without it is `ok: false` with
+`proof:not-run`, `--inventory` without it is `proof: { "run": false, "outcome": "unrun" }`
+and no gap either way. Why it is a flag rather than the default is in
+`scripts/doctor.mts`'s header, beside its crash policy.
 
 ## `--inventory` writes nothing
 
@@ -88,7 +84,7 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   "gaps": [],
   "record": null,
   "labelNeighbours": [{ "wanted": "human:pending", "present": "human", "rule": "namespace" }],
-  "proof": { "slug": "main", "run": false, "outcome": "unrun" }
+  "proof": { "run": false, "outcome": "unrun" }
 }
 ```
 
@@ -124,15 +120,16 @@ looking, and `stack`, `test`, `check` and `source` from `ci/lib/detect.mts` unch
   (`record:…` below); it is never read as "no record".
 - `labelNeighbours` — one entry per label the dictionary wants that is **absent while a
   near neighbour is already here**, with the `rule` that matched: `case` (the same name in
-  another case) or `namespace` (a label that *is* the wanted name's namespace — a bare
-  `human` where the dictionary wants `human:pending`). Empty when none has one, and nothing
-  here resolves a collision: which vocabulary a repository keeps is the adopter's decision,
-  and the table below says what reads each label so that it can be made.
-- `labelNeighbourRule` — what those two rules compare, printed whether they matched or not,
-  because they are the whole rule: a synonym inside one namespace — `type:fix` where the
-  dictionary wants `type:bug` — is **not** reported, telling a synonym from an unrelated
-  sibling needing a thesaurus rather than a rule, and a detector implying a completeness it
-  has not got being worse here than a narrow one that states its bound.
+  another case), `namespace` (a label that *is* the wanted name's namespace — a bare `human`
+  where the dictionary wants `human:pending`) or `tail` (a label that is its last segment —
+  a bare `bug` where it wants `type:bug`). Empty when none has one, and nothing here
+  resolves a collision: which vocabulary a repository keeps is the adopter's decision, and
+  the table below says what reads each label so that it can be made.
+- `labelNeighbourRule` — what those three rules compare, printed whether they matched or
+  not, because they are the whole rule. What they leave out is a *different word* for the
+  same thing — `type:fix` where the dictionary wants `type:bug`, `documentation` where it
+  wants `type:docs` — which needs a thesaurus rather than a rule. A detector implying a
+  completeness it has not got is worse than a narrow one that states its bound.
 - `proof` — `scripts/proof.mts`'s own report of the resolved test command (`slug`, `source`,
   `command`, `outcome`, `reason` when there is one) plus `run`; without `--run-proof`,
   `{ "run": false, "outcome": "unrun" }`, and nothing was executed.
@@ -648,13 +645,13 @@ and exits 1 on `ok: false`; each `missing` entry is one field to fix.
 | `record` | `record:absent`, `record:stale`, `record:unknown-key`, … | `node scripts/adopt.mts --record` (`--force` when only `generatedBy` is wrong); one field, however many checks it broke |
 | `ruleset` | `ruleset:absent` | `node scripts/init.mts --rules` on the default branch |
 | `required-checks` | `ruleset:required_status_checks` | require every check name `--workflows` reports; `--rules` writes them |
-| `labels` | `labels:missing` | `node scripts/init.mts`, which seeds the dictionary. `found` tells "absent" apart from "absent, but you already have X", by the two rules above |
+| `labels` | `labels:missing` | `node scripts/init.mts`, which seeds the dictionary. `found` tells "absent" apart from "absent, but you already have X" by the three rules above, and states what they compare on every absence — with a neighbour or without one, so that "none was found" is never read as "none was looked for" |
 | `hooks` | `hooks:not-recorded`, `:not-installed`, `:not-ours`, `:drifted` | `node scripts/adopt.mts --hooks`; a `pre-push` someone else wrote is never overwritten |
 | `auto-merge` | `repository:allow_auto_merge` | `node scripts/init.mts`, which turns it on |
 | `proof` | `proof:no-command`, other `proof:*` | name a `command` in `proof/<slug>.json` (`--slug` picks the branch), record `commands.test`, or set `AGENTIC_TEST_CMD` |
 | `proof` | `proof:not-run` | a command resolved and nobody ran it — the default. Run `node scripts/doctor.mts --run-proof`; `found` names the command it would run. This is why a default run cannot print `ok: true`: "a command exists and passes" and "a command exists and nobody looked" are the difference between an adoptable repository and an unadoptable one |
 | `proof` | `proof:red` | `--run-proof` ran it and it did not pass (`found` says whether it failed or could not be executed; `node scripts/proof.mts <slug>` prints the output). Fix the suite — see the precondition above |
-| the one that read | `read-failed:<what>` | that read could not answer (`repository`, `ruleset`, `labels`, `hooks`, `workflows`, or `proof` — the runner printed no outcome this report could read); authenticate `gh` here and run again |
+| the one that read | `read-failed:<what>` | that read could not answer. For `repository`, `ruleset`, `labels`, `hooks` and `workflows`: authenticate `gh` here and run again. For `proof`, nothing authenticated failed — `scripts/proof.mts` printed no outcome this report could read, so run `node scripts/proof.mts <slug>` directly and read what it says |
 
 ## Crash policy: fail closed
 
@@ -673,11 +670,13 @@ the cause.
 
 ### What "nothing written" does and does not cover
 
-"Nothing written" above is exact for the filesystem: no run of this script — failing or
-succeeding, on any flag — creates, moves or touches a file other than the ones its mode
-names: `agentic.config.json` for `--record`, the files under `.github/workflows/` for
-`--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
-`--inventory`, `--plan-issue` and `--pr` write no file at all. It is **not** a claim that
+"Nothing written" above is exact for the filesystem **with one flag excepted**: no run of
+this script — failing or succeeding — creates, moves or touches a file other than the ones
+its mode names: `agentic.config.json` for `--record`, the files under `.github/workflows/`
+for `--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
+`--plan-issue` and `--pr` write no file at all, and nor does `--inventory` — **except under
+`--run-proof`, which hands the tree to the repository's own test command and so leaves
+behind whatever that command writes**. It is **not** a claim that
 the run had no effect on GitHub — `--pr` is the clearest case: it creates commits in the
 object database, pushes a branch and opens a pull request, and every one of those is the
 point of the flag. Three branches of `--plan-issue` show the same thing:
@@ -743,6 +742,7 @@ reading it as "no record"; delete the file and run `--record` again.
 | `hooks:manifest-unparsable` | `hooks/hooks.json` is not JSON, or registers no hook command, so the hook set cannot be resolved |
 | `hooks:settings-unparsable` | the adopted repository's `.claude/settings.json` was read and is not one JSON object, or its `permissions.deny` is not a list of strings; the deny list is never merged into a file this tool could not understand, and a rule it cannot read is not a rule it may drop |
 | `hooks:not-written` | a hook file or the settings file could not be written; everything this run had already written is put back first, so nothing is left half-installed |
+| `read-failed:proof` | `--run-proof` spawned `scripts/proof.mts` and it printed no outcome this script could read. Never the gap `proof:red`, which says the repository's suite is red: a runner that crashed is no fact about the repository, and `scripts/doctor.mts` names the same case the same way |
 | `pr:plan-unreadable` | the plan-issue search failed or was not a list, so whether a decision exists is unknown |
 | `pr:timeline-unreadable` | the plan issue's timeline read failed or was not JSON, so who applied `human:decided` is unknown; the read happens before anything is built, so nothing was pushed and no comment was left |
 | `pr:decision-not-recorded` | `gh issue comment` failed, so the decision could not be recorded on the plan issue; the branch is pushed by then and stays pushed, and no pull request was opened — running `--pr` again answers `{ held }` on the branch rather than duplicating anything, so the remedy is to comment by hand or delete the branch and run again |
