@@ -32,8 +32,8 @@ pass for the second to mean anything. On a base that is already red it returns
 defect in any one pull request. Measured in September 2026 on a real third-party repository:
 219 tests, 203 passing, 16 failing, every pull request refused. So it is a precondition of
 adoption, not a discovery afterwards, and both read-backs answer it under one flag:
-`adopt --inventory --run-proof` names `proof:red` in `gaps`, `doctor --run-proof` reports
-`ok: false` with `missing: ["proof:red"]`, and without that flag neither runs the suite and
+`adopt --inventory --run-proof` names `proof:red` in `gaps`, `doctor --run-proof` reports it
+as `missing: ["proof:red"]`, and without that flag neither runs the suite and
 neither calls a command nobody ran passing (`doctor` is `ok: false` with `proof:not-run`,
 `--inventory` is `proof: { "run": false, "outcome": "unrun" }`, and no gap either way). Why
 it is a flag rather than the default is in `scripts/doctor.mts`'s header.
@@ -673,10 +673,11 @@ its mode names: `agentic.config.json` for `--record`, the files under `.github/w
 for `--workflows`, and the `pre-push` hook plus `.claude/settings.json` for `--hooks`.
 `--plan-issue` and `--pr` write no file at all, and nor does `--inventory` — **except under
 `--run-proof`. That flag hands the tree to the repository's own test command, which may
-write, move or remove any file or directory it likes, tracked ones included** — a fixture
-whose command deleted a tracked file left `git status` reporting it. The runner's report is
-collected in a temporary directory of the calling process, never in the repository, and
-removed on every path out. It is **not** a claim that
+write, move or remove any file or directory it likes, tracked ones included**: a case in
+`tests/doctor.test.mts` whose command deletes a tracked file and makes a directory leaves
+`git status` reporting both. The runner's own report is collected in a temporary directory
+of the calling process, never in the repository, and removed on every path out. It is
+**not** a claim that
 the run had no effect on GitHub — `--pr` is the clearest case: it creates commits in the
 object database, pushes a branch and opens a pull request, and every one of those is the
 point of the flag. Three branches of `--plan-issue` show the same thing:

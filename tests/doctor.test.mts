@@ -726,4 +726,23 @@ check('adopt reads the same oversized report and names the same reason', ar.out?
 check('adopt names the gap for it: the command cannot pass here as it stands', (ar.out?.gaps ?? []).includes(RED), ar.stdout);
 
 
+// --- the hazard the document states, as a case rather than an observation ---
+// `--run-proof` hands the tree to the repository's own command, and that
+// command can **remove** a tracked file and leave a directory behind — while
+// the proof itself passes. `docs/adopt.md` says "write, move or remove" at full
+// strength because of this run, and the sentence names this case.
+const MUTATES = 'rm -f DOOMED.txt && mkdir -p made-by-the-suite && : > made-by-the-suite/left-behind';
+const mutating = fixture({
+  'DOOMED.txt': 'a tracked file the repository own suite removes\n',
+  'agentic.config.json': record({ stack: 'unknown', test: MUTATES, checkCmd: null, checks: UNKNOWN_CHECKS }),
+});
+
+const as_ = doctor(['--run-proof'], mutating, { ...THREE, AGENTIC_TEST_CMD: MUTATES });
+check('a command that mutates the tree still passes as a proof', (as_.out?.checks ?? []).find((c: any) => c.name === 'proof')?.ok === true, foundOf(as_, 'proof'));
+const mutated = git(['status', '--porcelain', '--untracked-files=all'], mutating);
+// `git()` trims, so the porcelain code is matched without its leading column.
+check('--run-proof hands the tree over: the tracked file the command deleted is reported deleted', /\bD DOOMED\.txt/.test(mutated), mutated);
+check('--run-proof hands the tree over: what the command left behind is there too', mutated.includes('made-by-the-suite/left-behind'), mutated);
+
+
 finish();

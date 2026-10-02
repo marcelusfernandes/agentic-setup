@@ -12,12 +12,12 @@
 //   node scripts/adopt.mts --pr
 //
 // `--inventory` prints the report of `scripts/lib/adopt/inventory.mts` as
-// JSON on stdout and performs **no write of any kind** — without `--run-proof`
-// below, which hands the tree to the repository's own test command, and that
-// command may write, move or remove any file or directory it likes: no file is
-// created or touched, and the only `gh` calls are reads (`api
-// repos/{owner}/{repo}`, the default branch's effective rules, `label list`).
-// It reads one more thing from disk than the inventory does — the record.
+// JSON on stdout and performs **no write of any kind**: no file is created or
+// touched, and the only `gh` calls are reads (`api repos/{owner}/{repo}`, the
+// default branch's effective rules, `label list`). It reads one more thing from
+// disk than the inventory does — the record. **Except under `--run-proof`**
+// below: that flag hands the tree to the repository's own test command, and
+// that command may write, move or remove any file or directory it likes.
 //
 // It answers two things the read-back was silent about (#459, absorbing #460):
 // `proof`, whether the command this repository would prove itself with *passes*
@@ -305,10 +305,9 @@ const report: Report = {
  * verdict is the one an adopter gets by hand and the run's bounds stay in the
  * file that owns them. The slug comes off HEAD as `scripts/doctor.mts` derives
  * it, so the two resolve one command; `tail` is dropped, and the report is
- * collected through a temporary file of this process rather than a pipe, which
- * a runner that prints and exits in one breath truncates — the same helper in
- * `scripts/doctor.mts` carries that measurement, and the directory is removed
- * on every path out of this one.
+ * collected through a temporary file rather than a pipe, which a runner that
+ * prints and exits in one breath truncates — that helper in `scripts/doctor.mts`
+ * carries the measurement, and the directory goes on every path out.
  */
 function runTheProof(): Record<string, unknown> {
   const head = gitIn(root)(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
@@ -316,9 +315,11 @@ function runTheProof(): Record<string, unknown> {
   const dir = mkdtempSync(join(tmpdir(), 'agentic-adopt-proof-'));
   const report = join(dir, 'report.json');
   const fd = openSync(report, 'w');
-  let text = '';
+  // `stderr` stays piped: it is the only clue a dead runner leaves, and
+  // `detail` is where a tool's own wording goes — never the name.
+  let text = '', stderr = '';
   try {
-    spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, stdio: ['ignore', fd, 'ignore'] });
+    stderr = spawnSync(process.execPath, [PROOF_RUNNER, slug], { cwd: root, encoding: 'utf8', stdio: ['ignore', fd, 'pipe'] }).stderr ?? '';
     text = readFileSync(report, 'utf8');
   } catch {
     text = '';
@@ -337,7 +338,7 @@ function runTheProof(): Record<string, unknown> {
   // `proof:red`, which says this repository's suite is red — a crashed runner is
   // no fact about the repository — and `scripts/doctor.mts` reports the same case
   // as `read-failed:proof`, so the two cannot disagree about it.
-  if (typeof printed.outcome !== 'string') fail('read-failed:proof');
+  if (typeof printed.outcome !== 'string') fail('read-failed:proof', stderr.trim().split('\n')[0] || undefined);
   const { tail: _tail, ...rest } = printed;
   return { ...rest, run: true };
 }

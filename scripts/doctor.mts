@@ -528,7 +528,9 @@ type ProofReport = { outcome?: unknown; reason?: unknown };
  * report arrives: 67,174,555 bytes of it in the case that found this. The file
  * is this process's own temporary directory, never the repository being
  * reported on, and it is removed on every path out (`tests/doctor.test.mts`
- * asserts the tree is unchanged across a `--run-proof` run).
+ * asserts the tree is unchanged across a `--run-proof` run **whose command
+ * writes nothing** — one whose command writes, moves or removes is the
+ * repository's own command doing it, and another case asserts exactly that).
  */
 function runProofFor(slug: string): { outcome: string; reason: string | null; ms: number } | null {
   const dir = mkdtempSync(join(tmpdir(), 'agentic-doctor-proof-'));
