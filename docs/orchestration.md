@@ -503,9 +503,16 @@ split is read as pending.
   or `{ error }` on a closed or unreadable pull request. In mode `agent` there is no queue
   to outlast — that mode merges at once or disarms and refuses — so the flag changes
   nothing there. Neither wait is a tight loop, and neither one is a person's.
-- **No client-side read of the check re-run window can decide a merge.** A label change
-  (or a push) re-triggers `agentic-checks`, so a PR the orchestrator saw as green a moment
-  earlier can have a required check back to `IN_PROGRESS` by the time it acts. Where
+- **No client-side read of the check re-run window can decide a merge.** A push
+  re-triggers `agentic-checks`, and so does an edit to the PR body — `scope` reads the body
+  for the `Closes #N` links that decide its globs — so a PR the orchestrator saw as green a
+  moment earlier can have a required check back to `IN_PROGRESS` by the time it acts. A
+  **label** change no longer does: since decision 0037 the workflow's `types:` list carries
+  no `labeled` or `unlabeled`, because neither check's verdict can depend on a label. That
+  removes the commonest way this window used to open — applying `review:approved` is the
+  last thing the orchestrator does before `land.mts`, and it used to invalidate the very
+  checks `land.mts` waits on — but it does not close the window, and nothing here rests on
+  it being closed. Where
   `land.mts` gates on the ruleset, `gh pr merge --auto` sidesteps this by construction: it
   merges the instant GitHub's own rules are satisfied, so there is no client-side snapshot
   that can go stale between being read and the merge happening — closing by design the M1
