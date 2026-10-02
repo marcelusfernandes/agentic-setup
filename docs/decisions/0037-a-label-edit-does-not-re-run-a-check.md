@@ -39,13 +39,39 @@ had drifted and eight had held**, counted as one per cited line or range:
 
 Seven drifted rows of one, and two rows holding five and three: 7 + 8 = 15.
 
-So the claim worth making is narrower than "every citation drifts": the citations into the
-`ci/` scripts and the two cards — files the loop actively edits — drifted, and the eight
-into `agentic-checks.yml` itself and into `tests/guard-main.test.mts`, the test this pin was
-written from, did not. Three of the four file *lengths* the issue recorded had also
-moved — `skills/orchestrate/SKILL.md` 670 → 684,
-`docs/orchestration.md` 552 → 588, `docs/decisions/README.md` 186 → 212, while
-`tests/guard-main.test.mts` held at 241.
+So the claim worth making is narrower than "every citation drifts", and it is made by
+listing the files rather than by naming a category they fall into. **The seven that
+drifted:** three into `ci/negative-control.mts`, one into `ci/issue-lint.mts`, one into
+`skills/orchestrate/SKILL.md`, one into `docs/orchestration.md`, one into
+`tests/doctrine.test.mts`. **The eight that held:** five into
+`.github/workflows/agentic-checks.yml` — the pair this issue is about — and three into
+`tests/guard-main.test.mts`, the test this issue's pin was written from.
+
+That shape is deliberate, and it is this item's own lesson rather than a style preference.
+This paragraph has been written four times, and the history is worth the four lines because
+it is the subject of the item.
+
+- The first version claimed **every** citation had drifted. False, and it printed no table
+  against which anyone could see that.
+- The second added the table and described the held side correctly — *the citations into the
+  two files this issue is about, plus the test it points at as a model* — which is this
+  pair's five and `tests/guard-main.test.mts`'s three. It was rewritten anyway, on a
+  misreading of "the two files this issue is about" as the two cards rather than the two
+  copies of the workflow. **A correct sentence was replaced because nobody checked it**,
+  which is the same failure as a citation nobody re-measured, one level up.
+- The third partitioned the drifted side as "the `ci/` scripts and the two cards". That is
+  3 + 1 + 1 + 1 = **six**, against a table of fifteen with eight held: it lost
+  `tests/doctrine.test.mts`, which is neither a `ci/` script nor a card, from a sentence
+  standing directly beneath the line that counts it.
+
+A category claim over a table can shed a row in silence, because nothing in the sentence has
+to add up. An enumeration whose counts sum cannot. That is the same reason the table above
+carries a `count` column, applied one paragraph further down — and the reason the counts are
+spelled out again in words here rather than left to the reader.
+
+Three of the four file *lengths* the issue recorded had also moved —
+`skills/orchestrate/SKILL.md` 670 → 684, `docs/orchestration.md` 552 → 588,
+`docs/decisions/README.md` 186 → 212, while `tests/guard-main.test.mts` held at 241.
 
 ## Decision
 

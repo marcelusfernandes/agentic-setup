@@ -24,16 +24,18 @@
 // `unlabeled` are not in `types:`, and the header states what each check
 // reads separately instead of claiming both read the same two things.
 //
-// It also pins the other seven pairs `scripts/init.mts` ships — four held by
-// nothing until now, two held elsewhere, one deliberately left to the
-// `issue-lint` sweep — and holds that list closed, so a pair nobody thought
-// about cannot arrive unpinned.
+// It also accounts for the other seven pairs `scripts/init.mts` ships and pins
+// four of them — the four that were held by nothing until now. Two are pinned
+// elsewhere and one is deliberately left to the `issue-lint` sweep; those three
+// it names rather than pins. And it holds the whole list closed, so a pair
+// nobody thought about cannot arrive unpinned.
 //
 // Negative control, measured on `d698b56` by restoring both copies of
 // `agentic-checks.yml` to their base contents and running this file: 36 passed,
-// 10 failed. The ten are the six header cases and the four trigger cases — the base's header says "Both
-// read the PR body and labels, so they re-run when the PR is edited or
-// relabelled", and `types:` carries `labeled, unlabeled` in each copy. The
+// 10 failed. The ten are the six header cases and the four trigger cases — the
+// base's header says "Both read the PR body and labels, so they re-run when the
+// PR is edited or relabelled", and `types:` carries `labeled, unlabeled` in each
+// copy. The
 // equality cases pass on the base on purpose: the copies agree there today,
 // as they do for `guard-main.yml`, and the case is here to keep them
 // agreeing. So do the other-pairs cases, for the same reason — those four
@@ -46,7 +48,7 @@
 // which is what a pattern-based pin would have swallowed; and a copy shorter
 // than the other is reported rather than read past the end. They assert
 // nothing about the two real files, so nothing about them is red anywhere.
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { check, finish, ROOT } from './lib/harness.mts';
 
@@ -200,8 +202,31 @@ for (const [path, text] of [[OWN_PATH, own], [SHIPPED_PATH, shipped]] as const) 
 // Four pairs are byte-identical today and were held by nothing, which is half a
 // rule: a pin over one pair while its neighbours have none. They are pinned
 // here, in the bare byte-equality shape `tests/doctrine.test.mts` already uses
-// for `.github/ISSUE_TEMPLATE/task.md` — no header clause, because none of these
-// four has a comment syntax to carry one.
+// for `.github/ISSUE_TEMPLATE/task.md`.
+//
+// **No header clause on these four, by choice and not for want of a syntax.**
+// All four could carry one: `.worktreeinclude` already opens with two `#`
+// comment lines, `.github/pull_request_template.md:2` is already an HTML
+// comment, `config.yml` is YAML and `MILESTONE_TEMPLATE.md` is Markdown. Three
+// reasons not to, in order of weight:
+//
+//   1. `.github/pull_request_template.md` is *rendered into every pull request
+//      body GitHub opens from it*. A comment naming this test would ride into
+//      every one of them. That is a measurable cost paid on every PR to buy a
+//      sentence a reader of the test already has.
+//   2. No criterion asks for one. The clause on `agentic-checks.yml` is asked
+//      for by this issue, and the clause on `guard-main.yml` by its own
+//      (`tests/guard-main.test.mts`, AC4) — in both cases because the header
+//      *already made a false claim* about what held the copies together and had
+//      to stop. None of these four claims anything about its twin, so there is
+//      nothing to correct.
+//   3. `tests/doctrine.test.mts` is the repository's own precedent: it pins
+//      `.github/ISSUE_TEMPLATE/task.md` byte-equal with no clause in the file.
+//      Four new pins in a fifth shape would be the novelty.
+//
+// The cost accepted: somebody reading one of these four files alone cannot see
+// that it is pinned. `UNPINNED_HERE` and the closed list below are what make
+// that discoverable from the test instead.
 //
 // `.github/workflows/issue-lint.yml` is deliberately absent. It differs by
 // design on one `run:` line, so it needs the enumerate-and-compare shape above
@@ -229,21 +254,11 @@ const UNPINNED_HERE: Readonly<Record<string, string>> = {
     'differs by design on one `run:` line; its header is not in this pull request\'s ## Files',
 };
 
-for (const rel of IDENTICAL_PAIRS) {
-  const here = readFileSync(join(ROOT, rel), 'utf8');
-  const ships = readFileSync(join(ROOT, 'templates', rel), 'utf8');
-  const first = differences(here, ships)[0];
-  check(
-    `${rel} and templates/${rel} are byte-identical`,
-    here === ships,
-    first === undefined ? '' : describe(first),
-  );
-}
-
 // The lists above are closed, so a ninth pair cannot arrive unpinned and
 // unnoticed. The case below enumerates `templates/` from disk and requires
 // **every** file it ships — not only the ones that have a counterpart today —
-// to appear in one of the five sets written out here. It is deliberately the
+// to appear in one of the four lists written out here, or to be `OWN_PATH`,
+// the pair the first section of this file pins. It is deliberately the
 // broader rule: a file shipped without a counterpart is one `init` change away
 // from having one, and the cheap version of this case would not notice. The
 // cost is that adding any file under `templates/` reds here until it is
@@ -280,6 +295,34 @@ check(
 const shippedSet = new Set(shippedPaths());
 for (const rel of [OWN_PATH, ...IDENTICAL_PAIRS, ...Object.keys(PINNED_ELSEWHERE), ...Object.keys(UNPINNED_HERE), ...NO_COUNTERPART]) {
   check(`templates/${rel} is still shipped, so its entry above is not stale`, shippedSet.has(rel), [...shippedSet].join(', '));
+}
+
+// --- and the four are byte-identical ----------------------------------------
+// Read last, and read defensively. A file named above that has been deleted
+// from *either* side would make `readFileSync` throw, and a thrown error is a
+// stack trace where the cases above have a sentence naming what to do. The
+// runner counts a crashed file as a failure either way, so the invariant holds
+// — but a pin that reds without saying why is half a pin.
+
+/** The file's text, or `null` when it is not there. */
+function textOrNull(absolute: string): string | null {
+  return existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
+}
+
+for (const rel of IDENTICAL_PAIRS) {
+  const here = textOrNull(join(ROOT, rel));
+  const ships = textOrNull(join(ROOT, 'templates', rel));
+  const absent = [here === null ? rel : '', ships === null ? `templates/${rel}` : ''].filter(Boolean);
+  if (absent.length > 0) {
+    check(`${rel} and templates/${rel} are byte-identical`, false, `not on disk: ${absent.join(', ')}`);
+    continue;
+  }
+  const first = differences(here ?? '', ships ?? '')[0];
+  check(
+    `${rel} and templates/${rel} are byte-identical`,
+    here === ships,
+    first === undefined ? '' : describe(first),
+  );
 }
 
 // --- broken both ways, on texts written here --------------------------------
